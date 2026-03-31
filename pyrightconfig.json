@@ -1,0 +1,16 @@
+{
+  "venvPath": "backend",
+  "venv": "env",
+  "pythonVersion": "3.12",
+  "exclude": [
+    "backend/env/**",
+    "**/node_modules/**",
+    "**/__pycache__/**",
+    "**/.*"
+  ],
+  "ignore": [
+    "backend/env/**"
+  ],
+  "reportMissingImports": true,
+  "reportMissingModuleSource": false
+}
