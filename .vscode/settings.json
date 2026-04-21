@@ -1,0 +1,7 @@
+{
+  "css.lint.unknownAtRules": "ignore",
+  "python.defaultInterpreterPath": "D:\\Desktop\\REPCONNECT_REACT\\backend\\env\\Scripts\\python.exe",
+  "python.analysis.extraPaths": [
+    "D:\\Desktop\\REPCONNECT_REACT\\backend\\env\\Lib\\site-packages"
+  ]
+}

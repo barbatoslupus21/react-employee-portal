@@ -1,0 +1,50 @@
+from django.urls import path
+
+from .views import (
+    AdminBulkBalanceUploadView,
+    AdminLeaveRequestExportView,
+    AdminLeaveRequestListView,
+    AdminLeaveReasonView,
+    AdminLeaveSubreasonView,
+    AdminLeaveTypeView,
+    ApprovalQueueChartView,
+    ApprovalQueueExportView,
+    ApprovalQueueView,
+    HolidayRangeView,
+    LeaveApprovalView,
+    LeaveBalanceListView,
+    LeaveReasonListView,
+    LeaveRequestCalendarView,
+    LeaveRequestCancelView,
+    LeaveRequestDetailView,
+    LeaveRequestEditView,
+    LeaveRequestListCreateView,
+    LeaveTypeListView,
+)
+
+urlpatterns = [
+    # Employee
+    path('types', LeaveTypeListView.as_view()),
+    path('reasons', LeaveReasonListView.as_view()),
+    path('balances', LeaveBalanceListView.as_view()),
+    path('holidays', HolidayRangeView.as_view()),
+    path('requests', LeaveRequestListCreateView.as_view()),
+    path('requests/calendar', LeaveRequestCalendarView.as_view()),
+    path('requests/<int:pk>', LeaveRequestDetailView.as_view()),
+    path('requests/<int:pk>/cancel', LeaveRequestCancelView.as_view()),
+    path('requests/<int:pk>/edit', LeaveRequestEditView.as_view()),
+    path('requests/<int:pk>/action', LeaveApprovalView.as_view()),
+    path('approval-queue/chart', ApprovalQueueChartView.as_view()),
+    path('approval-queue/export', ApprovalQueueExportView.as_view()),
+    path('approval-queue', ApprovalQueueView.as_view()),
+    # Admin
+    path('admin/requests', AdminLeaveRequestListView.as_view()),
+    path('admin/types', AdminLeaveTypeView.as_view()),
+    path('admin/types/<int:pk>', AdminLeaveTypeView.as_view()),
+    path('admin/reasons', AdminLeaveReasonView.as_view()),
+    path('admin/reasons/<int:pk>', AdminLeaveReasonView.as_view()),
+    path('admin/subreasons', AdminLeaveSubreasonView.as_view()),
+    path('admin/subreasons/<int:pk>', AdminLeaveSubreasonView.as_view()),
+    path('admin/balance-upload', AdminBulkBalanceUploadView.as_view()),
+    path('admin/export', AdminLeaveRequestExportView.as_view()),
+]
