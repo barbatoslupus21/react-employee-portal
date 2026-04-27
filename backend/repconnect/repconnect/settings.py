@@ -43,6 +43,7 @@ INSTALLED_APPS = [
     'certification',
     'finance',
     'leave',
+    'survey',
 ]
 
 MIDDLEWARE = [

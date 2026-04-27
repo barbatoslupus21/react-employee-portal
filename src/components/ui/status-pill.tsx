@@ -19,10 +19,15 @@ import { cn } from '@/lib/utils';
 
 const STATUS_CLASSES: Record<string, string> = {
   approved:    'bg-green-100  text-green-700  dark:bg-green-950/40  dark:text-green-400',
+  active:      'bg-green-100  text-green-700  dark:bg-green-950/40  dark:text-green-400',
   disapproved: 'bg-red-100    text-red-700    dark:bg-red-950/40    dark:text-red-400',
   rejected:    'bg-red-100    text-red-700    dark:bg-red-950/40    dark:text-red-400',
   pending:     'bg-yellow-100 text-yellow-700 dark:bg-yellow-950/40 dark:text-yellow-400',
   routing:     'bg-yellow-100 text-yellow-700 dark:bg-yellow-950/40 dark:text-yellow-400',
+  scheduled:   'bg-yellow-100 text-yellow-700 dark:bg-yellow-950/40 dark:text-yellow-400',
+  draft:       'bg-slate-100 text-slate-700 dark:bg-slate-950/40 dark:text-slate-400',
+  ended:       'bg-gray-100   text-gray-500   dark:bg-gray-800/50   dark:text-gray-400',
+  closed:      'bg-red-100    text-red-700    dark:bg-red-950/40    dark:text-red-400',
   cancelled:   'bg-gray-100   text-gray-500   dark:bg-gray-800/50   dark:text-gray-400',
 };
 

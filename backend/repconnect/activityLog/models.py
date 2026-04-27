@@ -63,13 +63,23 @@ class Notification(models.Model):
         ('leave_approved',            'Leave Request Approved'),
         ('leave_disapproved',         'Leave Request Disapproved'),
         ('leave_pending_approval',    'Leave Request Pending Approval'),
-        ('leave_cancelled',           'Leave Request Cancelled'),
+        ('leave_cancelled',           'Leave Request Cancelled'),        ('survey_assigned',           'Survey Assigned'),
+        ('survey_reminder',           'Survey Reminder'),    ]
+
+    SCOPE_CHOICES = [
+        ('specific_user', 'Specific User'),
+        ('general',       'General'),
     ]
 
     recipient = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
+        null=True,
+        blank=True,
         related_name='notifications',
+    )
+    notification_scope = models.CharField(
+        max_length=20, choices=SCOPE_CHOICES, default='specific_user', db_index=True
     )
     notification_type = models.CharField(max_length=30, choices=TYPE_CHOICES, db_index=True)
     title    = models.CharField(max_length=255)

@@ -44,13 +44,13 @@ export function LeaveRangePicker({
     <div className="space-y-1.5">
       <div className="grid grid-cols-2 gap-3 px-1">
         <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
-          Date From
+          Date From 
           {!dateStart && (
             <span className="text-red-500 normal-case tracking-normal">*</span>
           )}
         </span>
         <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
-          Date To
+          Date To 
           {!dateEnd && (
             <span className="text-red-500 normal-case tracking-normal">*</span>
           )}

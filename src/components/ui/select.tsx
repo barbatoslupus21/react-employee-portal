@@ -18,9 +18,9 @@ const SelectTrigger = React.forwardRef<
     className={cn(
       "flex h-9 w-full items-center justify-between gap-2 rounded-lg",
       "border border-[var(--color-border)] bg-[var(--color-bg-elevated)]",
-      "px-3 py-2 text-sm text-[var(--color-text-primary)]",
+      "px-3 py-2 text-xs text-[var(--color-text-primary)]",
       "disabled:cursor-not-allowed disabled:opacity-50 transition-colors",
-      "data-[placeholder]:text-[var(--color-text-muted)] data-[placeholder]:text-[13px] data-[placeholder]:text-normal",
+      "data-[placeholder]:text-[var(--color-text-muted)] data-[placeholder]:text-xs data-[placeholder]:font-normal",
       className,
     )}
     {...props}
@@ -105,7 +105,7 @@ const SelectLabel = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <SelectPrimitive.Label
     ref={ref}
-    className={cn("py-1.5 pl-8 pr-2 text-xs font-medium text-[var(--color-text-muted)]", className)}
+    className={cn("py-1.5 pl-8 pr-2 text-[10px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wide", className)}
     {...props}
   />
 ));
@@ -119,7 +119,7 @@ const SelectItem = React.forwardRef<
     ref={ref}
     className={cn(
       "relative flex w-full cursor-default select-none items-center rounded-md",
-      "py-1.5 pl-8 pr-2 text-sm text-[var(--color-text-primary)] outline-none",
+      "py-1.5 pl-8 pr-2 text-xs text-[var(--color-text-primary)] outline-none",
       "focus:bg-[var(--color-bg-card)] focus:text-[var(--color-text-primary)]",
       "data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
       className,

@@ -15,4 +15,5 @@ urlpatterns = [
     path('api/certificates/', include('certification.urls')),
     path('api/finance/', include('finance.urls')),
     path('api/leave/', include('leave.urls')),
+    path('api/survey/', include('survey.urls')),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

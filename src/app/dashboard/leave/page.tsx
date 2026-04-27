@@ -3816,7 +3816,6 @@ function ExportModal({
         <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[var(--color-border)]">
           <div>
             <h2 className="text-base font-semibold text-[var(--color-text-primary)]">Export Leave Report</h2>
-            <p className="text-xs text-[var(--color-text-muted)] mt-0.5">Select a date range to export</p>
           </div>
           <button
             type="button"

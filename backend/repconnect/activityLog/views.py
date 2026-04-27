@@ -16,7 +16,10 @@ class NotificationListView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        qs = Notification.objects.filter(recipient=request.user).order_by('-created_at')[:50]
+        from django.db.models import Q
+        qs = Notification.objects.filter(
+            Q(recipient=request.user) | Q(notification_scope='general')
+        ).order_by('-created_at')[:50]
         return Response(NotificationSerializer(qs, many=True).data)
 
 
@@ -29,8 +32,12 @@ class NotificationReadView(APIView):
 
     @transaction.atomic
     def post(self, request, pk):
+        from django.db.models import Q
         try:
-            notif = Notification.objects.get(pk=pk, recipient=request.user)
+            notif = Notification.objects.get(
+                Q(pk=pk),
+                Q(recipient=request.user) | Q(notification_scope='general'),
+            )
         except Notification.DoesNotExist:
             return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
         notif.is_read = True

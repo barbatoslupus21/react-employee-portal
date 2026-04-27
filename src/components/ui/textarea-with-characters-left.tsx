@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 
 export interface TextareaWithCharactersLeftProps
   extends React.TextareaHTMLAttributes<HTMLTextAreaElement> {
-  label?: string;
+  label?: React.ReactNode;
   maxLength: number;
   error?: string;
   wrapperClassName?: string;
@@ -51,7 +51,7 @@ const TextareaWithCharactersLeft = React.forwardRef<
         {label && (
           <label
             htmlFor={id}
-            className="text-sm font-medium text-[var(--color-text-primary)]"
+            className="text-[10px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wide"
           >
             {label}
           </label>
@@ -66,9 +66,9 @@ const TextareaWithCharactersLeft = React.forwardRef<
           onChange={handleChange}
           style={{ outline: 'none' }}
           className={cn(
-            "flex min-h-[80px] w-full rounded-lg border px-3 py-2 text-sm transition-colors resize-none",
+            "flex min-h-[80px] w-full rounded-lg border px-3 py-2 text-xs transition-colors resize-none",
             "bg-[var(--color-bg-elevated)] border-[var(--color-border)] text-[var(--color-text-primary)]",
-            "placeholder:text-[var(--color-text-muted)] placeholder:text-[13px] placeholder:text-normal",
+            "placeholder:text-[var(--color-text-muted)] placeholder:text-xs placeholder:text-normal",
             "focus:outline-none focus-visible:outline-none focus:border-[var(--color-border)] focus:ring-0 focus:shadow-none",
             "disabled:cursor-not-allowed disabled:opacity-50",
             error && "border-red-500 focus:ring-red-500",
@@ -79,9 +79,9 @@ const TextareaWithCharactersLeft = React.forwardRef<
           {...props}
         />
 
-        <div className="flex items-center justify-between text-xs tabular-nums transition-colors gap-2">
+        <div className="flex items-center justify-between text-[12px] tabular-nums transition-colors gap-2">
           {error ? (
-            <p id={`${id}-error`} className="text-xs text-red-500 flex-1">
+            <p id={`${id}-error`} className="text-[12px] text-red-500 flex-1">
               {error}
             </p>
           ) : (

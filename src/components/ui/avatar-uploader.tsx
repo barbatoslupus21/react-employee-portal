@@ -92,22 +92,11 @@ export function AvatarUploader({
       onOpenChange={(v) => { if (!isPending) onOpenChange(v); }}
       drawerProps={{ dismissible: !isPending }}
     >
-      <ModalContent className="md:max-w-md p-0" hideCloseButton>
-        <ModalHeader className="flex-row items-center justify-between gap-3 border-b border-[var(--color-border)]">
+      <ModalContent className="md:max-w-md p-0">
+        <ModalHeader className="gap-3">
           <ModalTitle className="text-base font-semibold text-[var(--color-text-primary)]">
             Crop Profile Picture
           </ModalTitle>
-          <ModalClose asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8 rounded-full text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]"
-              aria-label="Close crop dialog"
-            >
-              <X className="h-4 w-4" />
-            </Button>
-          </ModalClose>
         </ModalHeader>
 
         <ModalBody className="space-y-3 pb-0 mb-0">

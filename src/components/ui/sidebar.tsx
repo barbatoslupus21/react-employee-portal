@@ -220,7 +220,7 @@ export const SidebarLink = ({
           maxWidth: animate ? (open ? 160 : 0) : 160,
         }}
         transition={{ duration: 0.18, ease: [0.4, 0, 0.2, 1] }}
-        className="overflow-hidden whitespace-nowrap text-sm font-medium"
+        className="overflow-hidden whitespace-nowrap text-xs font-medium"
       >
         {link.label}
       </motion.span>

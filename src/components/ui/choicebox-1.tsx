@@ -103,7 +103,7 @@ function ChoiceboxItem({
   return (
     <div
       className={clsx(
-        'border flex-1 rounded-xl duration-150 select-none',
+        'border flex-1 rounded-lg duration-150 select-none',
         isSelected
           ? 'border-[#2845D6] bg-[#2845D6]/[0.08]'
           : 'border-[var(--color-border)] bg-[var(--color-bg-elevated)]',
@@ -116,8 +116,8 @@ function ChoiceboxItem({
       aria-selected={isSelected}
       aria-disabled={disabled}
     >
-      <div className="flex items-center gap-3 p-3">
-        <div className="flex flex-col gap-0.5 flex-1 min-w-0 font-sans text-sm">
+      <div className="flex items-center gap-3 py-2 px-3">
+        <div className="flex flex-col gap-0.5 flex-1 min-w-0 font-sans text-xs">
           <span
             className={clsx(
               'font-semibold leading-snug',
@@ -128,7 +128,7 @@ function ChoiceboxItem({
           </span>
           <span
             className={clsx(
-              'text-xs leading-snug',
+              'text-[11px] leading-snug',
               isSelected ? 'text-[#2845D6]/80' : 'text-[var(--color-text-muted)]',
             )}
           >
@@ -177,7 +177,7 @@ function ChoiceboxGroupBase({
   return (
     <div className="flex flex-col gap-2">
       {showLabel && label && (
-        <label className="text-sm font-medium text-[var(--color-text-primary)]">
+        <label className="text-xs font-medium text-[var(--color-text-primary)]">
           {label}
         </label>
       )}

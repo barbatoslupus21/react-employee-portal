@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
-import { useRouter, usePathname } from "next/navigation";
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { motion } from "motion/react";
 import {
   LayoutDashboard,
@@ -68,6 +68,8 @@ type NavItem = {
   section?: string;
 };
 
+type AssessmentTab = 'training' | 'review' | 'survey-admin' | 'survey-my' | 'survey-templates' | null;
+
 const STATIC_NAV: NavItem[] = [
   { icon: LayoutDashboard, label: "Overview",         href: "/dashboard",                  section: "Management Information System" },
   { icon: Calendar,        label: "Calendar",          href: "/dashboard/calendar",          section: "Management Information System" },
@@ -110,6 +112,24 @@ function buildNav(user: UserData): NavItem[] {
 
   // Insert Finances after Certificate / Assessments position to preserve order
   base.splice(4, 0, financeItem);
+
+  const surveyItem: NavItem = {
+    icon: FileText,
+    label: user.iad
+      ? "Surveys"
+      : user.admin || user.hr
+        ? "Survey Management"
+        : "My Surveys",
+    href: "/dashboard/assessments/survey",
+    section: "Management Information System",
+  };
+
+  const assessmentsIndex = base.findIndex((item) => item.href === "/dashboard/assessments");
+  if (assessmentsIndex >= 0) {
+    base.splice(assessmentsIndex + 1, 0, surveyItem);
+  } else {
+    base.push(surveyItem);
+  }
 
   // Move Leave Requests immediately after the finance item.
   const leaveIndex = base.findIndex((item) => item.href === "/dashboard/leave");
@@ -171,10 +191,10 @@ function SidebarUserCard({ user }: { user: UserData }) {
         style={{ maxWidth: 180 }}
         className="overflow-hidden pr-3"
       >
-        <p className="whitespace-nowrap text-sm font-semibold text-[var(--color-text-primary)] leading-tight">
+        <p className="whitespace-nowrap text-xs font-semibold text-[var(--color-text-primary)] leading-tight">
           {fullName}
         </p>
-        <p className="whitespace-nowrap text-xs text-[var(--color-text-muted)] leading-tight mt-0.5">
+        <p className="whitespace-nowrap text-[11px] text-[var(--color-text-muted)] leading-tight mt-0.5">
           {user.idnumber}
         </p>
       </motion.div>
@@ -203,7 +223,203 @@ const LEAVE_SUB_ITEMS = [
   { label: "Approvals", href: "/dashboard/leave?tab=approval-queue", tab: "approval" as const },
 ];
 
+const ASSESSMENT_SUB_ITEMS = [
+  { label: "Training Evaluation", href: "/dashboard/assessments/training-evaluation", tab: "training" as const },
+  { label: "Performance Evaluation", href: "/dashboard/assessments/employee-review", tab: "review" as const },
+];
+
+function SidebarAssessmentAccordion({
+  isExpanded,
+  onToggle,
+  pathname,
+  activeTab,
+  onSubClick,
+}: {
+  isExpanded: boolean;
+  onToggle: () => void;
+  pathname: string;
+  activeTab: AssessmentTab;
+  onSubClick: (tab: AssessmentTab) => void;
+}) {
+  const { open: sidebarOpen, animate } = useSidebar();
+  const onAssessments = pathname.startsWith("/dashboard/assessments");
+
+  return (
+    <Accordion
+      type="single"
+      collapsible
+      value={isExpanded ? "assessments" : ""}
+      onValueChange={(v) => {
+        const nowOpen = v === "assessments";
+        if (nowOpen !== isExpanded) onToggle();
+      }}
+    >
+      <AccordionItem value="assessments">
+        <AccordionTrigger
+          className="h-10 rounded-lg
+            text-[var(--color-text-muted)]
+            hover:text-[var(--color-text-primary)]"
+        >
+          <span className="flex h-10 w-[40px] shrink-0 items-center justify-center">
+            <LayoutDashboard size={18} className="shrink-0" />
+          </span>
+          <motion.div
+            initial={false}
+            animate={{
+              opacity: animate ? (sidebarOpen ? 1 : 0) : 1,
+              maxWidth: animate ? (sidebarOpen ? 160 : 0) : 160,
+            }}
+            transition={{ duration: 0.18, ease: [0.4, 0, 0.2, 1] }}
+            className="flex flex-1 items-center overflow-hidden"
+          >
+            <span className="flex-1 whitespace-nowrap text-xs font-medium text-left">Assessments</span>
+            <span
+              className="shrink-0 flex items-center justify-center mr-1
+                transition-transform duration-[250ms] ease-[cubic-bezier(0.22,1,0.36,1)]
+                [[data-state=open]_&]:rotate-90"
+            >
+              <ChevronRight size={14} />
+            </span>
+          </motion.div>
+        </AccordionTrigger>
+
+        <AccordionContent>
+          {sidebarOpen && (
+            <motion.div
+              variants={SUB_CONTAINER_VARIANTS}
+              initial="hidden"
+              animate="visible"
+              exit="hidden"
+              className="mt-0.5 flex flex-col gap-0.5 pb-0.5"
+            >
+              {ASSESSMENT_SUB_ITEMS.map((item) => {
+                const isActive = onAssessments && activeTab === item.tab;
+                return (
+                  <motion.div key={item.tab} variants={SUB_ITEM_VARIANTS}>
+                    <Link
+                      href={item.href}
+                      onClick={() => onSubClick(item.tab)}
+                      className={cn(
+                        "flex items-center h-7 rounded-lg pr-3 pl-[42px] text-xs transition-colors duration-150",
+                        isActive
+                          ? "bg-[#2845D6]/10 text-[#2845D6]"
+                          : "text-[var(--color-text-muted)] font-medium hover:bg-[var(--color-bg-card)] hover:text-[var(--color-text-primary)]"
+                      )}
+                    >
+                      <span className="whitespace-nowrap">{item.label}</span>
+                    </Link>
+                  </motion.div>
+                );
+              })}
+            </motion.div>
+          )}
+        </AccordionContent>
+      </AccordionItem>
+    </Accordion>
+  );
+}
+
 // ── Leave accordion (approver-based) ─────────────────────────────────
+
+function SidebarSurveyAccordion({
+  currentSurveyView,
+  activeTab,
+  onSubClick,
+  isIad = false,
+}: {
+  currentSurveyView: 'admin' | 'my' | null;
+  activeTab: AssessmentTab;
+  onSubClick: (tab: AssessmentTab) => void;
+  isIad?: boolean;
+}) {
+  const { open: sidebarOpen, animate } = useSidebar();
+  const [surveyAccordionOpen, setSurveyAccordionOpen] = useState(false);
+
+  useEffect(() => {
+    setSurveyAccordionOpen(currentSurveyView !== null || activeTab === 'survey-admin' || activeTab === 'survey-templates' || activeTab === 'survey-my');
+  }, [currentSurveyView, activeTab]);
+
+  const ALL_ITEMS = [
+    { label: 'My Surveys', href: '/dashboard/assessments/survey?view=my', tab: 'survey-my' as const, iadOnly: true },
+    { label: 'Survey Management', href: '/dashboard/assessments/survey-management', tab: 'survey-admin' as const, iadOnly: false },
+    { label: 'Survey Templates', href: '/dashboard/assessments/survey-templates', tab: 'survey-templates' as const, iadOnly: false },
+  ];
+  const ITEMS = ALL_ITEMS.filter(item => !item.iadOnly || isIad);
+
+  return (
+    <Accordion
+      type="single"
+      collapsible
+      value={surveyAccordionOpen ? 'survey' : ''}
+      onValueChange={(v) => {
+        const nowOpen = v === 'survey';
+        setSurveyAccordionOpen(nowOpen);
+      }}
+    >
+      <AccordionItem value="survey">
+        <AccordionTrigger
+          className="h-10 rounded-lg
+            text-[var(--color-text-muted)]
+            hover:text-[var(--color-text-primary)]"
+        >
+          <span className="flex h-10 w-[40px] shrink-0 items-center justify-center">
+            <FileText size={18} className="shrink-0" />
+          </span>
+          <motion.div
+            initial={false}
+            animate={{
+              opacity: animate ? (sidebarOpen ? 1 : 0) : 1,
+              maxWidth: animate ? (sidebarOpen ? 160 : 0) : 160,
+            }}
+            transition={{ duration: 0.18, ease: [0.4, 0, 0.2, 1] }}
+            className="flex flex-1 items-center overflow-hidden"
+          >
+            <span className="flex-1 whitespace-nowrap text-xs font-medium text-left">Surveys</span>
+            <span
+              className="shrink-0 flex items-center justify-center mr-1
+                transition-transform duration-[250ms] ease-[cubic-bezier(0.22,1,0.36,1)]
+                [[data-state=open]_&]:rotate-90"
+            >
+              <ChevronRight size={14} />
+            </span>
+          </motion.div>
+        </AccordionTrigger>
+        <AccordionContent>
+          {sidebarOpen && (
+            <motion.div
+              variants={SUB_CONTAINER_VARIANTS}
+              initial="hidden"
+              animate="visible"
+              exit="hidden"
+              className="mt-0.5 flex flex-col gap-0.5 pb-0.5"
+            >
+              {ITEMS.map((item) => {
+                const isActive =
+                  activeTab === item.tab;
+                return (
+                  <motion.div key={item.tab} variants={SUB_ITEM_VARIANTS}>
+                    <Link
+                      href={item.href}
+                      onClick={() => onSubClick(item.tab)}
+                      className={cn(
+                        "flex items-center h-7 rounded-lg pr-3 pl-[42px] text-xs transition-colors duration-150",
+                        isActive
+                          ? "bg-[#2845D6]/10 text-[#2845D6]"
+                          : "text-[var(--color-text-muted)] font-medium hover:bg-[var(--color-bg-card)] hover:text-[var(--color-text-primary)]"
+                      )}
+                    >
+                      <span className="whitespace-nowrap">{item.label}</span>
+                    </Link>
+                  </motion.div>
+                );
+              })}
+            </motion.div>
+          )}
+        </AccordionContent>
+      </AccordionItem>
+    </Accordion>
+  );
+}
 
 function SidebarLeaveAccordion({
   isExpanded,
@@ -250,7 +466,7 @@ function SidebarLeaveAccordion({
             transition={{ duration: 0.18, ease: [0.4, 0, 0.2, 1] }}
             className="flex flex-1 items-center overflow-hidden"
           >
-            <span className="flex-1 whitespace-nowrap text-sm font-medium text-left">Leave Filing</span>
+            <span className="flex-1 whitespace-nowrap text-xs font-medium text-left">Leave Filing</span>
             {/* Pure CSS rotate — no Framer layout, never stretches */}
             <span
               className="shrink-0 flex items-center justify-center mr-1
@@ -323,7 +539,7 @@ function LogoutButton({ onLogout }: { onLogout: () => void }) {
           maxWidth: animate ? (open ? 180 : 0) : 180,
         }}
         transition={{ duration: 0.18, ease: [0.4, 0, 0.2, 1] }}
-        className="overflow-hidden whitespace-nowrap text-sm font-medium"
+        className="overflow-hidden whitespace-nowrap text-xs font-medium"
       >
         Log Out
       </motion.span>
@@ -375,6 +591,33 @@ export default function DashboardLayout({
     () => pathname.startsWith("/dashboard/leave")
   );
   const [lastLeaveTab, setLastLeaveTab] = useState<"request" | "approval" | null>(null);
+  const [assessmentAccordionOpen, setAssessmentAccordionOpen] = useState(
+    () => pathname.startsWith("/dashboard/assessments")
+  );
+  const [lastAssessmentTab, setLastAssessmentTab] = useState<AssessmentTab>(null);
+
+  const searchParams = useSearchParams();
+  const surveyView = searchParams?.get('view') === 'my' ? 'my' : searchParams?.get('view') === 'admin' ? 'admin' : null;
+
+  useEffect(() => {
+    if (pathname.startsWith("/dashboard/assessments/training-evaluation")) {
+      setLastAssessmentTab('training');
+    } else if (pathname.startsWith("/dashboard/assessments/employee-review")) {
+      setLastAssessmentTab('review');
+    } else if (pathname.startsWith("/dashboard/assessments/survey-templates")) {
+      setLastAssessmentTab('survey-templates');
+    } else if (pathname.startsWith("/dashboard/assessments/survey-management")) {
+      setLastAssessmentTab('survey-admin');
+    } else if (pathname.startsWith("/dashboard/assessments/survey")) {
+      if (surveyView === 'my' || (!user?.admin && !user?.hr && !user?.iad)) {
+        setLastAssessmentTab('survey-my');
+      } else {
+        setLastAssessmentTab('survey-admin');
+      }
+    } else {
+      setLastAssessmentTab(null);
+    }
+  }, [pathname, surveyView, user]);
 
   // Reset last-clicked tab tracking when navigating away from leave pages
   useEffect(() => {
@@ -455,7 +698,7 @@ export default function DashboardLayout({
       <div className="flex h-screen items-center justify-center bg-[var(--color-bg)]">
         <div className="flex flex-col items-center gap-3">
           <div className="h-8 w-8 rounded-full border-2 border-[#2845D6] border-t-transparent animate-spin" />
-          <p className="text-sm text-[var(--color-text-muted)]">Loading…</p>
+          <p className="text-xs text-[var(--color-text-muted)]">Loading…</p>
         </div>
       </div>
     );
@@ -507,7 +750,6 @@ export default function DashboardLayout({
 
         {/* Breadcrumb — hidden on mobile */}
         <div className="hidden sm:flex items-center gap-1.5 min-w-0 mr-auto">
-          <ChevronRight size={13} className="shrink-0 text-[var(--color-text-muted)]" />
           <span className="text-sm font-semibold text-[var(--color-text-primary)] truncate">
             {breadcrumb}
           </span>
@@ -532,7 +774,49 @@ export default function DashboardLayout({
             <div className="flex-1 overflow-y-auto overflow-x-hidden py-2 px-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
               <div className="flex flex-col gap-0.5">
                 {navItems.map((item) => {
-                  // Leave item: admin/hr see direct approval link, other approvers see accordion.
+                  const Icon = item.icon;
+                  // Assessment accordion uses only training and review.
+                  if (item.href === "/dashboard/assessments") {
+                    return (
+                      <SidebarAssessmentAccordion
+                        key="assessments-accordion"
+                        isExpanded={assessmentAccordionOpen}
+                        onToggle={() => {
+                          setAssessmentAccordionOpen((v) => !v);
+                          setLeaveAccordionOpen(false);
+                        }}
+                        pathname={pathname}
+                        activeTab={lastAssessmentTab}
+                        onSubClick={(tab) => setLastAssessmentTab(tab)}
+                      />
+                    );
+                  }
+
+                  if (item.href === "/dashboard/assessments/survey") {
+                    if (user.iad || user.admin || user.hr) {
+                      return (
+                        <SidebarSurveyAccordion
+                          key="survey-accordion"
+                          currentSurveyView={surveyView}
+                          activeTab={lastAssessmentTab}
+                          onSubClick={(tab) => setLastAssessmentTab(tab)}
+                          isIad={user.iad}
+                        />
+                      );
+                    }
+                    return (
+                      <SidebarLink
+                        key={item.href}
+                        link={{
+                          label: item.label,
+                          href: item.href + "?view=my",
+                          icon: <Icon size={18} className="shrink-0" />,
+                        }}
+                        active={pathname.startsWith('/dashboard/assessments/survey')}
+                      />
+                    );
+                  }
+
                   if (item.href === "/dashboard/leave") {
                     if (user.admin || user.hr) {
                       return (
@@ -552,7 +836,10 @@ export default function DashboardLayout({
                         <SidebarLeaveAccordion
                           key="leave-accordion"
                           isExpanded={leaveAccordionOpen}
-                          onToggle={() => setLeaveAccordionOpen((v) => !v)}
+                          onToggle={() => {
+                            setLeaveAccordionOpen((v) => !v);
+                            setAssessmentAccordionOpen(false);
+                          }}
                           pathname={pathname}
                           activeTab={lastLeaveTab}
                           onSubClick={(tab) => setLastLeaveTab(tab)}
@@ -561,7 +848,6 @@ export default function DashboardLayout({
                     }
                   }
 
-                  const Icon = item.icon;
                   return (
                     <SidebarLink
                       key={item.href}
