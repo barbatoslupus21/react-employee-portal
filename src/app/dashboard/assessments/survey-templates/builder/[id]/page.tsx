@@ -562,6 +562,7 @@ function QuestionCard({
       const body: Record<string, unknown> = {
         ...f,
         question_text: f.question_text.trim(),
+        order: card.order,
       };
       if (currentNeedsOptions)
         body.options = options.filter(o => o.text.trim()).map((o, i) => ({ option_text: o.text.trim(), order: i }));
@@ -1135,6 +1136,10 @@ function TemplateBuilderContent({ templateId }: { templateId: number }) {
 
   async function handleSaveMeta() {
     if (!form.title.trim()) { setErrors({ title: 'Title is required.' }); return; }
+    if (validateActiveCard.current) {
+      const ok = await validateActiveCard.current();
+      if (!ok) return;
+    }
     setSaving(true);
     setErrors({});
     try {

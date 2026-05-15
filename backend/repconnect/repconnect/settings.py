@@ -16,7 +16,7 @@ DEBUG = config('DEBUG', default=True, cast=bool)
 ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1', cast=Csv())
 
 # Upload limits
-DATA_UPLOAD_MAX_MEMORY_SIZE = 2_621_440   # 2.5 MB
+DATA_UPLOAD_MAX_MEMORY_SIZE = 54_525_952  # 52 MB — allows video uploads
 FILE_UPLOAD_MAX_MEMORY_SIZE = 5_242_880   # 5 MB
 DATA_UPLOAD_MAX_NUMBER_FIELDS = 100
 
@@ -44,6 +44,9 @@ INSTALLED_APPS = [
     'finance',
     'leave',
     'survey',
+    'training',
+    'employee_evaluation',
+    'announcement',
 ]
 
 MIDDLEWARE = [

@@ -1110,11 +1110,13 @@ export default function PRFAdminPage() {
   function handleReviewSuccess() {
     setReviewItem(null);
     fetchTable();
+    window.dispatchEvent(new Event('prf-badge-refresh'));
   }
 
   function handleCancelSuccess() {
     setCancelItem(null);
     fetchTable();
+    window.dispatchEvent(new Event('prf-badge-refresh'));
   }
 
   // ── Loading / auth guard ───────────────────────────────────────────────────
@@ -1312,7 +1314,7 @@ export default function PRFAdminPage() {
         {/* ── Page header ── */}
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div>
-            <h1 className="text-lg font-bold text-[var(--color-text-primary)] flex items-center gap-2">
+            <h1 className="text-xl font-bold text-[var(--color-text-primary)] flex items-center gap-2">
               PRF Request Management
             </h1>
             <p className="text-xs text-[var(--color-text-muted)] mt-0.5">

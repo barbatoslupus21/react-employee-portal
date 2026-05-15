@@ -64,7 +64,15 @@ class Notification(models.Model):
         ('leave_disapproved',         'Leave Request Disapproved'),
         ('leave_pending_approval',    'Leave Request Pending Approval'),
         ('leave_cancelled',           'Leave Request Cancelled'),        ('survey_assigned',           'Survey Assigned'),
-        ('survey_reminder',           'Survey Reminder'),    ]
+        ('survey_reminder',           'Survey Reminder'),
+        ('training_assigned',         'Training Evaluation Assigned'),
+        ('training_submitted',        'Training Evaluation Submitted'),
+        ('training_supervisor_review','Training Ready for Supervisor Review'),
+        ('training_user_confirmation','Training Ready for Your Confirmation'),
+        ('training_final_approval',   'Training Needs Final Approval'),
+        ('training_returned',         'Training Returned for Re-evaluation'),
+        ('training_completed',        'Training Evaluation Completed'),
+    ]
 
     SCOPE_CHOICES = [
         ('specific_user', 'Specific User'),

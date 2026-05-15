@@ -360,7 +360,7 @@ function LoanCard({
         {/* View History CTA */}
         <button
           onClick={() => onViewHistory(loan)}
-          className="mt-1 flex items-center gap-1.5 text-xs font-semibold transition-all group-hover:gap-2"
+          className="mt-1 flex items-center gap-1.5 text-[12px] font-semibold transition-all group-hover:gap-2"
           style={{ color: color.hex }}
         >
           <Eye size={12} />
@@ -498,7 +498,7 @@ export default function MyFinancePage() {
       .then((data: UserData | null) => {
         if (authTimerRef.current) clearTimeout(authTimerRef.current);
         if (!data) { router.replace('/'); return; }
-        if (data.admin && data.accounting) { router.replace('/dashboard/finance/admin'); return; }
+        if (data.accounting) { router.replace('/dashboard/finance/admin'); return; }
         setUser(data);
         setAuthPhase('done');
       })
@@ -661,8 +661,8 @@ export default function MyFinancePage() {
 
       {/* ── Page header ─────────────────────────────────────────────────── */}
       <div>
-        <h1 className="text-2xl font-bold text-[var(--color-text-primary)]">My Finance</h1>
-        <p className="mt-1 text-sm text-[var(--color-text-muted)]">
+        <h1 className="text-xl font-bold text-[var(--color-text-primary)]">My Finance</h1>
+        <p className="mt-1 text-xs text-[var(--color-text-muted)]">
           Track your payslips, allowances, savings, and loans.
         </p>
       </div>
@@ -713,7 +713,7 @@ export default function MyFinancePage() {
           {/* Card header */}
           <div className="flex items-center px-4 py-3 border-b border-[var(--color-border)] shrink-0">
             <div>
-              <p className="text-lg pb-1.5 pt-1 font-semibold text-[var(--color-text-secondary)] leading-none">Payslips</p>
+              <p className="text-md pb-1.5 pt-1 font-semibold text-[var(--color-text-secondary)] leading-none">Payslips</p>
               <p className="text-[11px] text-[var(--color-text-muted)] mt-0.5">Your salary statements</p>
             </div>
           </div>
@@ -782,7 +782,7 @@ export default function MyFinancePage() {
         <div className="flex flex-col rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-sm md:h-[500px]" style={{ minHeight: '200px', maxHeight: '500px', overflow: 'hidden' }}>
           <div className="flex items-center px-4 py-3 border-b border-[var(--color-border)] shrink-0">
             <div>
-              <p className="text-lg pb-1.5 pt-1 font-semibold text-[var(--color-text-secondary)] leading-none">Benefits</p>
+              <p className="text-md pb-1.5 pt-1 font-semibold text-[var(--color-text-secondary)] leading-none">Benefits</p>
               <p className="text-[11px] text-[var(--color-text-muted)] mt-0.5">Allowances, Benefits, and Bonuses</p>
             </div>
           </div>
@@ -838,7 +838,7 @@ export default function MyFinancePage() {
         <div className="flex flex-col rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-sm md:h-[500px]" style={{ minHeight: '200px', maxHeight: '500px', overflow: 'hidden' }}>
           <div className="flex items-center px-4 py-3 border-b border-[var(--color-border)] shrink-0">
             <div>
-              <p className="text-lg pb-1.5 pt-1 font-semibold text-[var(--color-text-secondary)] leading-none">Savings</p>
+              <p className="text-md pb-1.5 pt-1 font-semibold text-[var(--color-text-secondary)] leading-none">Savings</p>
               <p className="text-[11px] text-[var(--color-text-muted)] mt-0.5">Your financial growth</p>
             </div>
           </div>
@@ -894,7 +894,7 @@ export default function MyFinancePage() {
         {/* Section header — sticky, paints above cards during scroll */}
         <div className="sticky top-0 z-10 bg-[var(--color-bg-elevated)] flex items-center justify-between gap-3 px-4 pt-4 pb-3 border-b border-[var(--color-border)]">
           <div>
-            <p className="text-lg font-semibold text-[var(--color-text-primary)] leading-none">Loans</p>
+            <p className="text-md font-semibold text-[var(--color-text-primary)] leading-none">Loans</p>
             <p className="text-[10px] text-[var(--color-text-muted)] mt-1">as of {todayRef}</p>
           </div>
           {/* Active / All filter pill — hidden when all loans are active */}
@@ -1160,7 +1160,7 @@ export default function MyFinancePage() {
                 <div className="px-5 py-3 border-t border-[var(--color-border)] text-right shrink-0">
                   <button
                     onClick={() => setViewLoan(null)}
-                    className="h-8 px-4 rounded-lg text-sm font-medium border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] transition-colors"
+                    className="h-8 px-4 py-2 rounded-lg text-xs font-normal border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] transition-colors"
                   >
                     Close
                   </button>

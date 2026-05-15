@@ -703,9 +703,11 @@ class PRFAdminUpdateView(APIView):
         new_remarks = validated.get('admin_remarks', '').strip()
 
         old_status = prf.status
-        prf.status       = new_status
+        prf.status        = new_status
         prf.admin_remarks = new_remarks or None
         prf.processed_by  = request.user
+        if new_status in ('approved', 'disapproved'):
+            prf.seen = False
 
         # Pre-validate Medicine Allowance approval before committing the status change.
         if new_status == 'approved' and old_status != 'approved' and prf.prf_type == 'medicine_allowance':
@@ -823,6 +825,59 @@ class PRFAdminUpdateView(APIView):
             _schedule_prf_notification(prf, new_status, new_remarks)
 
         return Response(PRFAdminSerializer(prf).data)
+
+
+class PRFMarkSeenView(APIView):
+    """
+    POST /api/prform/requests/<pk>/mark-seen
+    Sets seen=True for the requesting employee's PRF record.
+    Fires as a background request when the employee opens the View modal.
+    """
+    permission_classes = [IsAuthenticated]
+
+    @transaction.atomic
+    def post(self, request, pk):
+        try:
+            prf = PRFRequest.objects.select_for_update().get(pk=pk, employee=request.user)
+        except PRFRequest.DoesNotExist:
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if not prf.seen:
+            prf.seen = True
+            prf.save(update_fields=['seen'])
+        return Response({'seen': True})
+
+
+class PRFUnseenCountView(APIView):
+    """
+    GET /api/prform/requests/unseen-count
+    Returns the count of PRF records where seen=False for the requesting employee.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        count = PRFRequest.objects.filter(employee=request.user, seen=False).count()
+        return Response({'unseen_count': count})
+
+
+class PRFAdminPendingCountView(APIView):
+    """
+    GET /api/prform/admin/pending-count
+    Returns the count of PRF requests with status='pending' across all employees.
+    Requires admin=True, hr=True, or accounting=True.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        is_privileged = (
+            getattr(user, 'admin', False) or
+            getattr(user, 'hr', False) or
+            getattr(user, 'accounting', False)
+        )
+        if not is_privileged:
+            return Response({'detail': 'Access denied.'}, status=status.HTTP_403_FORBIDDEN)
+        count = PRFRequest.objects.filter(status='pending').count()
+        return Response({'pending_count': count})
 
 
 class PRFAdminExportView(APIView):

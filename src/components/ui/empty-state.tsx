@@ -28,7 +28,7 @@ export function EmptyState({
       className={cn(
         "text-center",
         "rounded-xl p-14 w-full",
-        "group hover:bg-[var(--color-bg-elevated)] transition duration-500 hover:duration-200",
+        "group hover:bg-transparent transition duration-500 hover:duration-200",
         className,
       )}
     >

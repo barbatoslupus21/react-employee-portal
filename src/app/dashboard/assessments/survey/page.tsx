@@ -6,6 +6,7 @@ import React, {
   useRef,
   useState,
   useMemo,
+  Suspense,
 } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
@@ -22,6 +23,7 @@ import {
   FileText,
   GripVertical,
   Layout,
+  List,
   Loader2,
   Lock,
   Plus,
@@ -76,11 +78,15 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { LeaveRangePicker } from '@/components/ui/leave-range-picker';
+import { DateTimePicker } from '@/components/ui/datetime-picker';
 import { ChoiceboxGroup } from '@/components/ui/choicebox-1';
 import { TextareaWithCharactersLeft } from '@/components/ui/textarea-with-characters-left';
 import BasicCheckbox from '@/components/ui/checkbox-1';
+import { RatingInteraction } from '@/components/ui/emoji-rating';
+import { Rating } from '@/components/ui/rating';
 import { getCsrfToken } from '@/lib/csrf';
 import { cn } from '@/lib/utils';
+import { useMediaQuery } from '@/hooks/use-media-query';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -2613,12 +2619,15 @@ interface MySurveyItem {
   id: number;
   title: string;
   description: string;
+  template_description: string;
   is_anonymous: boolean;
   start_date: string | null;
   end_date: string | null;
   status: string;
   is_complete: boolean;
   response_id: number | null;
+  is_seen: boolean;
+  question_count: number;
 }
 
 interface RespondentQuestion {
@@ -2651,7 +2660,7 @@ interface RespondentSurveyDetail {
   is_complete: boolean;
 }
 
-type SurveyPillStatus = 'closed' | 'scheduled' | 'pending' | 'responded';
+type SurveyPillStatus = 'action_required' | 'responded' | 'closed' | 'scheduled' | 'draft';
 
 function computeSurveyPillStatus(item: MySurveyItem): SurveyPillStatus {
   const today = new Date();
@@ -2659,19 +2668,26 @@ function computeSurveyPillStatus(item: MySurveyItem): SurveyPillStatus {
   const start = item.start_date ? new Date(item.start_date + 'T00:00:00') : null;
   const end = item.end_date ? new Date(item.end_date + 'T23:59:59') : null;
 
+  if (item.status === 'draft') return 'draft';
   if (item.status === 'closed') return 'closed';
   if (end && today > end) return 'closed';
   if (start && today < start) return 'scheduled';
   if (item.is_complete) return 'responded';
-  return 'pending';
+  return 'action_required';
 }
 
 const PILL_STATUS_MAP: Record<SurveyPillStatus, { status: string; label: string }> = {
+  action_required: { status: 'pending', label: 'Action Required' },
   closed: { status: 'closed', label: 'Closed' },
   scheduled: { status: 'scheduled', label: 'Scheduled' },
-  pending: { status: 'pending', label: 'Pending' },
+  draft: { status: 'draft', label: 'Draft' },
   responded: { status: 'approved', label: 'Responded' },
 };
+
+function formatEstimatedTime(questionCount: number): string {
+  const mins = Math.max(1, Math.ceil(questionCount * 50 / 60));
+  return `${mins} min${mins !== 1 ? 's' : ''}`;
+}
 
 const INSTRUCTION_Q_TYPES = new Set(['section', 'subsection', 'statement']);
 
@@ -2688,11 +2704,19 @@ type AnswerValue = {
 
 function SurveyListSkeleton() {
   return (
-    <div className="flex flex-col gap-2 p-3">
-      {Array.from({ length: 5 }).map((_, i) => (
-        <div key={i} className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-3 animate-pulse flex flex-col gap-2">
-          <div className="h-3 w-3/4 rounded bg-[var(--color-bg-card)]" />
-          <div className="h-3 w-16 rounded-full bg-[var(--color-bg-card)]" />
+    <div className="flex flex-col gap-3 p-4">
+      <div className="rounded-3xl border border-[var(--color-border)] bg-[var(--color-bg)] p-4 shadow-sm animate-pulse">
+        <div className="h-3 w-28 rounded bg-[var(--color-bg-card)] mb-3" />
+        <div className="h-3 w-16 rounded bg-[var(--color-bg-card)]" />
+      </div>
+      {Array.from({ length: 4 }).map((_, i) => (
+        <div key={i} className="rounded-[1.75rem] border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4 shadow-sm animate-pulse">
+          <div className="h-3 w-3/4 rounded bg-[var(--color-bg-card)] mb-3" />
+          <div className="h-3 w-full rounded bg-[var(--color-bg-card)] mb-3" />
+          <div className="flex flex-wrap gap-2">
+            <div className="h-6 w-20 rounded-full bg-[var(--color-bg-card)]" />
+            <div className="h-6 w-24 rounded-full bg-[var(--color-bg-card)]" />
+          </div>
         </div>
       ))}
     </div>
@@ -2716,12 +2740,8 @@ function QuestionInput({ q, answer, onChange, readOnly }: QuestionInputProps) {
   }
 
   if (INSTRUCTION_Q_TYPES.has(q.question_type)) {
-    const typeLabels: Record<string, string> = {
-      section: 'Section', subsection: 'Subsection', statement: 'Statement',
-    };
     return (
-      <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-subtle,var(--color-bg-card))] p-4">
-        <p className="text-[10px] font-semibold uppercase tracking-wide text-[#2845D6] mb-1">{typeLabels[q.question_type] ?? q.question_type}</p>
+      <div className="rounded-xl bg-transparent p-4">
         <p className="text-sm font-medium text-[var(--color-text-primary)] leading-snug">{q.question_text}</p>
       </div>
     );
@@ -2729,71 +2749,137 @@ function QuestionInput({ q, answer, onChange, readOnly }: QuestionInputProps) {
 
   const sel = answer.selected_option_ids ?? [];
 
-  if (q.question_type === 'single_choice' || q.question_type === 'dropdown') {
+  if (q.question_type === 'single_choice') {
     return (
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-2 pl-6">
         {q.options.map(opt => (
-          <label key={opt.id} className={cn('flex items-center gap-2.5 rounded-lg border border-[var(--color-border)] px-3 py-2 cursor-pointer transition-colors', sel.includes(opt.id) ? 'border-[#2845D6] bg-[#2845D6]/5' : 'hover:bg-[var(--color-bg-elevated)]', readOnly && 'cursor-default')}>
+          <label key={opt.id} className={cn('flex items-center gap-2 transition-colors', readOnly && 'cursor-default')}>
+            <span className={cn('inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border transition-all', answer.selected_option_ids?.[0] === opt.id ? 'border-[#2b7fff] bg-[#2b7fff] text-white' : 'border-[var(--color-border)] bg-[var(--color-bg-elevated)]')}>
+              <span className="text-[10px]">{answer.selected_option_ids?.[0] === opt.id ? '●' : ''}</span>
+            </span>
             <input
               type="radio"
-              className="accent-[#2845D6] shrink-0"
-              checked={sel.includes(opt.id)}
-              readOnly={readOnly}
+              className="hidden"
+              checked={answer.selected_option_ids?.[0] === opt.id}
               disabled={readOnly}
               onChange={() => !readOnly && onChange({ ...answer, selected_option_ids: [opt.id] })}
             />
-            <span className="text-sm text-[var(--color-text-primary)]">{opt.option_text}</span>
+            <span className="text-xs font-normal text-[var(--color-text-muted)]">{opt.option_text}</span>
           </label>
         ))}
         {q.allow_other && (
-          <label className={cn('flex items-center gap-2.5 rounded-lg border border-[var(--color-border)] px-3 py-2 cursor-pointer transition-colors', sel.includes(-1) ? 'border-[#2845D6] bg-[#2845D6]/5' : 'hover:bg-[var(--color-bg-elevated)]', readOnly && 'cursor-default')}>
-            <input type="radio" className="accent-[#2845D6] shrink-0" checked={sel.includes(-1)} disabled={readOnly} onChange={() => !readOnly && onChange({ ...answer, selected_option_ids: [-1] })} />
-            <span className="text-sm text-[var(--color-text-primary)]">Other:</span>
-            {sel.includes(-1) && !readOnly && (
+          <div className={cn('flex flex-col gap-3 transition-colors', readOnly && 'opacity-60')}>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <span className={cn('inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border transition-all', answer.selected_option_ids?.includes(-1) ? 'border-[#2b7fff] bg-[#2b7fff] text-white' : 'border-[var(--color-border)] bg-[var(--color-bg-elevated)]')}>
+                <span className="text-[10px]">{answer.selected_option_ids?.includes(-1) ? '●' : ''}</span>
+              </span>
               <input
-                type="text"
-                className="flex-1 bg-transparent text-sm outline-none placeholder:text-[var(--color-text-muted)]"
-                value={answer.other_text ?? ''}
-                placeholder="Please specify…"
-                onChange={e => onChange({ ...answer, other_text: sanitize(e.target.value) })}
-                maxLength={500}
+                type="radio"
+                className="hidden"
+                checked={answer.selected_option_ids?.includes(-1)}
+                disabled={readOnly}
+                onChange={() => !readOnly && onChange({ ...answer, selected_option_ids: [-1] })}
               />
+              <span className="text-xs font-normal text-[var(--color-text-muted)]">Other:</span>
+            </label>
+            {answer.selected_option_ids?.includes(-1) && (
+              <div className="w-1/2">
+                <Input
+                  type="text"
+                  value={answer.other_text ?? ''}
+                  disabled={readOnly}
+                  placeholder="Please specify…"
+                  onChange={e => !readOnly && onChange({ ...answer, other_text: sanitize(e.target.value) })}
+                />
+              </div>
             )}
-            {sel.includes(-1) && readOnly && <span className="text-sm text-[var(--color-text-muted)]">{answer.other_text || '—'}</span>}
-          </label>
+          </div>
         )}
+      </div>
+    );
+  }
+
+  if (q.question_type === 'dropdown') {
+    const selectedValue = answer.selected_option_ids?.[0] ? String(answer.selected_option_ids[0]) : '';
+    const selectedOption = q.options.find(opt => String(opt.id) === selectedValue);
+
+    if (readOnly) {
+      return (
+        <div className="pl-6">
+          <p className="text-xs font-normal text-[var(--color-text-muted)]">Answer: {selectedOption?.option_text ?? ''}</p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="pl-6 w-1/2">
+        <Select value={selectedValue} onValueChange={value => !readOnly && onChange({ ...answer, selected_option_ids: value ? [parseInt(value, 10)] : [] })}>
+          <SelectTrigger>
+            <SelectValue placeholder="Select an option" />
+          </SelectTrigger>
+          <SelectContent>
+            {q.options.map(opt => (
+              <SelectItem key={opt.id} value={String(opt.id)}>{opt.option_text}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
     );
   }
 
   if (q.question_type === 'multiple_choice') {
     return (
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-2 pl-6">
         {q.options.map(opt => (
-          <label key={opt.id} className={cn('flex items-center gap-2.5 rounded-lg border border-[var(--color-border)] px-3 py-2 cursor-pointer transition-colors', sel.includes(opt.id) ? 'border-[#2845D6] bg-[#2845D6]/5' : 'hover:bg-[var(--color-bg-elevated)]', readOnly && 'cursor-default')}>
-            <input
-              type="checkbox"
-              className="accent-[#2845D6] shrink-0"
-              checked={sel.includes(opt.id)}
-              disabled={readOnly}
-              onChange={() => {
-                if (readOnly) return;
-                const next = sel.includes(opt.id) ? sel.filter(x => x !== opt.id) : [...sel, opt.id];
-                onChange({ ...answer, selected_option_ids: next });
-              }}
-            />
-            <span className="text-sm text-[var(--color-text-primary)]">{opt.option_text}</span>
-          </label>
+          <BasicCheckbox
+            key={opt.id}
+            checked={sel.includes(opt.id)}
+            disabled={false}
+            label={opt.option_text}
+            onCheckedChange={checked => {
+              if (readOnly) return;
+              const next = checked ? [...sel, opt.id] : sel.filter(x => x !== opt.id);
+              onChange({ ...answer, selected_option_ids: next });
+            }}
+            className={cn(
+              'rounded-xl transition-colors',
+              readOnly && 'pointer-events-none',
+            )}
+          />
         ))}
         {q.allow_other && (
-          <label className={cn('flex items-center gap-2.5 rounded-lg border border-[var(--color-border)] px-3 py-2 cursor-pointer transition-colors', sel.includes(-1) ? 'border-[#2845D6] bg-[#2845D6]/5' : 'hover:bg-[var(--color-bg-elevated)]', readOnly && 'cursor-default')}>
-            <input type="checkbox" className="accent-[#2845D6] shrink-0" checked={sel.includes(-1)} disabled={readOnly} onChange={() => { if (!readOnly) { const n = sel.includes(-1) ? sel.filter(x => x !== -1) : [...sel, -1]; onChange({ ...answer, selected_option_ids: n }); } }} />
-            <span className="text-sm text-[var(--color-text-primary)]">Other:</span>
-            {sel.includes(-1) && !readOnly && (
-              <input type="text" className="flex-1 bg-transparent text-sm outline-none placeholder:text-[var(--color-text-muted)]" value={answer.other_text ?? ''} placeholder="Please specify…" onChange={e => onChange({ ...answer, other_text: sanitize(e.target.value) })} maxLength={500} />
+          <div className="space-y-2 rounded-xl">
+            <BasicCheckbox
+              checked={sel.includes(-1)}
+              disabled={false}
+              label="Other"
+              onCheckedChange={checked => {
+                if (readOnly) return;
+                const next = checked ? [...sel, -1] : sel.filter(x => x !== -1);
+                onChange({ ...answer, selected_option_ids: next });
+              }}
+              className={cn(
+                'rounded-xl transition-colors',
+                readOnly && 'pointer-events-none',
+              )}
+            />
+            {sel.includes(-1) && (
+              readOnly ? (
+                <div className="pl-6 text-xs font-normal text-[var(--color-text-muted)]">
+                  Answer: {answer.other_text ?? ''}
+                </div>
+              ) : (
+                <input
+                  type="text"
+                  className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[#2845D6]"
+                  value={answer.other_text ?? ''}
+                  disabled={readOnly}
+                  placeholder="Please specify…"
+                  onChange={e => !readOnly && onChange({ ...answer, other_text: sanitize(e.target.value) })}
+                />
+              )
             )}
-            {sel.includes(-1) && readOnly && <span className="text-sm text-[var(--color-text-muted)]">{answer.other_text || '—'}</span>}
-          </label>
+          </div>
         )}
       </div>
     );
@@ -2801,11 +2887,20 @@ function QuestionInput({ q, answer, onChange, readOnly }: QuestionInputProps) {
 
   if (q.question_type === 'yes_no') {
     return (
-      <div className="flex gap-3">
+      <div className="flex flex-col gap-2 pl-6">
         {['Yes', 'No'].map(opt => (
-          <label key={opt} className={cn('flex items-center gap-2 rounded-lg border border-[var(--color-border)] px-4 py-2 cursor-pointer transition-colors', answer.text_value === opt ? 'border-[#2845D6] bg-[#2845D6]/5' : 'hover:bg-[var(--color-bg-elevated)]', readOnly && 'cursor-default')}>
-            <input type="radio" className="accent-[#2845D6] shrink-0" checked={answer.text_value === opt} disabled={readOnly} onChange={() => !readOnly && onChange({ ...answer, text_value: opt })} />
-            <span className="text-sm text-[var(--color-text-primary)]">{opt}</span>
+          <label key={opt} className={cn('flex items-center gap-2 transition-colors', readOnly && 'cursor-default')}>
+            <span className={cn('inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border transition-all', answer.text_value === opt ? 'border-[#2b7fff] bg-[#2b7fff] text-white' : 'border-[var(--color-border)] bg-[var(--color-bg-elevated)]')}>
+              <span className="text-[10px]">{answer.text_value === opt ? '●' : ''}</span>
+            </span>
+            <input
+              type="radio"
+              className="hidden"
+              checked={answer.text_value === opt}
+              disabled={readOnly}
+              onChange={() => !readOnly && onChange({ ...answer, text_value: opt })}
+            />
+            <span className="text-xs font-normal text-[var(--color-text-muted)]">{opt}</span>
           </label>
         ))}
       </div>
@@ -2814,20 +2909,21 @@ function QuestionInput({ q, answer, onChange, readOnly }: QuestionInputProps) {
 
   if (q.question_type === 'rating') {
     const cfg = q.rating_config ?? { min_value: 1, max_value: 5, min_label: '', max_label: '' };
-    const range = Array.from({ length: cfg.max_value - cfg.min_value + 1 }, (_, i) => i + cfg.min_value);
-    const selected = answer.number_value ? parseInt(answer.number_value) : null;
+    const selected = answer.number_value ? parseInt(answer.number_value) : 0;
     return (
-      <div className="flex flex-col gap-2">
-        <div className="flex gap-2 flex-wrap">
-          {range.map(v => (
-            <button key={v} type="button" disabled={readOnly} onClick={() => !readOnly && onChange({ ...answer, number_value: String(v) })}
-              className={cn('w-10 h-10 rounded-lg border text-sm font-semibold transition-colors', selected === v ? 'border-[#2845D6] bg-[#2845D6] text-white' : 'border-[var(--color-border)] hover:border-[#2845D6] text-[var(--color-text-primary)]', readOnly && 'cursor-default')}>
-              {v}
-            </button>
-          ))}
+      <div className="flex flex-col items-start gap-2 pl-6">
+        <div className="w-full">
+          <Rating
+            rating={selected}
+            maxRating={cfg.max_value}
+            editable={!readOnly}
+            onRatingChange={value => !readOnly && onChange({ ...answer, number_value: String(value) })}
+            className="w-full justify-start"
+            size="lg"
+          />
         </div>
         {(cfg.min_label || cfg.max_label) && (
-          <div className="flex justify-between text-[10px] text-[var(--color-text-muted)] mt-1">
+          <div className="flex w-full justify-between text-[10px] text-[var(--color-text-muted)] mt-1">
             <span>{cfg.min_label}</span>
             <span>{cfg.max_label}</span>
           </div>
@@ -2837,15 +2933,26 @@ function QuestionInput({ q, answer, onChange, readOnly }: QuestionInputProps) {
   }
 
   if (q.question_type === 'likert') {
-    const likertOpts = ['Strongly Disagree', 'Disagree', 'Neutral', 'Agree', 'Strongly Agree'];
+    const likertOpts = [
+      { label: 'Strongly Disagree', emoji: '😡' },
+      { label: 'Disagree', emoji: '🙁' },
+      { label: 'Neutral', emoji: '😐' },
+      { label: 'Agree', emoji: '🙂' },
+      { label: 'Strongly Agree', emoji: '😄' },
+    ];
+    const currentRating = likertOpts.findIndex(opt => opt.label === answer.text_value) + 1;
+
     return (
-      <div className="flex gap-2 flex-wrap">
-        {likertOpts.map(opt => (
-          <button key={opt} type="button" disabled={readOnly} onClick={() => !readOnly && onChange({ ...answer, text_value: opt })}
-            className={cn('px-3 py-2 rounded-lg border text-xs font-medium transition-colors', answer.text_value === opt ? 'border-[#2845D6] bg-[#2845D6] text-white' : 'border-[var(--color-border)] hover:border-[#2845D6] text-[var(--color-text-primary)]', readOnly && 'cursor-default')}>
-            {opt}
-          </button>
-        ))}
+      <div className="bg-transparent pl-6">
+        <RatingInteraction
+          value={currentRating}
+          disabled={readOnly}
+          onChange={value => {
+            const label = likertOpts[value - 1]?.label ?? '';
+            onChange({ ...answer, text_value: label });
+          }}
+          className="bg-transparent"
+        />
       </div>
     );
   }
@@ -2854,10 +2961,21 @@ function QuestionInput({ q, answer, onChange, readOnly }: QuestionInputProps) {
     const range = Array.from({ length: 10 }, (_, i) => i + 1);
     const selected = answer.number_value ? parseInt(answer.number_value) : null;
     return (
-      <div className="flex gap-2 flex-wrap">
+      <div className="grid w-full grid-cols-5 gap-2 pl-6 sm:grid-cols-10">
         {range.map(v => (
-          <button key={v} type="button" disabled={readOnly} onClick={() => !readOnly && onChange({ ...answer, number_value: String(v) })}
-            className={cn('w-9 h-9 rounded-lg border text-sm font-semibold transition-colors', selected === v ? 'border-[#2845D6] bg-[#2845D6] text-white' : 'border-[var(--color-border)] hover:border-[#2845D6] text-[var(--color-text-primary)]', readOnly && 'cursor-default')}>
+          <button
+            key={v}
+            type="button"
+            disabled={readOnly}
+            onClick={() => !readOnly && onChange({ ...answer, number_value: String(v) })}
+            className={cn(
+              'h-9 w-full rounded-lg border text-sm font-semibold transition-colors sm:h-9',
+              selected === v
+                ? 'border-[#2845D6] bg-[#2845D6] text-white'
+                : 'border-[var(--color-border)] hover:border-[#2845D6] text-[var(--color-text-primary)]',
+              readOnly && 'cursor-default',
+            )}
+          >
             {v}
           </button>
         ))}
@@ -2866,54 +2984,108 @@ function QuestionInput({ q, answer, onChange, readOnly }: QuestionInputProps) {
   }
 
   if (q.question_type === 'number') {
+    if (readOnly) {
+      return (
+        <div className="pl-6">
+          <p className="text-xs font-normal text-[var(--color-text-muted)]">Answer: {answer.number_value ?? ''}</p>
+        </div>
+      );
+    }
+
     return (
-      <input
-        type="number"
-        className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[#2845D6] disabled:opacity-60"
-        value={answer.number_value ?? ''}
-        disabled={readOnly}
-        onChange={e => !readOnly && onChange({ ...answer, number_value: e.target.value })}
-      />
+      <div className="pl-6 w-1/2">
+        <Input
+          type="number"
+          value={answer.number_value ?? ''}
+          disabled={readOnly}
+          onChange={e => !readOnly && onChange({ ...answer, number_value: e.target.value })}
+          placeholder={readOnly ? '' : 'Your answer…'}
+        />
+      </div>
     );
   }
 
   if (q.question_type === 'date') {
+    if (readOnly) {
+      return (
+        <div className="pl-6">
+          <p className="text-xs font-normal text-[var(--color-text-muted)]">Answer: {answer.text_value ?? ''}</p>
+        </div>
+      );
+    }
+
+    const dateValue = answer.text_value ? new Date(`${answer.text_value}T00:00:00`) : undefined;
     return (
-      <input
-        type="date"
-        className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[#2845D6] disabled:opacity-60"
-        value={answer.text_value ?? ''}
-        disabled={readOnly}
-        onChange={e => !readOnly && onChange({ ...answer, text_value: e.target.value })}
-      />
+      <div className="pl-6 w-1/2">
+        <DateTimePicker
+          value={dateValue}
+          disabled={readOnly}
+          onChange={date => !readOnly && onChange({ ...answer, text_value: date.toISOString().slice(0, 10) })}
+          placeholder="Select a date"
+          displayFormat="MMM d, yyyy"
+          className="w-full"
+        />
+      </div>
     );
   }
 
   if (q.question_type === 'long_text') {
+    if (readOnly) {
+      return (
+        <div className="pl-6">
+          <p className="text-xs font-normal text-[var(--color-text-muted)]">Answer: {answer.text_value ?? ''}</p>
+        </div>
+      );
+    }
+
     return (
-      <textarea
-        className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2 text-sm resize-none focus:outline-none focus:ring-1 focus:ring-[#2845D6] disabled:opacity-60"
-        rows={4}
-        maxLength={5000}
+      <div className="pl-6">
+        <TextareaWithCharactersLeft
+          value={answer.text_value ?? ''}
+          onChange={e => !readOnly && onChange({ ...answer, text_value: sanitize(e.target.value) })}
+          disabled={readOnly}
+          maxLength={5000}
+          placeholder={readOnly ? '' : 'Your answer…'}
+          className="w-full"
+        />
+      </div>
+    );
+  }
+
+  if (q.question_type === 'short_text') {
+    if (readOnly) {
+      return (
+        <div className="pl-6">
+          <p className="text-xs font-normal text-[var(--color-text-muted)]">Answer: {answer.text_value ?? ''}</p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="pl-6 w-1/2">
+        <Input
+          type="text"
+          value={answer.text_value ?? ''}
+          disabled={readOnly}
+          onChange={e => !readOnly && onChange({ ...answer, text_value: sanitize(e.target.value) })}
+          placeholder={readOnly ? '' : 'Your answer…'}
+          maxLength={1000}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="pl-6 w-1/2">
+      <Input
+        type="text"
         value={answer.text_value ?? ''}
         disabled={readOnly}
         onChange={e => !readOnly && onChange({ ...answer, text_value: sanitize(e.target.value) })}
         placeholder={readOnly ? '' : 'Your answer…'}
+        maxLength={1000}
       />
-    );
-  }
-
-  // short_text and fallback
-  return (
-    <input
-      type="text"
-      className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[#2845D6] disabled:opacity-60"
-      maxLength={1000}
-      value={answer.text_value ?? ''}
-      disabled={readOnly}
-      onChange={e => !readOnly && onChange({ ...answer, text_value: sanitize(e.target.value) })}
-      placeholder={readOnly ? '' : 'Your answer…'}
-    />
+    </div>
   );
 }
 
@@ -2931,9 +3103,50 @@ function SurveyRightPanel({ surveyId, pillStatus, onSubmitted }: SurveyRightPane
   const [answers, setAnswers] = useState<Record<number, AnswerValue>>({});
   const [submitting, setSubmitting] = useState(false);
   const [savingQId, setSavingQId] = useState<number | null>(null);
+  const savingIndicatorTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const responseIdRef = useRef<number | null>(null);
 
-  const readOnly = pillStatus === 'closed' || pillStatus === 'scheduled' || pillStatus === 'responded';
+  const readOnly = pillStatus !== 'action_required';
+
+  const isQuestionAnswered = (q: RespondentQuestion, answer: AnswerValue) => {
+    const trimText = (value?: string) => value?.trim().length ? true : false;
+
+    if (q.question_type === 'single_choice' || q.question_type === 'dropdown') {
+      const selected = answer.selected_option_ids?.[0];
+      if (selected === undefined) return false;
+      if (selected === -1) return trimText(answer.other_text);
+      return true;
+    }
+
+    if (q.question_type === 'multiple_choice') {
+      const selected = answer.selected_option_ids ?? [];
+      if (selected.length === 0) return false;
+      if (selected.includes(-1)) return trimText(answer.other_text);
+      return true;
+    }
+
+    if (q.question_type === 'yes_no' || q.question_type === 'likert') {
+      return trimText(answer.text_value);
+    }
+
+    if (q.question_type === 'rating' || q.question_type === 'linear_scale' || q.question_type === 'number') {
+      return trimText(answer.number_value);
+    }
+
+    if (q.question_type === 'date') {
+      return trimText(answer.text_value);
+    }
+
+    if (q.question_type === 'short_text' || q.question_type === 'long_text') {
+      return trimText(answer.text_value);
+    }
+
+    return true;
+  };
+
+  const allRequiredAnswered = detail?.questions
+    .filter(q => q.is_required && !INSTRUCTION_Q_TYPES.has(q.question_type))
+    .every(q => isQuestionAnswered(q, answers[q.id] ?? {})) ?? false;
 
   useEffect(() => {
     setLoadingDetail(true);
@@ -2941,12 +3154,15 @@ function SurveyRightPanel({ surveyId, pillStatus, onSubmitted }: SurveyRightPane
     setAnswers({});
     responseIdRef.current = null;
 
-    fetch(`/api/survey/surveys/${surveyId}`, { credentials: 'include' })
+    const timer = new Promise<void>((resolve) => {
+      window.setTimeout(resolve, 1000);
+    });
+
+    const fetchDetail = fetch(`/api/survey/surveys/${surveyId}`, { credentials: 'include' })
       .then(r => r.json())
       .then((data: RespondentSurveyDetail) => {
         setDetail(data);
         responseIdRef.current = data.response_id;
-        // Populate existing answers
         const initial: Record<number, AnswerValue> = {};
         for (const q of data.questions) {
           if (q.existing_answer) {
@@ -2961,7 +3177,9 @@ function SurveyRightPanel({ surveyId, pillStatus, onSubmitted }: SurveyRightPane
           }
         }
         setAnswers(initial);
-      })
+      });
+
+    Promise.all([fetchDetail, timer])
       .catch(() => {})
       .finally(() => setLoadingDetail(false));
   }, [surveyId]);
@@ -2969,7 +3187,15 @@ function SurveyRightPanel({ surveyId, pillStatus, onSubmitted }: SurveyRightPane
   // Auto-save a single question answer (debounced on answer change for active surveys)
   const autoSave = useCallback(async (questionId: number, ans: AnswerValue) => {
     if (readOnly || !responseIdRef.current) return;
-    setSavingQId(questionId);
+    if (savingIndicatorTimer.current) {
+      clearTimeout(savingIndicatorTimer.current);
+      savingIndicatorTimer.current = null;
+    }
+    savingIndicatorTimer.current = setTimeout(() => {
+      setSavingQId(questionId);
+      savingIndicatorTimer.current = null;
+    }, 250);
+
     try {
       const body: Record<string, unknown> = {};
       if (ans.text_value !== undefined) body.text_value = ans.text_value;
@@ -2986,6 +3212,10 @@ function SurveyRightPanel({ surveyId, pillStatus, onSubmitted }: SurveyRightPane
         body: JSON.stringify(body),
       });
     } finally {
+      if (savingIndicatorTimer.current) {
+        clearTimeout(savingIndicatorTimer.current);
+        savingIndicatorTimer.current = null;
+      }
       setSavingQId(null);
     }
   }, [readOnly]);
@@ -3023,7 +3253,8 @@ function SurveyRightPanel({ surveyId, pillStatus, onSubmitted }: SurveyRightPane
         headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
       });
       if (res.ok) {
-        toast.success('Survey submitted successfully.', { title: 'Submitted' });
+        toast.success('Thank you for taking the survey.', { title: 'Submitted' });
+        window.dispatchEvent(new Event('survey-badge-refresh'));
         onSubmitted();
       } else {
         const body = await res.json();
@@ -3058,23 +3289,23 @@ function SurveyRightPanel({ surveyId, pillStatus, onSubmitted }: SurveyRightPane
   let banner: React.ReactNode = null;
   if (pillStatus === 'closed') {
     banner = (
-      <div className="mx-4 mt-4 rounded-xl border border-red-200 bg-red-50 dark:border-red-900/40 dark:bg-red-950/20 px-4 py-3 flex items-center gap-3">
+      <div className="mx-4 mt-4 rounded-xl border border-red-200 bg-red-50 dark:border-red-900/40 dark:bg-red-950/20 p-2 flex items-center gap-2">
         <Lock size={15} className="text-red-500 shrink-0" />
         <p className="text-sm text-red-700 dark:text-red-400 font-medium">This survey has ended and is no longer accepting responses.</p>
       </div>
     );
-  } else if (pillStatus === 'scheduled') {
+  } else if (pillStatus === 'draft') {
     banner = (
-      <div className="mx-4 mt-4 rounded-xl border border-yellow-200 bg-yellow-50 dark:border-yellow-900/40 dark:bg-yellow-950/20 px-4 py-3 flex items-center gap-3">
-        <ClipboardList size={15} className="text-yellow-600 shrink-0" />
-        <p className="text-sm text-yellow-700 dark:text-yellow-400 font-medium">This survey has not started yet. Check back when it opens.</p>
+      <div className="mx-4 mt-4 rounded-xl border border-slate-200 bg-slate-50 dark:border-slate-900/40 dark:bg-slate-950/20 p-2 flex items-center gap-2">
+        <ClipboardList size={15} className="text-slate-600 shrink-0" />
+        <p className="text-xs text-slate-700 dark:text-slate-300 font-medium">This survey has been assigned to you but is still in draft mode and cannot be submitted yet.</p>
       </div>
     );
-  } else if (pillStatus === 'responded') {
+  } else if (pillStatus === 'scheduled') {
     banner = (
-      <div className="mx-4 mt-4 rounded-xl border border-green-200 bg-green-50 dark:border-green-900/40 dark:bg-green-950/20 px-4 py-3 flex items-center gap-3">
-        <Check size={15} className="text-green-600 shrink-0" />
-        <p className="text-sm text-green-700 dark:text-green-400 font-medium">You have already submitted a response to this survey. Shown below is a read-only view of your answers.</p>
+      <div className="mx-4 mt-4 rounded-xl border border-yellow-200 bg-yellow-50 dark:border-yellow-900/40 dark:bg-yellow-950/20 p-2 flex items-center gap-2">
+        <ClipboardList size={15} className="text-yellow-600 shrink-0" />
+        <p className="text-xs text-yellow-700 dark:text-yellow-400 font-medium">This survey has not started yet. Check back when it opens.</p>
       </div>
     );
   }
@@ -3083,7 +3314,13 @@ function SurveyRightPanel({ surveyId, pillStatus, onSubmitted }: SurveyRightPane
   const questionTypes = new Set(['single_choice', 'multiple_choice', 'dropdown', 'rating', 'likert', 'short_text', 'long_text', 'yes_no', 'number', 'date', 'linear_scale']);
 
   return (
-    <div className="flex flex-col h-full">
+    <motion.div
+      key="survey-panel"
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.25, ease: 'easeOut' }}
+      className="flex flex-col h-full"
+    >
       {banner}
 
       {/* Survey title + description */}
@@ -3096,66 +3333,128 @@ function SurveyRightPanel({ surveyId, pillStatus, onSubmitted }: SurveyRightPane
 
       {/* Questions */}
       <div className="flex-1 overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden p-4 space-y-4">
-        {detail.questions.map(q => {
-          const isInstruction = INSTRUCTION_Q_TYPES.has(q.question_type);
-          if (!isInstruction && questionTypes.has(q.question_type)) questionCounter += 1;
+        {
+          (() => {
+            const items: Array<
+              | { type: 'question'; question: RespondentQuestion }
+              | { type: 'instruction-group'; questions: RespondentQuestion[] }
+            > = [];
+            let currentGroup: RespondentQuestion[] = [];
 
-          if (isInstruction) {
-            return <QuestionInput key={q.id} q={q} answer={{}} onChange={() => {}} readOnly={true} />;
-          }
+            detail.questions.forEach(q => {
+              const isInstruction = INSTRUCTION_Q_TYPES.has(q.question_type);
+              if (isInstruction) {
+                currentGroup.push(q);
+              } else {
+                if (currentGroup.length > 0) {
+                  items.push({ type: 'instruction-group', questions: currentGroup });
+                  currentGroup = [];
+                }
+                items.push({ type: 'question', question: q });
+              }
+            });
+            if (currentGroup.length > 0) {
+              items.push({ type: 'instruction-group', questions: currentGroup });
+            }
 
-          return (
-            <div key={q.id} className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4 space-y-3">
-              <div className="flex items-start gap-2">
-                <span className="text-xs font-mono text-[var(--color-text-muted)] shrink-0 mt-0.5">Q{questionCounter}</span>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-[var(--color-text-primary)] leading-snug">
-                    {q.question_text}
-                    {q.is_required && <span className="text-red-500 ml-0.5">*</span>}
-                  </p>
-                  {savingQId === q.id && (
-                    <span className="text-[10px] text-[var(--color-text-muted)] flex items-center gap-1 mt-0.5">
-                      <Loader2 size={10} className="animate-spin" /> Saving…
-                    </span>
-                  )}
+            return items.map((item, index) => {
+              if (item.type === 'instruction-group') {
+                return (
+                  <div key={`instr-group-${index}`} className="rounded-xl bg-[var(--color-bg-elevated)] p-4 space-y-2">
+                    {item.questions.map((q) => (
+                      <div key={q.id}>
+                        <p className={cn(
+                          q.question_type === 'section'
+                            ? 'text-sm leading-snug font-bold text-[var(--color-text-primary)]'
+                            : q.question_type === 'subsection'
+                            ? 'text-[15px] leading-snug font-normal text-[var(--color-text-secondary)]'
+                            : q.question_type === 'statement'
+                            ? 'text-[15px] leading-snug italic text-[var(--color-text-secondary)]'
+                            : 'text-sm leading-snug font-normal',
+                        )}>
+                          {q.question_type === 'statement' ? `"${q.question_text}"` : q.question_text}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                );
+              }
+
+              const q = item.question;
+              if (questionTypes.has(q.question_type)) questionCounter += 1;
+
+              return (
+                <div key={q.id} className="rounded-xl bg-[var(--color-bg-elevated)] p-4 space-y-3">
+                  <div className="flex items-start gap-2">
+                    <span className="text-[15px] font-normal leading-snug text-[var(--color-text-secondary)] shrink-0">Q{questionCounter}.</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[15px] font-normal text-[var(--color-text-secondary)] leading-snug">
+                        {q.question_text}
+                        {!readOnly && q.is_required && <span className="text-red-500 ml-0.5">*</span>}
+                      </p>
+                      {savingQId === q.id && (
+                        <span className="text-[10px] text-[var(--color-text-muted)] flex items-center gap-1 mt-0.5">
+                          <Loader2 size={10} className="animate-spin" /> Saving…
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <QuestionInput
+                    q={q}
+                    answer={answers[q.id] ?? {}}
+                    onChange={ans => handleAnswerChange(q.id, ans)}
+                    readOnly={readOnly}
+                  />
                 </div>
-              </div>
-              <QuestionInput
-                q={q}
-                answer={answers[q.id] ?? {}}
-                onChange={ans => handleAnswerChange(q.id, ans)}
-                readOnly={readOnly}
-              />
-            </div>
-          );
-        })}
+              );
+            });
+          })()
+        }
       </div>
 
-      {/* Submit button (only when pending) */}
-      {pillStatus === 'pending' && (
-        <div className="shrink-0 px-4 pb-4 pt-3 border-t border-[var(--color-border)]">
-          <button
-            type="button"
-            disabled={submitting}
-            onClick={handleSubmit}
-            className={cn(
-              'w-full flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-white transition-all',
-              submitting ? 'bg-[#2845D6]/70 cursor-not-allowed' : 'bg-[#2845D6] hover:bg-[#1f37b9]',
-            )}
+      {/* Submit button (only when action_required and required questions answered) */}
+      <AnimatePresence initial={false}>
+        {pillStatus === 'action_required' && allRequiredAnswered && (
+          <motion.div
+            key="submit-footer"
+            initial={{ opacity: 0, y: 10, height: 0 }}
+            animate={{ opacity: 1, y: 0, height: 'auto' }}
+            exit={{ opacity: 0, y: 10, height: 0 }}
+            transition={{ duration: 0.25, ease: 'easeOut' }}
+            className="shrink-0 px-4 pb-4 pt-3 border-t border-[var(--color-border)] flex justify-end overflow-hidden"
           >
-            {submitting ? (
-              <TextShimmer duration={1.2} className="text-sm font-semibold [--base-color:#a5b4fc] [--base-gradient-color:#ffffff]">
-                Submitting…
-              </TextShimmer>
-            ) : (
-              <><Send size={14} /> Submit Survey</>
-            )}
-          </button>
-        </div>
-      )}
-    </div>
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={handleSubmit}
+              className={cn(
+                'inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-xs font-normal text-white transition-all',
+                submitting ? 'bg-[#2845D6]/70 cursor-not-allowed' : 'bg-[#2845D6] hover:bg-[#1f37b9]',
+              )}
+            >
+              {submitting ? (
+                <TextShimmer duration={1.2} className="text-xs font-semibold [--base-color:#a5b4fc] [--base-gradient-color:#ffffff]">
+                  Submitting…
+                </TextShimmer>
+              ) : (
+                <><Send size={14} /> Submit Survey</>
+              )}
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
   );
 }
+
+// ── Survey Groups ─────────────────────────────────────────────────────────────
+
+const SURVEY_GROUPS: { key: SurveyPillStatus | 'scheduled_draft'; label: string; statuses: SurveyPillStatus[] }[] = [
+  { key: 'action_required', label: 'Action Required', statuses: ['action_required'] },
+  { key: 'scheduled_draft', label: 'Scheduled',       statuses: ['scheduled', 'draft'] },
+  { key: 'responded',       label: 'Responded',       statuses: ['responded'] },
+  { key: 'closed',          label: 'Closed',          statuses: ['closed'] },
+];
 
 // ── SurveyUserPage ────────────────────────────────────────────────────────────
 
@@ -3164,85 +3463,245 @@ function SurveyUserPage() {
   const [loadingList, setLoadingList] = useState(true);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [leftPanelOpen, setLeftPanelOpen] = useState(false);
+  const isNarrow = useMediaQuery('(max-width: 780px)');
+
+  // Auto-close panel when viewport widens to desktop
+  useEffect(() => {
+    if (!isNarrow) setLeftPanelOpen(false);
+  }, [isNarrow]);
+
+  const normalizeSurveyData = (data: unknown): MySurveyItem[] => {
+    if (Array.isArray(data)) return data;
+    if (data && typeof data === 'object' && 'results' in data) {
+      const results = (data as { results?: unknown }).results;
+      return Array.isArray(results) ? results : [];
+    }
+    return [];
+  };
 
   const fetchSurveys = useCallback(() => {
+    fetch('/api/survey/my-surveys', { credentials: 'include' })
+      .then(r => r.json())
+      .then(data => setSurveys(normalizeSurveyData(data)))
+      .catch(() => {});
+  }, []);
+
+  // Initial load (with skeleton)
+  useEffect(() => {
     setLoadingList(true);
     fetch('/api/survey/my-surveys', { credentials: 'include' })
       .then(r => r.json())
-      .then((data: MySurveyItem[]) => setSurveys(data))
+      .then(data => setSurveys(normalizeSurveyData(data)))
       .catch(() => {})
       .finally(() => setLoadingList(false));
   }, []);
 
-  useEffect(() => { fetchSurveys(); }, [fetchSurveys]);
+  // 30-second polling + re-fetch on tab visibility
+  useEffect(() => {
+    const interval = setInterval(fetchSurveys, 30_000);
+    function onVisible() {
+      if (document.visibilityState === 'visible') fetchSurveys();
+    }
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [fetchSurveys]);
 
-  const selectedSurvey = surveys.find(s => s.id === selectedId) ?? null;
+  const selectedSurvey = Array.isArray(surveys) ? surveys.find(s => s.id === selectedId) ?? null : null;
   const pillStatus = selectedSurvey ? computeSurveyPillStatus(selectedSurvey) : null;
 
   function handleSubmitted() {
-    // Refresh list to update is_complete state, then trigger right panel reload
     fetchSurveys();
     setRefreshKey(k => k + 1);
   }
 
+  async function handleCardClick(s: MySurveyItem) {
+    const ps = computeSurveyPillStatus(s);
+    setSelectedId(s.id);
+    // On narrow viewports collapse the panel so the right column is visible
+    if (isNarrow) setLeftPanelOpen(false);
+    // Mark as seen if unseen + action_required
+    if (!s.is_seen && ps === 'action_required') {
+      try {
+        const res = await fetch(`/api/survey/my-surveys/${s.id}/seen`, {
+          method: 'PATCH',
+          credentials: 'include',
+          headers: { 'X-CSRFToken': getCsrfToken() },
+        });
+        if (res.ok) {
+          setSurveys(prev => prev.map(item => item.id === s.id ? { ...item, is_seen: true } : item));
+        }
+      } catch { /* silent */ }
+    }
+  }
+
+  // Build groups
+  const groups = SURVEY_GROUPS.map(g => ({
+    label: g.label,
+    items: surveys.filter(s => g.statuses.includes(computeSurveyPillStatus(s))),
+  })).filter(g => g.items.length > 0);
+
+  const isEmpty = !loadingList && surveys.length === 0;
+
+  // ── Reusable survey list content ────────────────────────────────────────────
+  const surveyListContent = (
+    <>
+      {loadingList ? (
+        <SurveyListSkeleton />
+      ) : isEmpty ? (
+        <div className="flex flex-col items-center justify-center px-4 py-10 text-center">
+          <ClipboardList size={28} className="text-[var(--color-text-muted)] mb-2" />
+          <p className="text-xs text-[var(--color-text-muted)]">No surveys assigned to you yet.</p>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-5 p-4">
+          {groups.map(group => (
+            <div key={group.label} className="flex flex-col gap-2">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)] px-1">
+                {group.label}
+              </p>
+              <div className="flex flex-col gap-2">
+                {group.items.map(s => {
+                  const ps = computeSurveyPillStatus(s);
+                  const pill = PILL_STATUS_MAP[ps];
+                  const isSelected = s.id === selectedId;
+                  const showNewBadge = !s.is_seen && ps === 'action_required';
+                  const duration = formatSurveyDuration(s.start_date, s.end_date);
+                  const estTime = s.question_count > 0 ? formatEstimatedTime(s.question_count) : null;
+                  const cardDescription = s.template_description?.trim() || s.description?.trim();
+
+                  return (
+                    <button
+                      key={s.id}
+                      type="button"
+                      onClick={() => handleCardClick(s)}
+                      className={cn(
+                        'w-full rounded-xl border p-4 text-left transition duration-200',
+                        'hover:-translate-y-0.5 hover:shadow-sm',
+                        isSelected
+                          ? 'border-[#2845D6]/10 bg-[#eef2ff] dark:bg-[#2845D6]/10 shadow-md outline-none'
+                          : 'border-transparent bg-[var(--color-bg-elevated)] shadow-sm outline-none',
+                      )}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <p className={cn(
+                          'text-sm font-semibold leading-snug truncate',
+                          isSelected ? 'text-[#2845D6]' : 'text-[var(--color-text-primary)]',
+                        )}>
+                          {s.title}
+                        </p>
+                        <div className="flex flex-wrap items-center justify-end gap-1.5 shrink-0">
+                          <StatusPill status={pill.status} label={pill.label} />
+                          {showNewBadge && <StatusPill status="approved" label="New" />}
+                        </div>
+                      </div>
+                      {cardDescription && (
+                        <p className="mt-2 text-[11px] leading-[1.5] text-[var(--color-text-muted)] line-clamp-2">
+                          {cardDescription}
+                        </p>
+                      )}
+                      <p className="mt-3 text-[11px] text-[var(--color-text-muted)]">
+                        {duration}
+                        {estTime && <span> · {estTime}</span>}
+                      </p>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </>
+  );
+
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Page header */}
-      <div className="shrink-0 px-4 sm:px-6 pt-5 pb-4 border-b border-[var(--color-border)]">
-        <h1 className="text-lg font-bold text-[var(--color-text-primary)] flex items-center gap-2">
-          <ClipboardList size={18} className="text-[#2845D6]" />
-          My Surveys
-        </h1>
-        <p className="text-xs text-[var(--color-text-muted)] mt-0.5">View and respond to surveys assigned to you.</p>
+      <div className="shrink-0 px-4 sm:px-6 pt-5 pb-4 border-b border-[var(--color-border)] flex items-center gap-3">
+        {/* Toggle button — narrow viewports only */}
+        {isNarrow && (
+          <button
+            onClick={() => setLeftPanelOpen(v => !v)}
+            className="flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-card)] px-2.5 py-1.5 text-xs font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] transition-colors shrink-0"
+            aria-label="Toggle survey list"
+          >
+            <List size={13} />
+            <span>Surveys</span>
+          </button>
+        )}
+        <div>
+          <h1 className="text-lg font-bold text-[var(--color-text-primary)] flex items-center gap-2">
+            My Surveys
+          </h1>
+          <p className="text-xs text-[var(--color-text-muted)] mt-0.5">View and respond to surveys assigned to you.</p>
+        </div>
       </div>
 
       {/* Two-column body */}
-      <div className="flex flex-1 overflow-hidden">
-        {/* Left column — 30% */}
-        <div className="w-[30%] shrink-0 border-r border-[var(--color-border)] overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
-          {loadingList ? (
-            <SurveyListSkeleton />
-          ) : surveys.length === 0 ? (
-            <div className="flex flex-col items-center justify-center px-4 py-10 text-center">
-              <ClipboardList size={28} className="text-[var(--color-text-muted)] mb-2" />
-              <p className="text-xs text-[var(--color-text-muted)]">No surveys assigned to you yet.</p>
-            </div>
-          ) : (
-            <div className="flex flex-col gap-1.5 p-3">
-              {surveys.map(s => {
-                const ps = computeSurveyPillStatus(s);
-                const pill = PILL_STATUS_MAP[ps];
-                const isSelected = s.id === selectedId;
-                return (
-                  <button
-                    key={s.id}
-                    type="button"
-                    onClick={() => setSelectedId(s.id)}
-                    className={cn(
-                      'w-full text-left rounded-xl border px-3 py-2.5 transition-colors flex flex-col gap-1.5',
-                      isSelected
-                        ? 'border-[#2845D6] bg-[#2845D6]/8 border-l-4 border-l-[#2845D6]'
-                        : 'border-[var(--color-border)] hover:bg-[var(--color-bg-elevated)]',
-                    )}
-                  >
-                    <p className={cn('text-xs font-semibold leading-snug', isSelected ? 'text-[#2845D6]' : 'text-[var(--color-text-primary)]')}>
-                      {s.title}
-                    </p>
-                    <StatusPill status={pill.status} label={pill.label} />
-                  </button>
-                );
-              })}
+      <div className="relative flex flex-1 overflow-hidden">
+
+        {/* Backdrop — narrow only, when panel is open */}
+        <AnimatePresence>
+          {isNarrow && leftPanelOpen && (
+            <motion.div
+              key="survey-backdrop"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className="absolute inset-0 z-20 bg-black/40"
+              onClick={() => setLeftPanelOpen(false)}
+            />
+          )}
+        </AnimatePresence>
+
+        {/* Left column — static on desktop, off-canvas overlay on narrow */}
+        <motion.div
+          initial={false}
+          animate={{ x: isNarrow && !leftPanelOpen ? '-100%' : 0 }}
+          transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
+          className={cn(
+            'shrink-0 border-r border-[var(--color-border)] overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden',
+            isNarrow
+              ? 'absolute left-0 top-0 h-full w-[85%] max-w-[320px] z-30 bg-[var(--color-bg-elevated)]'
+              : 'w-[30%]',
+          )}
+        >
+          {/* Narrow panel header with close button */}
+          {isNarrow && (
+            <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--color-border)] shrink-0">
+              <span className="text-sm font-semibold text-[var(--color-text-primary)]">Surveys</span>
+              <button
+                onClick={() => setLeftPanelOpen(false)}
+                className="flex h-7 w-7 items-center justify-center rounded-full text-[var(--color-text-muted)] hover:bg-[var(--color-bg-card)] transition-colors"
+                aria-label="Close survey list"
+              >
+                <X size={15} />
+              </button>
             </div>
           )}
-        </div>
+          {surveyListContent}
+        </motion.div>
 
-        {/* Right column — 70% */}
-        <div className="flex-1 overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
-          {!selectedId ? (
+        {/* Right column */}
+        <div className="flex-1 overflow-y-auto bg-[var(--color-bg-elevated)] [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+          {isEmpty ? (
+            <div className="flex h-full items-center justify-center">
+              <EmptyState
+                title="No surveys assigned yet"
+                description="You will be notified when surveys are assigned to you."
+                icons={[ClipboardList, FileText, BarChart2]}
+              />
+            </div>
+          ) : !selectedId ? (
             <div className="flex h-full items-center justify-center">
               <EmptyState
                 title="Select a survey to begin"
-                description="Choose a survey from the list on the left to view its questions and submit your response."
+                description={isNarrow ? 'Tap the Surveys button above to choose a survey.' : 'Choose a survey from the list on the left to view its questions and submit your response.'}
                 icons={[ClipboardList, FileText, BarChart2]}
               />
             </div>
@@ -3262,7 +3721,7 @@ function SurveyUserPage() {
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
-export default function SurveyAdminPage() {
+function SurveyAdminPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [authPhase, setAuthPhase] = useState<'spinner' | 'checking' | 'done'>('spinner');
@@ -3360,5 +3819,19 @@ export default function SurveyAdminPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function SurveyAdminPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex h-48 items-center justify-center">
+          <span className="h-8 w-8 animate-spin rounded-full border-2 border-[var(--color-border)] border-t-[#2845D6]" />
+        </div>
+      }
+    >
+      <SurveyAdminPageContent />
+    </Suspense>
   );
 }

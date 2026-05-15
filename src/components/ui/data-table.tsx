@@ -100,6 +100,8 @@ export interface DataTableProps<TRow> {
   onPageChange: (p: number) => void;
   /** Extra className applied to the outermost wrapper div. */
   className?: string;
+  /** Extra className applied to the table element. */
+  tableClassName?: string;
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
@@ -146,13 +148,16 @@ function SortIcon({
   );
 }
 
-function SkeletonRow({ cols }: { cols: number }) {
+function SkeletonRow({ columns }: { columns: { tdClassName?: string }[] }) {
   return (
     <tr className="border-b border-[var(--color-border)]">
-      {Array.from({ length: cols }).map((_, i) => (
-        <td key={i} className="px-4 py-3">
+      {columns.map((col, i) => (
+        <td key={i} className={cn('px-4 py-3', col.tdClassName)}>
           <div
-            className="h-3 animate-pulse rounded-full bg-[var(--color-skeleton)]"
+            className={cn(
+              'h-3 animate-pulse rounded-full bg-[var(--color-skeleton)]',
+              col.tdClassName?.includes('text-center') && 'mx-auto',
+            )}
             style={{ width: 40 + (i * 17 % 80) }}
           />
         </td>
@@ -250,6 +255,7 @@ export function DataTable<TRow>({
   totalCount,
   onPageChange,
   className,
+  tableClassName,
 }: DataTableProps<TRow>) {
   const colCount = columns.length;
   // Sort buttons are only active when data is visible (not during skeleton load).
@@ -275,7 +281,12 @@ export function DataTable<TRow>({
 
         {/* Table */}
         <div className="overflow-x-auto">
-          <table className="w-full table-fixed border-collapse text-xs max-[480px]:table-auto max-[480px]:w-auto max-[480px]:min-w-[580px]">
+          <table
+            className={cn(
+              'w-full table-fixed border-collapse text-xs max-[480px]:table-auto max-[480px]:w-auto max-[480px]:min-w-[580px]',
+              tableClassName,
+            )}
+          >
             <thead>
               <tr className="border-b border-[var(--color-border)] bg-[var(--color-bg)]">
                 {columns.map(col =>
@@ -302,16 +313,16 @@ export function DataTable<TRow>({
                       <div
                         className={cn(
                           'flex items-center gap-1',
-                          col.filterContent
-                            ? 'justify-between'
-                            : col.headerAlign === 'center'
-                              ? 'justify-center'
-                              : col.headerAlign === 'right'
-                                ? 'justify-end'
-                                : 'justify-start',
+                          col.headerAlign === 'center' ? 'justify-center' :
+                          col.headerAlign === 'right' ? 'justify-end' :
+                          'justify-start',
+                          col.filterContent && col.headerAlign === 'center' ? 'relative' : undefined,
                         )}
                       >
-                        <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
+                        <span className={cn(
+                          'text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]',
+                          !hasData && 'opacity-40',
+                        )}>
                           {col.label}
                         </span>
                         {col.filterContent && (
@@ -320,11 +331,17 @@ export function DataTable<TRow>({
                               <button
                                 type="button"
                                 title={`Filter by ${col.label}`}
+                                disabled={!hasData}
                                 className={cn(
-                                  'flex h-5 w-5 shrink-0 items-center justify-center rounded-md transition-colors',
-                                  col.filterActive
-                                    ? 'text-[#2845D6]'
-                                    : 'text-[var(--color-text-muted)] hover:bg-[var(--color-bg-card)] hover:text-[var(--color-text-primary)]',
+                                  col.headerAlign === 'center'
+                                    ? 'absolute right-3 top-1/2 -translate-y-1/2'
+                                    : 'flex h-5 w-5 shrink-0 items-center justify-center rounded-md',
+                                  'transition-colors',
+                                  !hasData
+                                    ? 'text-[var(--color-text-muted)] opacity-40 cursor-default'
+                                    : col.filterActive
+                                      ? 'text-[#2845D6]'
+                                      : 'text-[var(--color-text-muted)] hover:bg-[var(--color-bg-card)] hover:text-[var(--color-text-primary)]',
                                 )}
                               >
                                 <ListFilter size={10} />
@@ -344,7 +361,7 @@ export function DataTable<TRow>({
             <tbody>
               {loading ? (
                 Array.from({ length: skeletonRows }).map((_, i) => (
-                  <SkeletonRow key={i} cols={colCount} />
+                  <SkeletonRow key={i} columns={columns} />
                 ))
               ) : rows.length === 0 ? (
                 <tr>
@@ -359,70 +376,78 @@ export function DataTable<TRow>({
                   </td>
                 </tr>
               ) : (
-                rows.map(row => (
-                  <tr
-                    key={rowKey(row)}
-                    className="border-b border-[var(--color-border)] transition-colors hover:bg-[var(--color-bg-card)]"
-                  >
-                    {columns.map(col => (
-                      <td
-                        key={col.key}
-                        style={{ width: col.width }}
-                        className={cn('px-4 py-3 break-words', col.tdClassName)}
-                      >
-                        {col.render(row)}
-                      </td>
-                    ))}
-                  </tr>
-                ))
+                <AnimatePresence mode="wait">
+                  {rows.map(row => (
+                    <motion.tr
+                      key={rowKey(row)}
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -8 }}
+                      transition={{ duration: 0.18, ease: 'easeOut' }}
+                      className="border-b border-[var(--color-border)] transition-colors hover:bg-[var(--color-bg-card)]"
+                    >
+                      {columns.map(col => (
+                        <td
+                          key={col.key}
+                          style={{ width: col.width }}
+                          className={cn('px-4 py-3 break-words', col.tdClassName)}
+                        >
+                          {col.render(row)}
+                        </td>
+                      ))}
+                    </motion.tr>
+                  ))}
+                </AnimatePresence>
               )}
             </tbody>
           </table>
         </div>
 
-        {/* Pagination */}
-        <div className="flex justify-between border-t border-[var(--color-border)] px-5 py-3">
-          <div className="flex items-center text-xs text-[var(--color-text-muted)]">
-            Showing {totalCount === 0 ? 0 : (page - 1) * pageSize + 1}
-            –{Math.min(page * pageSize, totalCount)} of {totalCount}
+        {/* Pagination — hidden when everything fits on one page */}
+          <div className="flex justify-between border-t border-[var(--color-border)] px-5 py-3">
+            <div className="flex items-center text-xs text-[var(--color-text-muted)]">
+              Showing {totalCount === 0 ? 0 : (page - 1) * pageSize + 1}
+              –{Math.min(page * pageSize, totalCount)} of {totalCount}
+            </div>
+            {totalPages > 1 && (
+            <div>
+              <Pagination>
+                <PaginationContent>
+                  <PaginationItem>
+                    <PaginationPrevious
+                      onClick={() => onPageChange(Math.max(1, page - 1))}
+                      aria-disabled={page === 1}
+                      className={cn(page === 1 && 'pointer-events-none opacity-40')}
+                    />
+                  </PaginationItem>
+                  {getPageRange(page, totalPages).map((p, i) =>
+                    p === '...' ? (
+                      <PaginationItem key={`ell-${i}`}>
+                        <PaginationEllipsis />
+                      </PaginationItem>
+                    ) : (
+                      <PaginationItem key={p}>
+                        <PaginationLink
+                          isActive={page === p}
+                          onClick={() => onPageChange(p as number)}
+                        >
+                          {p}
+                        </PaginationLink>
+                      </PaginationItem>
+                    ),
+                  )}
+                  <PaginationItem>
+                    <PaginationNext
+                      onClick={() => onPageChange(Math.min(totalPages, page + 1))}
+                      aria-disabled={page === totalPages}
+                      className={cn(page === totalPages && 'pointer-events-none opacity-40')}
+                    />
+                  </PaginationItem>
+                </PaginationContent>
+              </Pagination>
+            </div>
+            )}
           </div>
-          <div>
-            <Pagination>
-              <PaginationContent>
-                <PaginationItem>
-                  <PaginationPrevious
-                    onClick={() => onPageChange(Math.max(1, page - 1))}
-                    aria-disabled={page === 1}
-                    className={cn(page === 1 && 'pointer-events-none opacity-40')}
-                  />
-                </PaginationItem>
-                {getPageRange(page, totalPages).map((p, i) =>
-                  p === '...' ? (
-                    <PaginationItem key={`ell-${i}`}>
-                      <PaginationEllipsis />
-                    </PaginationItem>
-                  ) : (
-                    <PaginationItem key={p}>
-                      <PaginationLink
-                        isActive={page === p}
-                        onClick={() => onPageChange(p as number)}
-                      >
-                        {p}
-                      </PaginationLink>
-                    </PaginationItem>
-                  ),
-                )}
-                <PaginationItem>
-                  <PaginationNext
-                    onClick={() => onPageChange(Math.min(totalPages, page + 1))}
-                    aria-disabled={page === totalPages}
-                    className={cn(page === totalPages && 'pointer-events-none opacity-40')}
-                  />
-                </PaginationItem>
-              </PaginationContent>
-            </Pagination>
-          </div>
-        </div>
       </div>
     </div>
   );

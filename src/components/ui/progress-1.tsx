@@ -66,15 +66,15 @@ export default function ExampleProgress({ completed, total }: ExampleProgressPro
   }, [pct]);
 
   const currentWidth = pct === 0 ? 0 : animatedPct;
-  const barColor = pct === 0 ? 'bg-gray-400' : 'bg-emerald-500';
+  const barColor = pct === 0 ? 'bg-gray-400 dark:bg-gray-600' : 'bg-emerald-500 dark:bg-emerald-400';
 
   return (
     <Progress.Root className="grid w-full grid-cols-2 gap-y-1" value={pct}>
-      <Progress.Label className="text-[10px] font-medium text-gray-500">
+      <Progress.Label className="text-[10px] font-medium text-gray-500 dark:text-gray-400">
         {completed} / {total}
       </Progress.Label>
-      <Progress.Value className="col-start-2 text-right text-[10px] text-gray-500" value={pct} />
-      <Progress.Track className="col-span-full h-2 overflow-hidden rounded-full bg-gray-200 shadow-[inset_0_0_0_1px] shadow-gray-200">
+      <Progress.Value className="col-start-2 text-right text-[10px] text-gray-500 dark:text-gray-400" value={pct} />
+      <Progress.Track className="col-span-full h-2 overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700 shadow-[inset_0_0_0_1px] shadow-gray-200 dark:shadow-gray-700">
         <Progress.Indicator
           className={`block h-full rounded-full transition-[width] duration-700 ease-out ${barColor}`}
           style={{ width: `${currentWidth}%` }}

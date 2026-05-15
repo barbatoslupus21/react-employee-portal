@@ -15,10 +15,10 @@ import {
   ChevronUp,
   ClipboardList,
   Download,
+  Eye,
   FileText,
   Loader2,
   RefreshCw,
-  Search,
   Users,
   X,
 } from 'lucide-react';
@@ -46,14 +46,11 @@ import {
   ModalHeader,
   ModalTitle,
 } from '@/components/ui/modal';
+import { HorizontalBarChart } from '@/components/ui/horizontal-bar-chart';
+import { Rating } from '@/components/ui/rating';
+import { AdminTableSection } from '@/components/ui/admin-table-section';
+import type { DataTableColumn } from '@/components/ui/data-table';
 import { toast } from '@/components/ui/toast';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -109,11 +106,14 @@ interface SurveyResultsData {
 }
 
 interface IndividualResponse {
-  id: number;
-  respondent_name: string;
+  id: number | string;
+  response_id?: number | null;
+  firstname: string;
+  lastname: string;
   idnumber: string;
   submitted_at: string | null;
   is_complete: boolean;
+  status?: 'Complete' | 'Partial' | 'Not started';
 }
 
 interface ResponseDetailAnswer {
@@ -284,61 +284,96 @@ const CHOICE_BASED_TYPES = new Set(['single_choice', 'multiple_choice', 'dropdow
 const CHART_TYPES = new Set([...CHOICE_BASED_TYPES, 'yes_no', 'likert', 'linear_scale']);
 
 function HorizontalBarQuestion({ q }: { q: QuestionResult }) {
-  const max = Math.max(1, ...(q.options ?? []).map(o => o.count));
+  const chartData = (q.options ?? []).map(opt => ({
+    name: opt.option_text,
+    value: opt.percentage,
+  }));
+
+  if (chartData.length === 0) {
+    return <p className="text-xs text-[var(--color-text-muted)] mt-3">No responses yet.</p>;
+  }
+
   return (
-    <div className="space-y-2 mt-3">
-      {(q.options ?? []).map(opt => (
-        <div key={opt.option_id} className="space-y-1">
-          <div className="flex items-center justify-between text-xs">
-            <span className="text-[var(--color-text-primary)] truncate max-w-[60%]">{opt.option_text}</span>
-            <span className="text-[var(--color-text-muted)] shrink-0">{opt.count} ({opt.percentage}%)</span>
-          </div>
-          <div className="h-2 w-full rounded-full bg-[var(--color-bg-card)]">
-            <motion.div
-              className="h-2 rounded-full bg-[#2845D6]"
-              initial={{ width: 0 }}
-              animate={{ width: `${(opt.count / max) * 100}%` }}
-              transition={{ duration: 0.6, ease: 'easeOut', delay: 0.1 }}
-            />
-          </div>
-        </div>
-      ))}
+    <div className="mt-3">
+      <HorizontalBarChart data={chartData} />
     </div>
   );
 }
 
-function YesNoDonut({ q }: { q: QuestionResult }) {
-  const opts = q.options ?? [];
-  const data = opts.map((o, i) => ({
-    name: o.option_text,
-    value: o.count,
-    fill: i === 0 ? '#2845D6' : '#E5E7EB',
+function YesNoChart({ q }: { q: QuestionResult }) {
+  const chartData = (q.options ?? []).map(opt => ({
+    name: opt.option_text,
+    value: opt.percentage,
   }));
-  if (opts.length === 0 || q.total_responses === 0) {
+
+  if (chartData.length === 0 || q.total_responses === 0) {
     return <p className="text-xs text-[var(--color-text-muted)] mt-3">No responses yet.</p>;
   }
+
   return (
-    <div className="mt-3 flex items-center gap-6">
-      <ResponsiveContainer width={120} height={120}>
-        <PieChart>
-          <Pie data={data} dataKey="value" cx="50%" cy="50%" innerRadius={35} outerRadius={55} strokeWidth={0}>
-            {data.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
-          </Pie>
-        </PieChart>
-      </ResponsiveContainer>
-      <div className="space-y-1.5">
-        {opts.map((o, i) => (
-          <div key={o.option_id} className="flex items-center gap-2 text-xs">
-            <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: i === 0 ? '#2845D6' : '#9CA3AF' }} />
-            <span>{o.option_text}: <strong>{o.count}</strong> ({o.percentage}%)</span>
-          </div>
-        ))}
+    <div className="mt-3">
+      <HorizontalBarChart data={chartData} />
+    </div>
+  );
+}
+
+/** Rating Scale — star-row summary (1…maxRating rows with count + percentage) */
+function RatingStarSummary({ q }: { q: QuestionResult }) {
+  const dist = q.distribution ?? [];
+  const [animated, setAnimated] = useState(false);
+
+  useEffect(() => {
+    const t = requestAnimationFrame(() => setAnimated(true));
+    return () => cancelAnimationFrame(t);
+  }, []);
+
+  if (dist.length === 0) return <p className="text-xs text-[var(--color-text-muted)] mt-3">No responses yet.</p>;
+
+  const sorted = [...dist].sort((a, b) => b.value - a.value);
+  const totalResponses = q.total_responses || 1;
+  const maxStars = Math.max(5, ...sorted.map(item => item.value));
+
+  return (
+    <div className="mt-4 space-y-3">
+      {q.average !== null && q.average !== undefined && (
+        <div className="flex items-center gap-2 mb-2">
+          <span className="text-xl font-bold text-[var(--color-text-primary)] leading-none">
+            {Number(q.average).toFixed(1)}
+          </span>
+          <span className="text-xs text-[var(--color-text-muted)]">
+            avg
+          </span>
+        </div>
+      )}
+      <div className="space-y-2">
+        {sorted.map(item => {
+          const pct = totalResponses > 0 ? Math.round((item.count / totalResponses) * 100) : (item.percentage ?? 0);
+          return (
+            <div key={item.value} className="flex items-center gap-2.5">
+              <div className="flex items-center gap-1 shrink-0">
+                <span className="text-xs font-medium text-[var(--color-text-secondary)] w-4 text-right shrink-0">{item.value}</span>
+                <Rating rating={item.value} maxRating={5} size="sm" showValue={false} />
+              </div>
+              <div className="flex-1 h-2 rounded-full bg-[var(--color-bg-card)] overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-yellow-400"
+                  style={{
+                    width: animated ? `${pct}%` : '0%',
+                    transition: animated ? 'width 1.2s cubic-bezier(0.22, 1, 0.36, 1)' : 'none',
+                  }}
+                />
+              </div>
+              <span className="w-10 shrink-0 text-right text-[10px] text-[var(--color-text-muted)]">{pct}%</span>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
 }
 
-function RatingBarQuestion({ q }: { q: QuestionResult }) {
+/** Linear Scale / Numeric — vertical bar chart */
+function LinearScaleBarChart({ q }: { q: QuestionResult }) {
   const dist = q.distribution ?? [];
   if (dist.length === 0) return <p className="text-xs text-[var(--color-text-muted)] mt-3">No responses yet.</p>;
   const chartData = dist.map(d => ({ name: String(d.value), count: d.count }));
@@ -351,7 +386,7 @@ function RatingBarQuestion({ q }: { q: QuestionResult }) {
       <ResponsiveContainer width="100%" height={120}>
         <BarChart data={chartData} margin={{ top: 0, right: 0, left: -32, bottom: 0 }}>
           <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--color-border)" />
-          <XAxis dataKey="name" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
+          <XAxis dataKey="name" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} interval={0} />
           <YAxis tick={{ fontSize: 11 }} axisLine={false} tickLine={false} allowDecimals={false} domain={[0, max]} />
           <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} />
           <Bar dataKey="count" fill="#2845D6" radius={[3, 3, 0, 0]} maxBarSize={40} />
@@ -385,16 +420,33 @@ function TextAnswersList({ q }: { q: QuestionResult }) {
   );
 }
 
-function InstructionBlock({ q }: { q: QuestionResult }) {
-  const typeLabel = QUESTION_TYPE_LABELS[q.question_type] ?? q.question_type;
-
+function InstructionBlock({ items }: { items: QuestionResult[] }) {
   return (
-    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-5">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex-1 min-w-0">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-[#2845D6] mb-1">{typeLabel}</p>
-          <p className="text-sm font-medium text-[var(--color-text-primary)] leading-snug">{q.question_text}</p>
-        </div>
+    <div className="rounded-xl bg-[var(--color-bg-subtle)] p-5">
+      <div className="space-y-4">
+        {items.map((item, index) => {
+          if (item.question_type === 'section') {
+            return (
+              <div key={item.question_id} className="space-y-1">
+                <p className="text-xs font-bold text-[var(--color-text-primary)] leading-snug">{item.question_text}</p>
+              </div>
+            );
+          }
+
+          if (item.question_type === 'statement') {
+            return (
+              <div key={item.question_id} className="space-y-1">
+                <p className="text-xs italic text-[var(--color-text-primary)] leading-snug">“{item.question_text}”</p>
+              </div>
+            );
+          }
+
+          return (
+            <div key={item.question_id} className="space-y-1">
+              <p className="text-xs font-medium text-[var(--color-text-primary)] leading-snug">{item.question_text}</p>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -402,17 +454,32 @@ function InstructionBlock({ q }: { q: QuestionResult }) {
 
 function QuestionBlock({ q, index }: { q: QuestionResult; index: number }) {
   const typeLabel = QUESTION_TYPE_LABELS[q.question_type] ?? q.question_type;
-  const isYesNo = q.question_type === 'yes_no';
-  const isRating = q.question_type === 'rating' || q.question_type === 'number';
-  const isText = q.question_type === 'short_text' || q.question_type === 'long_text';
-  const isChart = CHART_TYPES.has(q.question_type) && !isYesNo;
+
+  const renderBody = () => {
+    if (q.total_responses === 0) {
+      return <p className="text-xs text-[var(--color-text-muted)] mt-3">No responses yet.</p>;
+    }
+    switch (q.question_type) {
+      case 'rating':
+        return <RatingStarSummary q={q} />;
+      case 'linear_scale':
+        return <LinearScaleBarChart q={q} />;
+      case 'likert':
+      case 'single_choice':
+      case 'multiple_choice':
+      case 'yes_no':
+        return <HorizontalBarQuestion q={q} />;
+      default:
+        return <p className="text-xs text-[var(--color-text-muted)] mt-3">No visualization for this question type.</p>;
+    }
+  };
 
   return (
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-5">
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0">
           <p className="text-[10px] font-semibold uppercase tracking-wide text-[#2845D6] mb-1">Q{index + 1}</p>
-          <p className="text-sm font-medium text-[var(--color-text-primary)] leading-snug">{q.question_text}</p>
+          <p className="text-xs font-medium text-[var(--color-text-primary)] leading-snug">{q.question_text}</p>
         </div>
         <div className="flex flex-col items-end gap-1 shrink-0">
           <span className="inline-flex rounded-full bg-[var(--color-bg-card)] border border-[var(--color-border)] px-2 py-0.5 text-[10px] text-[var(--color-text-muted)]">
@@ -421,20 +488,7 @@ function QuestionBlock({ q, index }: { q: QuestionResult; index: number }) {
           <span className="text-[10px] text-[var(--color-text-muted)]">{q.total_responses} response{q.total_responses !== 1 ? 's' : ''}</span>
         </div>
       </div>
-
-      {q.total_responses === 0 ? (
-        <p className="text-xs text-[var(--color-text-muted)] mt-3">No responses yet.</p>
-      ) : isYesNo ? (
-        <YesNoDonut q={q} />
-      ) : isRating ? (
-        <RatingBarQuestion q={q} />
-      ) : isText ? (
-        <TextAnswersList q={q} />
-      ) : isChart ? (
-        <HorizontalBarQuestion q={q} />
-      ) : (
-        <p className="text-xs text-[var(--color-text-muted)] mt-3">No visualization for this question type.</p>
-      )}
+      {renderBody()}
     </div>
   );
 }
@@ -528,6 +582,48 @@ function ResponseDetailModal({
 
 // ── Individual Responses Table ─────────────────────────────────────────────────
 
+function FilterContentList({
+  options,
+  selected,
+  onSelect,
+}: {
+  options: { value: string; label: string }[];
+  selected: string;
+  onSelect: (value: string) => void;
+}) {
+  return (
+    <div className="space-y-0.5 max-h-56 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      <button
+        type="button"
+        onClick={() => onSelect('all')}
+        className={cn(
+          'w-full rounded-md px-2 py-1.5 text-left text-xs transition-colors',
+          selected === 'all'
+            ? 'bg-[#2845D6]/10 font-medium text-[#2845D6]'
+            : 'text-[var(--color-text-muted)] hover:bg-[var(--color-bg-card)]',
+        )}
+      >
+        All
+      </button>
+      {options.map(option => (
+        <button
+          key={option.value}
+          type="button"
+          onClick={() => onSelect(option.value)}
+          className={cn(
+            'w-full rounded-md px-2 py-1.5 text-left text-xs transition-colors',
+            selected === option.value
+              ? 'bg-[#2845D6]/10 font-medium text-[#2845D6]'
+              : 'text-[var(--color-text-muted)] hover:bg-[var(--color-bg-card)]',
+          )}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function IndividualResponsesSection({
   surveyId,
   isAnonymous,
@@ -537,18 +633,22 @@ function IndividualResponsesSection({
 }) {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [sortField, setSortField] = useState('name');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [page, setPage] = useState(1);
   const [data, setData] = useState<IndividualResponsesData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [showSkeleton, setShowSkeleton] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detail, setDetail] = useState<ResponseDetail | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const skeletonRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const fetchResponses = useCallback(async (p: number, q: string, status: string) => {
+  const fetchResponses = useCallback(async (p: number, q: string, status: string, sf: string, sd: string) => {
     setLoading(true);
     try {
-      const params = new URLSearchParams({ page: String(p) });
+      const params = new URLSearchParams({ page: String(p), page_size: '10', sort: sf, dir: sd });
       if (q) params.set('search', q);
       if (status !== 'all') params.set('status', status);
       const res = await fetch(`/api/survey/admin/surveys/${surveyId}/responses?${params}`, { credentials: 'include' });
@@ -562,12 +662,48 @@ function IndividualResponsesSection({
   }, [surveyId]);
 
   useEffect(() => {
-    fetchResponses(1, '', 'all');
+    fetchResponses(1, '', 'all', 'name', 'asc');
   }, [fetchResponses]);
 
-  const triggerFetch = (p: number, q: string, status: string) => {
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      if (skeletonRef.current) clearTimeout(skeletonRef.current);
+    };
+  }, []);
+
+  const startSkeleton = () => {
+    setShowSkeleton(true);
+    if (skeletonRef.current) clearTimeout(skeletonRef.current);
+    skeletonRef.current = setTimeout(() => setShowSkeleton(false), 1000);
+  };
+
+  const triggerFetch = (p: number, q: string, status: string, sf: string, sd: string) => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => fetchResponses(p, q, status), 300);
+    debounceRef.current = setTimeout(() => fetchResponses(p, q, status, sf, sd), 300);
+  };
+
+  const handleSearch = (v: string) => {
+    setSearch(v);
+    setPage(1);
+    startSkeleton();
+    triggerFetch(1, v, statusFilter, sortField, sortDir);
+  };
+
+  const handleStatusFilter = (v: string) => {
+    setStatusFilter(v);
+    setPage(1);
+    startSkeleton();
+    triggerFetch(1, search, v, sortField, sortDir);
+  };
+
+  const handleSort = (field: string) => {
+    const newDir = field === sortField && sortDir === 'asc' ? 'desc' : 'asc';
+    setSortField(field);
+    setSortDir(newDir);
+    setPage(1);
+    startSkeleton();
+    triggerFetch(1, search, statusFilter, field, newDir);
   };
 
   async function openDetail(responseId: number) {
@@ -588,129 +724,115 @@ function IndividualResponsesSection({
   const pagination = data?.pagination;
   const rows = data?.results ?? [];
 
+  const columns: DataTableColumn<IndividualResponse>[] = [
+    {
+      key: 'idnumber',
+      label: 'ID Number',
+      sortField: 'idnumber',
+      render: (row: IndividualResponse) => (
+        <span className="text-xs font-mono text-[var(--color-text-muted)]">{row.idnumber}</span>
+      ),
+    },
+    {
+      key: 'name',
+      label: 'Employee Name',
+      sortField: 'name',
+      render: (row: IndividualResponse) => isAnonymous
+        ? <span className="text-xs italic text-[var(--color-text-muted)]">Anonymous</span>
+        : (
+          <span className="text-xs font-medium">
+            {row.lastname ? `${row.lastname}, ${row.firstname}` : row.firstname}
+          </span>
+        ),
+    },
+    {
+      key: 'submitted_at',
+      label: 'Submitted Date',
+      sortField: 'submitted_at',
+      render: (row: IndividualResponse) => (
+        <span className="text-xs text-[var(--color-text-muted)] whitespace-nowrap">
+          {row.submitted_at ? formatDate(row.submitted_at.split('T')[0]) : '—'}
+        </span>
+      ),
+    },
+    {
+      key: 'status',
+      label: 'Status',
+      sortField: 'status',
+      filterContent: (
+        <FilterContentList
+          options={[
+            { value: 'complete', label: 'Complete' },
+            { value: 'partial', label: 'Partial' },
+            { value: 'not_started', label: 'Not Started' },
+          ]}
+          selected={statusFilter}
+          onSelect={handleStatusFilter}
+        />
+      ),
+      filterActive: statusFilter !== 'all',
+      render: (row: IndividualResponse) => (
+        <span className={cn(
+          'inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold',
+          row.status === 'Complete'
+            ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-400'
+            : row.status === 'Partial'
+              ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400'
+              : 'bg-slate-100 text-slate-700 dark:bg-slate-950/30 dark:text-slate-300',
+        )}>
+          {row.status}
+        </span>
+      ),
+    },
+    {
+      key: 'action',
+      label: 'Action',
+      render: (row: IndividualResponse) => row.response_id ? (
+        <div className="group relative inline-flex">
+          <button
+            onClick={() => openDetail(row.response_id!)}
+            className="inline-flex items-center justify-center rounded-md p-1.5 text-[var(--color-text-muted)] hover:bg-[#2845D6]/10 hover:text-[#2845D6] transition-colors"
+            aria-label="View response details"
+          >
+            <Eye size={14} />
+          </button>
+          <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 whitespace-nowrap rounded-md bg-[var(--color-text-primary)] px-2 py-1 text-[10px] text-[var(--color-bg)] opacity-0 group-hover:opacity-100 transition-opacity duration-150 z-10">
+            View Details
+          </span>
+        </div>
+      ) : (
+        <span className="text-[10px] text-[var(--color-text-muted)]">—</span>
+      ),
+      headerAlign: 'center',
+      tdClassName: 'text-center',
+    },
+  ];
+
   return (
     <>
       <div className="space-y-3">
-        <div className="flex flex-col sm:flex-row gap-2 items-start sm:items-center">
-          {!isAnonymous && (
-            <div className="relative flex-1 max-w-xs">
-              <Search size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)]" />
-              <input
-                type="text"
-                value={search}
-                onChange={e => {
-                  const v = e.target.value;
-                  setSearch(v);
-                  setPage(1);
-                  triggerFetch(1, v, statusFilter);
-                }}
-                placeholder="Search by name or ID…"
-                className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] pl-8 pr-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-[#2845D6]"
-              />
-              {search && (
-                <button onClick={() => { setSearch(''); setPage(1); triggerFetch(1, '', statusFilter); }} className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]">
-                  <X size={11} />
-                </button>
-              )}
-            </div>
-          )}
-          <div className="shrink-0">
-            <Select value={statusFilter} onValueChange={v => { setStatusFilter(v); setPage(1); triggerFetch(1, search, v); }}>
-              <SelectTrigger className="h-8 text-xs w-[130px]">
-                <SelectValue placeholder="All Status" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Status</SelectItem>
-                <SelectItem value="complete">Complete</SelectItem>
-                <SelectItem value="partial">Partial</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-
-        {loading ? (
-          <ResponseTableSkeleton />
-        ) : rows.length === 0 ? (
-          <EmptyState
-            title="No responses yet"
-            description="Once respondents submit answers, they will appear here."
-            icons={[Users, ClipboardList, BarChart2]}
-            className="py-12"
-          />
-        ) : (
-          <div className="rounded-xl border border-[var(--color-border)] overflow-hidden">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="bg-[var(--color-bg-card)] border-b border-[var(--color-border)]">
-                  {!isAnonymous && <th className="px-4 py-3 text-left font-semibold text-[var(--color-text-muted)]">Respondent</th>}
-                  {!isAnonymous && <th className="px-4 py-3 text-left font-semibold text-[var(--color-text-muted)]">Employee ID</th>}
-                  {isAnonymous && <th className="px-4 py-3 text-left font-semibold text-[var(--color-text-muted)]">Respondent</th>}
-                  <th className="px-4 py-3 text-left font-semibold text-[var(--color-text-muted)]">Submitted</th>
-                  <th className="px-4 py-3 text-left font-semibold text-[var(--color-text-muted)]">Status</th>
-                  <th className="px-4 py-3 text-center font-semibold text-[var(--color-text-muted)]">Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((row, i) => (
-                  <tr key={row.id} className={cn('border-b border-[var(--color-border)] last:border-0 transition-colors', i % 2 === 0 ? 'bg-[var(--color-bg-elevated)]' : 'bg-[var(--color-bg-card)]/40')}>
-                    {!isAnonymous && (
-                      <td className="px-4 py-3 font-medium text-[var(--color-text-primary)]">{row.respondent_name}</td>
-                    )}
-                    {!isAnonymous && (
-                      <td className="px-4 py-3 text-[var(--color-text-muted)]">{row.idnumber}</td>
-                    )}
-                    {isAnonymous && (
-                      <td className="px-4 py-3 text-[var(--color-text-muted)] italic">Anonymous</td>
-                    )}
-                    <td className="px-4 py-3 text-[var(--color-text-muted)] whitespace-nowrap">{formatDatetime(row.submitted_at)}</td>
-                    <td className="px-4 py-3">
-                      <span className={cn(
-                        'inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold',
-                        row.is_complete
-                          ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-400'
-                          : 'bg-amber-100 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400',
-                      )}>
-                        {row.is_complete ? 'Complete' : 'Partial'}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-center">
-                      <button
-                        onClick={() => openDetail(row.id)}
-                        className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2.5 py-1 text-[10px] font-medium text-[var(--color-text-primary)] hover:bg-[#2845D6]/10 hover:text-[#2845D6] hover:border-[#2845D6]/30 transition-colors"
-                      >
-                        View Details
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        {/* Pagination */}
-        {pagination && pagination.total_pages > 1 && (
-          <div className="flex items-center justify-between text-xs text-[var(--color-text-muted)]">
-            <span>Showing {Math.min((pagination.page - 1) * pagination.page_size + 1, pagination.total)}–{Math.min(pagination.page * pagination.page_size, pagination.total)} of {pagination.total}</span>
-            <div className="flex items-center gap-1">
-              <button
-                disabled={pagination.page <= 1}
-                onClick={() => { const p = page - 1; setPage(p); fetchResponses(p, search, statusFilter); }}
-                className="rounded-md border border-[var(--color-border)] px-2.5 py-1 disabled:opacity-40 hover:bg-[var(--color-bg-card)] transition-colors"
-              >
-                Previous
-              </button>
-              <span className="px-2">{pagination.page} / {pagination.total_pages}</span>
-              <button
-                disabled={pagination.page >= pagination.total_pages}
-                onClick={() => { const p = page + 1; setPage(p); fetchResponses(p, search, statusFilter); }}
-                className="rounded-md border border-[var(--color-border)] px-2.5 py-1 disabled:opacity-40 hover:bg-[var(--color-bg-card)] transition-colors"
-              >
-                Next
-              </button>
-            </div>
-          </div>
-        )}
+        <AdminTableSection<IndividualResponse>
+          search={search}
+          onSearchChange={handleSearch}
+          searchPlaceholder={isAnonymous ? 'Search unavailable for anonymous surveys' : 'Search by name or ID…'}
+          columns={columns}
+          rows={rows}
+          rowKey={row => row.id}
+          loading={loading || showSkeleton}
+          transitioning={false}
+          skeletonRows={8}
+          sortField={sortField}
+          sortDir={sortDir}
+          onSort={handleSort}
+          page={page}
+          totalPages={pagination?.total_pages ?? 1}
+          pageSize={10}
+          totalCount={pagination?.total ?? 0}
+          onPageChange={p => { setPage(p); startSkeleton(); triggerFetch(p, search, statusFilter, sortField, sortDir); }}
+          emptyTitle="No responses yet"
+          emptyDescription="Once respondents submit answers, they will appear here."
+          emptyIcons={[Users, ClipboardList, BarChart2]}
+        />
       </div>
 
       <ResponseDetailModal
@@ -720,58 +842,6 @@ function IndividualResponsesSection({
         loading={detailLoading}
       />
     </>
-  );
-}
-
-// ── Export Dropdown ────────────────────────────────────────────────────────────
-
-function ExportDropdown({ surveyId }: { surveyId: number }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    function handler(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    }
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, []);
-
-  const triggerExport = () => {
-    window.open(`/api/survey/admin/surveys/${surveyId}/export`, '_blank');
-    setOpen(false);
-  };
-
-  return (
-    <div ref={ref} className="relative">
-      <button
-        onClick={() => setOpen(v => !v)}
-        className="flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-1.5 text-xs font-medium text-[var(--color-text-primary)] hover:bg-[var(--color-bg-card)] transition-colors"
-      >
-        <Download size={13} />
-        Export
-        <ChevronDown size={11} />
-      </button>
-      <AnimatePresence>
-        {open && (
-          <motion.div
-            initial={{ opacity: 0, y: -4 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -4 }}
-            transition={{ duration: 0.15 }}
-            className="absolute right-0 top-full mt-1 z-50 min-w-[130px] rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-lg overflow-hidden"
-          >
-            <button
-              onClick={triggerExport}
-              className="w-full flex items-center gap-2 px-3 py-2 text-xs text-[var(--color-text-primary)] hover:bg-[var(--color-bg-card)] transition-colors"
-            >
-              <FileText size={12} />
-              Export XLSX
-            </button>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
   );
 }
 
@@ -856,7 +926,13 @@ function SurveyViewContent({ surveyId, user }: { surveyId: number; user: UserDat
             </div>
           )}
         </div>
-        <ExportDropdown surveyId={surveyId} />
+        <button
+          onClick={() => window.open(`/api/survey/admin/surveys/${surveyId}/export`, '_blank')}
+          className="flex items-center gap-1.5 rounded-md bg-[#2845D6] px-3 py-1.5 text-xs font-normal text-white shadow-sm shadow-[#2845D6]/20 hover:bg-[#1d3fae] transition-colors"
+        >
+          <Download size={13} />
+          Export
+        </button>
       </div>
 
       {/* Summary Cards */}
@@ -884,38 +960,59 @@ function SurveyViewContent({ surveyId, user }: { surveyId: number; user: UserDat
       </div>
 
       {/* Per-Question Summaries */}
-      <section className="space-y-4">
-        <h2 className="text-sm font-semibold text-[var(--color-text-primary)]">Question Summaries</h2>
-        {results.questions.length === 0 ? (
-          <EmptyState
-            title="No questions found"
-            description="This survey has no questions configured."
-            icons={[ClipboardList]}
-            className="py-10"
-          />
-        ) : (() => {
-          const instructionTypes = new Set(['section', 'subsection', 'statement']);
-          let questionIndex = 0;
+      {results.total_responses > 0 && results.questions.length > 0 && (
+        <section className="space-y-4">
+          <h2 className="text-sm font-semibold text-[var(--color-text-primary)]">Question Summaries</h2>
+          {(() => {
+            const instructionTypes = new Set(['section', 'subsection', 'statement']);
+            const visibleQuestionTypes = new Set(['single_choice', 'multiple_choice', 'yes_no', 'rating', 'likert', 'linear_scale']);
+            const summaryElements: React.ReactNode[] = [];
+            let instructionGroup: QuestionResult[] = [];
+            let questionIndex = 0;
 
-          return (
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-              {results.questions.map(q => {
-                if (instructionTypes.has(q.question_type)) {
-                  return <InstructionBlock key={q.question_id} q={q} />;
-                }
+            const flushInstructionGroup = () => {
+              if (instructionGroup.length > 0) {
+                summaryElements.push(
+                  <InstructionBlock key={`instruction-${instructionGroup[0].question_id}`} items={instructionGroup} />
+                );
+                instructionGroup = [];
+              }
+            };
 
-                const element = <QuestionBlock key={q.question_id} q={q} index={questionIndex} />;
+            for (const q of results.questions) {
+              if (instructionTypes.has(q.question_type)) {
+                instructionGroup.push(q);
+              } else if (visibleQuestionTypes.has(q.question_type)) {
+                flushInstructionGroup();
+                summaryElements.push(<QuestionBlock key={q.question_id} q={q} index={questionIndex} />);
                 questionIndex += 1;
-                return element;
-              })}
-            </div>
-          );
-        })()}
-      </section>
+              }
+              // other types (short_text, long_text, dropdown, number, date) are intentionally skipped
+            }
+
+            flushInstructionGroup();
+
+            const leftCount = Math.ceil(summaryElements.length / 2);
+            const leftItems = summaryElements.slice(0, leftCount);
+            const rightItems = summaryElements.slice(leftCount);
+
+            return (
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                <div className="flex flex-col gap-4">
+                  {leftItems}
+                </div>
+                <div className="flex flex-col gap-4">
+                  {rightItems}
+                </div>
+              </div>
+            );
+          })()}
+        </section>
+      )}
 
       {/* Individual Responses */}
       <section className="space-y-4">
-        <h2 className="text-sm font-semibold text-[var(--color-text-primary)]">Individual Responses</h2>
+        <h2 className="text-sm font-semibold text-[var(--color-text-primary)]">Employee Responses</h2>
         <IndividualResponsesSection surveyId={surveyId} isAnonymous={results.is_anonymous} />
       </section>
     </div>

@@ -69,6 +69,7 @@ interface SurveyListItem {
   status: string;
   template_type?: string;
   created_by_name: string;
+  created_by_id?: number | null;
   target_type: string;
   is_anonymous: boolean;
   start_date: string | null;
@@ -306,6 +307,7 @@ function SurveysPage({ user }: { user: UserData }) {
   const [survTemplateId, setSurvTemplateId] = useState('');
   const [survTemplateType, setSurvTemplateType] = useState('');
   const [survHasResponses, setSurvHasResponses] = useState(false);
+  const [survStatus, setSurvStatus] = useState('');
   const [survTargetScope, setSurvTargetScope] = useState<'all' | 'selected'>('all');
   const [survMemberIds, setSurvMemberIds] = useState<number[]>([]);
   const [survErrors, setSurvErrors] = useState<Record<string, string>>({});
@@ -394,7 +396,6 @@ function SurveysPage({ user }: { user: UserData }) {
   useEffect(() => {
     if (
       editSurveyId !== null &&
-      !survHasResponses &&
       !survTemplateId &&
       survTemplateType &&
       modalTemplates.length > 0
@@ -404,7 +405,7 @@ function SurveysPage({ user }: { user: UserData }) {
         setSurvTemplateId(String(match.id));
       }
     }
-  }, [editSurveyId, survHasResponses, survTemplateId, survTemplateType, modalTemplates]);
+  }, [editSurveyId, survTemplateId, survTemplateType, modalTemplates]);
 
   const fetchAllUsers = useCallback(async () => {
     setUsersLoading(true);
@@ -445,6 +446,7 @@ function SurveysPage({ user }: { user: UserData }) {
     setSurvTemplateId('');
     setSurvTemplateType(row.template_type ?? '');
     setSurvHasResponses(false);
+    setSurvStatus(row.status ?? '');
     setSurvTargetScope('all');
     setSurvMemberIds([]);
     setSurvErrors({});
@@ -460,7 +462,8 @@ function SurveysPage({ user }: { user: UserData }) {
       setSurvStartDate(data.start_date ? new Date(data.start_date) : undefined);
       setSurvEndDate(data.end_date ? new Date(data.end_date) : undefined);
       setSurvIsAnonymous(Boolean(data.is_anonymous));
-      setSurvTemplateType(data.template_type ?? '');
+      setSurvTemplateType(data.template_type ?? row.template_type ?? '');
+      setSurvStatus(data.status ?? row.status ?? '');
       setSurvHasResponses(Boolean(data.has_responses));
       setSurvTargetScope(data.target_type === 'specific_users' ? 'selected' : 'all');
       setSurvMemberIds(Array.isArray(data.target_user_ids) ? data.target_user_ids : []);
@@ -474,6 +477,7 @@ function SurveysPage({ user }: { user: UserData }) {
   const isNewSurveyTitleEmpty = !survTitle.trim();
   const isNewSurveyTemplateEmpty = !survTemplateId && editSurveyId === null;
   const isNewSurveyTargetInvalid = survTargetScope === 'selected' && survMemberIds.length === 0;
+  const isTemplateLocked = editSurveyId !== null && (survHasResponses || survStatus === 'closed');
   const isCreateSurveyDisabled = newSurveySaving || isNewSurveyTitleEmpty || !survStartDate || !survEndDate || isNewSurveyTemplateEmpty || isNewSurveyTargetInvalid;
 
   async function handleSaveSurvey() {
@@ -497,6 +501,9 @@ function SurveysPage({ user }: { user: UserData }) {
         target_type: survTargetScope === 'all' ? 'all_users' : 'specific_users',
         target_user_ids: survTargetScope === 'selected' ? survMemberIds : [],
       };
+      if (survTemplateId) {
+        body.template_id = Number(survTemplateId);
+      }
 
       let res: Response;
       if (editSurveyId !== null) {
@@ -608,6 +615,8 @@ function SurveysPage({ user }: { user: UserData }) {
         />
       ),
       filterActive: categoryFilter !== 'all',
+      thClassName: 'max-[780px]:hidden',
+      tdClassName: 'max-[780px]:hidden',
       render: row => (
         <span className="text-xs text-muted-foreground">
           {row.template_type || '—'}
@@ -638,6 +647,8 @@ function SurveysPage({ user }: { user: UserData }) {
     {
       key: 'duration',
       label: 'Duration',
+      thClassName: 'max-[780px]:hidden',
+      tdClassName: 'max-[780px]:hidden',
       render: row => (
         <span className="text-xs text-muted-foreground whitespace-nowrap">
           {formatSurveyDuration(row.start_date, row.end_date)}
@@ -647,6 +658,8 @@ function SurveysPage({ user }: { user: UserData }) {
     {
       key: 'responses',
       label: 'Responses',
+      thClassName: 'max-[780px]:hidden',
+      tdClassName: 'max-[780px]:hidden',
       render: row => {
         const total = row.total_targeted ?? 0;
         const completed = row.response_count;
@@ -664,39 +677,45 @@ function SurveysPage({ user }: { user: UserData }) {
       headerAlign: 'center',
       thClassName: 'text-center',
       tdClassName: 'text-center',
-      render: row => (
-        <div className="flex items-center justify-center gap-1">
-          <button
-            onClick={() => router.push(`/dashboard/assessments/survey-management/${row.id}`)}
-            className="flex h-6 w-6 items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[#2845D6] hover:bg-[#2845D6]/10 transition-colors"
-            title="View"
-          >
-            <Eye size={12} />
-          </button>
-          <button
-            onClick={() => openEditSurvey(row)}
-            className="flex h-6 w-6 items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[#2845D6] hover:bg-[#2845D6]/10 transition-colors"
-            title="Edit"
-          >
-            <Edit2 size={12} />
-          </button>
-          {row.status === 'draft' && (
+      render: row => {
+        const currentUserName = [user.firstname, user.lastname].filter(Boolean).join(' ');
+        const isCreator = row.created_by_id === user.id || row.created_by_name === currentUserName;
+        const responsePercent = row.total_targeted > 0 ? (row.response_count / row.total_targeted) * 100 : 0;
+        const canDelete = isCreator && responsePercent <= 10;
+        return (
+          <div className="flex items-center justify-center gap-1">
             <button
-              onClick={() => setDeleteCandidate(row)}
-              disabled={deletingId === row.id}
-              className="flex h-6 w-6 items-center justify-center rounded-md text-[var(--color-text-muted)] hover:bg-red-50 dark:hover:bg-red-950/20 hover:text-red-600 transition-colors"
-              title="Delete"
+              onClick={() => router.push(`/dashboard/assessments/survey-management/${row.id}`)}
+              className="flex h-6 w-6 items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[#2845D6] hover:bg-[#2845D6]/10 transition-colors"
+              title="View"
             >
-              {deletingId === row.id
-                ? <Loader2 size={12} />
-                : <Trash2 size={12} />}
+              <Eye size={12} />
             </button>
-          )}
-        </div>
-      ),
+            <button
+              onClick={() => openEditSurvey(row)}
+              className="flex h-6 w-6 items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[#2845D6] hover:bg-[#2845D6]/10 transition-colors"
+              title="Edit"
+            >
+              <Edit2 size={12} />
+            </button>
+            {canDelete && (
+              <button
+                onClick={() => setDeleteCandidate(row)}
+                disabled={deletingId === row.id}
+                className="flex h-6 w-6 items-center justify-center rounded-md text-[var(--color-text-muted)] hover:bg-red-50 dark:hover:bg-red-950/20 hover:text-red-600 transition-colors"
+                title="Delete"
+              >
+                {deletingId === row.id
+                  ? <Loader2 size={12} />
+                  : <Trash2 size={12} />}
+              </button>
+            )}
+          </div>
+        );
+      },
     },
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  ], [categoryFilter, statusFilter, sortField, sortDir, triggerFetch, deletingId]);
+  ], [categoryFilter, statusFilter, sortField, sortDir, triggerFetch, deletingId, user]);
 
   const showHeaderButton = hasAnySurvey === true;
 
@@ -749,8 +768,8 @@ function SurveysPage({ user }: { user: UserData }) {
         <ConfirmationModal
           title="Delete survey?"
           message={`Delete survey "${deleteCandidate.title}"? This cannot be undone.`}
-          confirmLabel="Delete"
-          cancelLabel="Cancel"
+          confirmLabel="Yes, Delete It"
+          cancelLabel="No, Keep It"
           onConfirm={handleDelete}
           onCancel={() => setDeleteCandidate(null)}
           confirming={confirmingDelete}
@@ -795,25 +814,17 @@ function SurveysPage({ user }: { user: UserData }) {
                 <label className="text-[10px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wide">
                   Template {isNewSurveyTemplateEmpty && <span className="text-red-500 normal-case tracking-normal">*</span>}
                 </label>
-                {editSurveyId !== null && survHasResponses ? (
-                  <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-3 py-2 text-sm text-[var(--color-text-muted)]">
-                    {survTemplateType || 'No template available'}
-                  </div>
-                ) : (
-                  <>
-                    <Select value={survTemplateId} onValueChange={setSurvTemplateId}>
-                      <SelectTrigger>
-                        <SelectValue placeholder={survTemplateType || 'Select template'} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {modalTemplates.map(t => (
-                          <SelectItem key={t.id} value={String(t.id)}>{t.title}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    {survErrors.template && <p className="text-xs text-destructive">{survErrors.template}</p>}
-                  </>
-                )}
+                <Select value={survTemplateId} onValueChange={setSurvTemplateId} disabled={isTemplateLocked}>
+                  <SelectTrigger>
+                    <SelectValue placeholder={survTemplateType || 'Select template'} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {modalTemplates.map(t => (
+                      <SelectItem key={t.id} value={String(t.id)}>{t.title}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {survErrors.template && <p className="text-xs text-destructive">{survErrors.template}</p>}
               </div>
 
               <div className="flex flex-col gap-2">
@@ -861,9 +872,9 @@ function SurveysPage({ user }: { user: UserData }) {
                   isCreateSurveyDisabled && 'opacity-60 cursor-not-allowed',
                 )}
               >
-                <Plus className="size-4" />
+                {!newSurveySaving && <Plus className="size-4" />}
                 {newSurveySaving ? (
-                  <TextShimmer duration={1.2} className="text-sm font-semibold text-white [--base-color:#a5b4fc] [--base-gradient-color:#ffffff]">
+                  <TextShimmer duration={1.2} className="text-sm font-semibold [--base-color:#a5b4fc] [--base-gradient-color:#ffffff]">
                     {editSurveyId !== null ? 'Saving…' : 'Creating…'}
                   </TextShimmer>
                 ) : (editSurveyId !== null ? 'Save Changes' : 'Create Survey')}

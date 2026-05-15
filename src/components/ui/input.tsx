@@ -77,7 +77,7 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
             className={cn(
               "flex h-9 w-full rounded-lg border px-3 py-2 text-xs transition-colors",
               "bg-[var(--color-bg-elevated)] border-[var(--color-border)] text-[var(--color-text-primary)]",
-              "placeholder:text-[var(--color-text-muted)] placeholder:text-xs placeholder:text-normal",
+              "placeholder:text-[var(--color-text-muted)] placeholder:text-xs placeholder:font-normal",
               "focus:outline-none focus-visible:outline-none focus:border-[var(--color-border)] focus:ring-0 focus:shadow-none",
               "disabled:cursor-not-allowed disabled:opacity-50",
               error && "border-red-500",

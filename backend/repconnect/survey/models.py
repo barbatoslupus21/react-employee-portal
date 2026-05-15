@@ -117,6 +117,7 @@ class SurveyTargetUser(models.Model):
         on_delete=models.CASCADE,
         related_name='survey_targets',
     )
+    is_seen = models.BooleanField(default=False)
 
     class Meta:
         db_table = 'survey_target_users'

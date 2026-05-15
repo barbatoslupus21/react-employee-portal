@@ -40,6 +40,9 @@ export function LeaveRangePicker({
     }
   }
 
+  const placeholderTextClass = "text-xs leading-tight text-[var(--color-text-muted)] font-normal";
+  const selectedTextClass = "text-xs leading-tight text-[var(--color-text-primary)] font-normal";
+
   return (
     <div className="space-y-1.5">
       <div className="grid grid-cols-2 gap-3 px-1">
@@ -69,35 +72,21 @@ export function LeaveRangePicker({
           >
             <div className="flex items-center gap-2.5 px-3 py-2.5">
               <CalendarIcon className="size-4 shrink-0 text-[var(--color-text-muted)]" />
-              <span
-                className={cn(
-                  "text-sm leading-tight",
-                  dateStart
-                    ? "text-[var(--color-text-primary)]"
-                    : "text-[var(--color-text-muted)]",
-                )}
-              >
+              <span className={dateStart ? selectedTextClass : placeholderTextClass}>
                 {dateStart ? format(dateStart, "MMM dd, yyyy") : "Select date"}
               </span>
             </div>
 
             <div className="flex items-center gap-2.5 px-3 py-2.5 border-l border-[var(--color-border)]">
               <CalendarIcon className="size-4 shrink-0 text-[var(--color-text-muted)]" />
-              <span
-                className={cn(
-                  "text-sm leading-tight",
-                  dateEnd
-                    ? "text-[var(--color-text-primary)]"
-                    : "text-[var(--color-text-muted)]",
-                )}
-              >
+              <span className={dateEnd ? selectedTextClass : placeholderTextClass}>
                 {dateEnd ? format(dateEnd, "MMM dd, yyyy") : "Select date"}
               </span>
             </div>
           </button>
         </PopoverTrigger>
 
-        <PopoverContent className="w-auto p-0 z-[200]" align="start" side="bottom">
+        <PopoverContent className="w-auto p-0 z-[200]" align="start" side="bottom" avoidCollisions>
           <Calendar
             mode="range"
             defaultMonth={dateStart ?? new Date()}

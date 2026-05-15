@@ -25,7 +25,7 @@ export default function BasicCheckbox({
       disabled={disabled}
       onCheckedChange={(details) => onCheckedChange?.(details.checked === true)}
       className={cn(
-        'flex items-center gap-2 cursor-pointer',
+        'relative flex items-center gap-2 cursor-pointer',
         disabled && 'cursor-not-allowed opacity-60',
         className,
       )}
@@ -38,7 +38,23 @@ export default function BasicCheckbox({
       <Checkbox.Label className="text-xs font-normal text-[var(--color-text-muted)] cursor-pointer">
         {label}
       </Checkbox.Label>
-      <Checkbox.HiddenInput />
+      <Checkbox.HiddenInput
+        style={{
+          position: 'absolute',
+          top: '50%',
+          left: 0,
+          width: '1px',
+          height: '1px',
+          opacity: 0,
+          pointerEvents: 'none',
+          overflow: 'hidden',
+          margin: 0,
+          padding: 0,
+          border: 0,
+          clip: 'rect(0,0,0,0)',
+          whiteSpace: 'nowrap',
+        }}
+      />
     </Checkbox.Root>
   );
 }

@@ -103,7 +103,7 @@ export function GradientCard({
       transition={{ duration: 0.2, ease: 'easeOut' }}
       onClick={onClick}
       className={cn(
-        'relative overflow-hidden rounded-2xl border bg-[var(--color-bg-card)] cursor-pointer group',
+        'relative overflow-hidden rounded-lg border bg-[var(--color-bg-card)] cursor-pointer group',
         cfg.border,
         className,
       )}
@@ -142,7 +142,7 @@ export function GradientCard({
         <span
           className={cn(
             'inline-flex items-center self-start rounded-full px-2.5 py-0.5',
-            'text-[11px] font-semibold uppercase tracking-wider',
+            'text-[10px] font-semibold uppercase tracking-wider',
             cfg.badge,
           )}
         >
@@ -162,7 +162,7 @@ export function GradientCard({
         {/* CTA */}
         <div
           className={cn(
-            'mt-1 flex items-center gap-1.5 text-xs font-semibold transition-colors',
+            'mt-1 flex items-center gap-1.5 text-[12px] font-semibold transition-colors',
             cfg.cta,
           )}
         >

@@ -53,6 +53,7 @@ class PRFRequest(models.Model):
     status = models.CharField(max_length=15, choices=STATUS_CHOICES, default='pending')
     admin_remarks = models.TextField(blank=True, null=True)
     processed_by = models.ForeignKey(loginCredentials, on_delete=models.SET_NULL, null=True, blank=True, related_name='processed_prfs')
+    seen = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     

@@ -209,7 +209,7 @@ export function Timeline({
             )}
 
             <div className="flex items-start justify-between gap-2">
-              <h3 className="text-sm font-semibold text-[var(--color-text-primary)] leading-tight">
+              <h3 className="text-xs font-semibold text-[var(--color-text-primary)] leading-tight">
                 {item.title}
               </h3>
               {showTimestamps &&

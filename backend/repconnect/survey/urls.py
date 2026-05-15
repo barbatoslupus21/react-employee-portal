@@ -39,8 +39,9 @@ urlpatterns = [
     path('admin/users',                     views.AdminUserSearchView.as_view(),                name='admin-user-search'),
 
     # ── Respondent endpoints ──────────────────────────────────────────────────
-    path('my-surveys',                      views.MySurveysView.as_view(),                      name='my-surveys'),
-    path('surveys/<int:pk>',                views.SurveyRespondentDetailView.as_view(),         name='survey-respondent-detail'),
+    path('my-surveys',                              views.MySurveysView.as_view(),                      name='my-surveys'),
+    path('my-surveys/<int:survey_id>/seen',         views.SurveyMarkSeenView.as_view(),                 name='survey-mark-seen'),
+    path('surveys/<int:pk>',                        views.SurveyRespondentDetailView.as_view(),         name='survey-respondent-detail'),
     path('responses',                       views.ResponseCreateView.as_view(),                 name='response-create'),
     path('responses/<int:pk>',              views.ResponseDetailView.as_view(),                 name='response-detail'),
     path('responses/<int:pk>/answers/<int:question_pk>', views.AnswerUpsertView.as_view(),     name='answer-upsert'),

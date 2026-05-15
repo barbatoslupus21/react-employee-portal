@@ -2,6 +2,8 @@
 
 import { motion } from 'motion/react';
 import { LogOut } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { useEffect, useState } from 'react';
 
 interface Props {
   secondsLeft: number;
@@ -14,6 +16,21 @@ interface Props {
  * only the "Stay Logged In" button or actual user activity cancels the countdown.
  */
 export function InactivityWarningModal({ secondsLeft, onCancel }: Props) {
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+    const prevOverflow = document.body.style.overflow;
+    const prevTouchAction = document.body.style.touchAction;
+    document.body.style.overflow = 'hidden';
+    document.body.style.touchAction = 'none';
+    return () => {
+      setMounted(false);
+      document.body.style.overflow = prevOverflow;
+      document.body.style.touchAction = prevTouchAction;
+    };
+  }, []);
+
   const pct = secondsLeft / 30;
 
   // SVG ring progress (runs from full → empty)
@@ -21,15 +38,21 @@ export function InactivityWarningModal({ secondsLeft, onCancel }: Props) {
   const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
   const strokeDash  = CIRCUMFERENCE * (1 - pct);
 
-  return (
+  if (!mounted) return null;
+
+  return createPortal(
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       transition={{ duration: 0.2 }}
       /* Intentionally NOT onClick={onCancel} — backdrop is inert */
-      className="fixed inset-0 z-[200] flex items-center justify-center
-        bg-black/60 backdrop-blur-sm"
+      data-inactivity-warning-modal
+      style={{ pointerEvents: 'auto', minWidth: '100vw', minHeight: '100vh' }}
+      className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/60 backdrop-blur-sm"
+      onWheel={e => e.stopPropagation()}
+      onTouchMove={e => e.stopPropagation()}
+      onScroll={e => e.stopPropagation()}
       aria-modal="true"
       role="alertdialog"
       aria-labelledby="inactivity-title"
@@ -112,8 +135,8 @@ export function InactivityWarningModal({ secondsLeft, onCancel }: Props) {
             <button
               type="button"
               onClick={onCancel}
-              className="flex w-full items-center justify-center gap-2 px-4 py-2.5
-                rounded-lg bg-[#2845D6] text-white text-sm font-semibold
+              className="flex w-full items-center justify-center gap-2 px-4 py-2
+                rounded-lg bg-[#2845D6] text-white text-xs font-semibold
                 hover:bg-[#1f38c0] active:scale-[0.98]
                 transition-all duration-150 focus:outline-none focus-visible:ring-2
                 focus-visible:ring-[#2845D6] focus-visible:ring-offset-2"
@@ -130,6 +153,7 @@ export function InactivityWarningModal({ secondsLeft, onCancel }: Props) {
           </div>
         </div>
       </motion.div>
-    </motion.div>
+    </motion.div>,
+    document.body
   );
 }

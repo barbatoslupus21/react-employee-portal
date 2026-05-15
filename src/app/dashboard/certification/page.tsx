@@ -156,7 +156,7 @@ function PageSkeleton() {
         <div className="h-7 w-44 rounded-lg bg-[var(--color-border)] animate-pulse" />
         <div className="h-4 w-72 rounded bg-[var(--color-border)] animate-pulse" />
       </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 pt-2">
+      <div className="grid grid-cols-1 gap-5 [min-width:481px]:grid-cols-2 lg:grid-cols-[repeat(5,minmax(0,1fr))] pt-2">
         {Array.from({ length: 6 }).map((_, i) => (
           <GradientCardSkeleton key={i} />
         ))}
@@ -229,18 +229,21 @@ export default function CertificationPage() {
         method:      'POST',
         credentials: 'include',
         headers:     { 'X-CSRFToken': getCsrfToken() },
-      }).then((r) => {
-        if (r.ok) {
-          // Clear the is_new flag locally so the pill disappears immediately
-          setCerts((prev) =>
-            prev.map((c) => c.id === cert.id ? { ...c, is_new: false } : c)
-          );
-        }
-      }).catch(() => {/* non-fatal */});
+      })
+        .then((r) => {
+          if (r.ok) {
+            setCerts((prev) =>
+              prev.map((c) => c.id === cert.id ? { ...c, is_new: false } : c)
+            );
+            window.dispatchEvent(new Event('certificate-badge-refresh'));
+          }
+        })
+        .catch(() => {
+          /* non-fatal */
+        });
     }
   }
 
-  // ── Send email ──────────────────────────────────
   async function handleSendEmail() {
     if (!viewCert) return;
     setSending(true);
@@ -281,15 +284,19 @@ export default function CertificationPage() {
   const displayName = user
     ? [user.firstname, user.lastname].filter(Boolean).join(' ') || user.idnumber
     : '';
+  const newCertCount = certs.filter((cert) => cert.is_new).length;
+  const orderedCerts = [...certs].sort((a, b) => Number(b.is_new) - Number(a.is_new));
 
   return (
-    <div className="mx-auto max-w-6xl p-4 sm:p-6 space-y-6">
+    <div className="w-full p-4 sm:p-6 space-y-6">
       {/* Page header */}
       <div>
-        <h1 className="text-2xl font-bold text-[var(--color-text-primary)]">My Certificates</h1>
+        <div className="flex flex-wrap items-center gap-3">
+          <h1 className="text-xl font-bold text-[var(--color-text-primary)]">My Certificates</h1>
+        </div>
         {displayName && (
-          <p className="mt-1 text-sm text-[var(--color-text-muted)]">
-            Certificates issued to {displayName}
+          <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+            Professional Certifications and Achievements
           </p>
         )}
       </div>
@@ -306,9 +313,9 @@ export default function CertificationPage() {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ duration: 0.3 }}
-          className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5"
+          className="grid grid-cols-1 gap-5 [min-width:481px]:grid-cols-2 lg:grid-cols-[repeat(5,minmax(0,1fr))]"
         >
-          {certs.map((cert, i) => (
+          {orderedCerts.map((cert, i) => (
             <GradientCard
               key={cert.id}
               title={cert.title}
@@ -318,6 +325,7 @@ export default function CertificationPage() {
               index={i}
               is_new={cert.is_new}
               onClick={() => handleOpenCert(cert)}
+              className="w-full lg:max-w-[24rem]"
             />
           ))}
         </motion.div>

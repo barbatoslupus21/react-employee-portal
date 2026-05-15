@@ -27,8 +27,8 @@ export default function SearchBar({ value, onChange, placeholder = 'Search...', 
           bg-[var(--color-bg-elevated)] box-border py-4 pl-8 pr-3 text-xs
           text-[var(--color-text-primary)]
           placeholder:text-[var(--color-text-muted)] placeholder:italic
-          focus:outline-none focus-visible:outline-none focus:border-[var(--color-border)] focus:shadow-none focus:ring-0
-          transition-none"
+          focus:outline-none focus-visible:outline-none focus:border-[var(--color-border)] focus:ring-0
+          transition-none shadow-[var(--shadow-sm)]"
       />
     </div>
   );

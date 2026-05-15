@@ -1,7 +1,7 @@
 "use client";
 
+import * as PopoverPrimitive from "@radix-ui/react-popover";
 import * as React from "react";
-import { createPortal } from "react-dom";
 import {
   addMonths,
   subMonths,
@@ -17,6 +17,7 @@ import {
 } from "date-fns";
 import { CalendarIcon, ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -44,6 +45,8 @@ interface DateTimePickerProps {
   className?: string;
   minDate?: Date;
   maxDate?: Date;
+  /** Render the popover inline instead of portaling it to document.body. */
+  portal?: boolean;
 }
 
 export function DateTimePicker({
@@ -56,11 +59,10 @@ export function DateTimePicker({
   className,
   minDate,
   maxDate,
+  portal = true,
 }: DateTimePickerProps) {
   const [open, setOpen] = React.useState(false);
   const [currentMonth, setCurrentMonth] = React.useState<Date>(value ?? new Date());
-  const triggerRef = React.useRef<HTMLButtonElement>(null);
-  const popoverRef = React.useRef<HTMLDivElement>(null);
 
   // Time state — only relevant when showTimeInput is true
   const [timeInput, setTimeInput] = React.useState(value ? format(value, "HH:mm") : "00:00");
@@ -73,34 +75,7 @@ export function DateTimePicker({
   // Sync time input when popover opens
   React.useEffect(() => {
     if (open) setTimeInput(value ? format(value, "HH:mm") : "00:00");
-  }, [open]);
-
-  // Close on outside click
-  React.useEffect(() => {
-    if (!open) return;
-    const handler = (e: MouseEvent) => {
-      if (
-        triggerRef.current?.contains(e.target as Node) ||
-        popoverRef.current?.contains(e.target as Node)
-      ) return;
-      setOpen(false);
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [open]);
-
-  // Popover fixed position anchored to trigger
-  const [popoverStyle, setPopoverStyle] = React.useState<React.CSSProperties>({});
-  React.useEffect(() => {
-    if (!open || !triggerRef.current) return;
-    const rect = triggerRef.current.getBoundingClientRect();
-    setPopoverStyle({
-      position: "fixed",
-      top: rect.bottom + 6,
-      left: rect.left,
-      zIndex: 9999,
-    });
-  }, [open]);
+  }, [open, value]);
 
   const days = buildCalendarDays(currentMonth);
 
@@ -119,18 +94,20 @@ export function DateTimePicker({
   const labelFormat = displayFormat ?? (showTimeInput ? "MMM d, yyyy HH:mm" : "MMM d, yyyy");
   const formattedLabel = value ? format(value, labelFormat) : null;
 
-  const popoverContent = open ? (
-    <div
-      ref={popoverRef}
-      style={popoverStyle}
-      className={cn(
-        "w-[272px] rounded-xl border border-[var(--color-border)]",
-        "bg-[var(--color-bg-elevated)] shadow-[var(--shadow-xl)] p-3"
-      )}
-    >
+  const contentClasses = cn(
+    "z-[60] w-[272px] rounded-xl border border-[var(--color-border)]",
+    "bg-[var(--color-bg-elevated)] p-3 text-[var(--color-text-primary)] shadow-[var(--shadow-xl)] outline-none"
+  );
+
+  const handleAutoFocus = (event: Event) => {
+    event.preventDefault();
+  };
+
+  const popoverBody = (
+    <div data-datetime-picker-popover>
       {/* Month navigation */}
       <div className="flex items-center justify-between mb-3">
-        <span className="text-sm font-medium text-[var(--color-text-primary)]">
+        <span className="text-xs font-medium text-[var(--color-text-primary)]">
           {format(currentMonth, "MMMM yyyy")}
         </span>
         <div className="flex gap-0.5">
@@ -180,7 +157,7 @@ export function DateTimePicker({
                 disabled={isDisabled}
                 onClick={() => handleDayClick(day)}
                 className={cn(
-                  "h-8 w-8 flex items-center justify-center rounded-md text-sm transition-colors focus:outline-none",
+                  "h-8 w-8 flex items-center justify-center rounded-md text-xs transition-colors focus:outline-none",
                   isSelected
                     ? "bg-[var(--color-text-primary)] text-[var(--color-bg-elevated)] font-medium"
                     : isTodayDay
@@ -206,7 +183,7 @@ export function DateTimePicker({
             onChange={(e) => setTimeInput(e.target.value)}
             placeholder="HH:mm"
             className={cn(
-              "w-full h-8 px-2.5 rounded-lg border text-sm",
+              "w-full h-8 px-2.5 rounded-lg border text-xs",
               "bg-[var(--color-bg-elevated)] border-[var(--color-border)] text-[var(--color-text-primary)]",
               "focus:outline-none focus:border-transparent focus:shadow-sm",
             )}
@@ -214,34 +191,66 @@ export function DateTimePicker({
         </div>
       )}
     </div>
-  ) : null;
+  );
+
+  const trigger = (
+    <button
+      type="button"
+      disabled={disabled}
+      className={cn(
+        "flex h-9 w-full items-center gap-2 rounded-lg border px-3 text-xs transition-colors text-left select-none",
+        "bg-[var(--color-bg-elevated)] border-[var(--color-border)]",
+        formattedLabel ? "text-[var(--color-text-primary)]" : "text-[var(--color-text-muted)] italic",
+        !disabled && "hover:border-[var(--color-border)]",
+        "focus:outline-none",
+        open && "outline-none border-transparent shadow-sm",
+        disabled && "opacity-50 cursor-not-allowed"
+      )}
+    >
+      <CalendarIcon className="h-4 w-4 shrink-0 text-[var(--color-text-muted)]" />
+      <span className="flex-1 truncate">{formattedLabel ?? placeholder}</span>
+    </button>
+  );
+
+  if (!portal) {
+    return (
+      <div className={cn("relative", className)}>
+        <PopoverPrimitive.Root open={open} onOpenChange={setOpen} modal={false}>
+          <PopoverPrimitive.Trigger asChild>{trigger}</PopoverPrimitive.Trigger>
+          <PopoverPrimitive.Content
+            data-datetime-picker-popover
+            side="bottom"
+            align="start"
+            sideOffset={4}
+            avoidCollisions
+            onOpenAutoFocus={handleAutoFocus}
+            onCloseAutoFocus={handleAutoFocus}
+            className={contentClasses}
+          >
+            {popoverBody}
+          </PopoverPrimitive.Content>
+        </PopoverPrimitive.Root>
+      </div>
+    );
+  }
 
   return (
     <div className={cn("relative", className)}>
-      {/* ── Trigger button ── */}
-      <button
-        ref={triggerRef}
-        type="button"
-        disabled={disabled}
-        onClick={() => setOpen((p) => !p)}
-        className={cn(
-          "flex h-9 w-full items-center gap-2 rounded-lg border px-3 text-sm transition-colors text-left select-none",
-          "bg-[var(--color-bg-elevated)] border-[var(--color-border)]",
-          formattedLabel ? "text-[var(--color-text-primary)]" : "text-[var(--color-text-muted)] italic",
-          !disabled && "hover:border-[var(--color-border)]",
-          "focus:outline-none",
-          open && "outline-none border-transparent shadow-sm",
-          disabled && "opacity-50 cursor-not-allowed"
-        )}
-      >
-        <CalendarIcon className="h-4 w-4 shrink-0 text-[var(--color-text-muted)]" />
-        <span className="flex-1 truncate">{formattedLabel ?? placeholder}</span>
-      </button>
-
-      {/* ── Portal popover — rendered outside modal stack at document.body ── */}
-      {typeof window !== "undefined" && popoverContent
-        ? createPortal(popoverContent, document.body)
-        : null}
+      <Popover open={open} onOpenChange={setOpen} modal={false}>
+        <PopoverTrigger asChild>{trigger}</PopoverTrigger>
+        <PopoverContent
+          data-datetime-picker-popover
+          align="start"
+          side="bottom"
+          sideOffset={4}
+          avoidCollisions
+          onOpenAutoFocus={handleAutoFocus}
+          onCloseAutoFocus={handleAutoFocus}
+          className={contentClasses}
+        >
+          {popoverBody}
+        </PopoverContent>
+      </Popover>
     </div>
   );
 }

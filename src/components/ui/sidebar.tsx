@@ -12,6 +12,7 @@ export interface SidebarLink {
   label: string;
   href: string;
   icon: React.ReactNode;
+  badgeCount?: number;
 }
 
 interface SidebarContextProps {
@@ -195,21 +196,28 @@ export const SidebarLink = ({
   active?: boolean;
 }) => {
   const { open, animate } = useSidebar();
+  const hasBadge = (link.badgeCount ?? 0) > 0;
   return (
     <Link
       href={link.href}
       title={link.label}
       className={cn(
-        "flex items-center h-10 rounded-lg transition-colors duration-150",
+        "relative flex items-center h-10 rounded-lg transition-colors duration-150",
         active
           ? "bg-[#2845D6]/10 text-[#2845D6]"
           : "text-[var(--color-text-muted)] hover:bg-[var(--color-bg-card)] hover:text-[var(--color-text-primary)]",
         className
       )}
     >
-      {/* Fixed-width icon slot — always centered, never moves */}
-      <span className="flex h-10 w-[40px] shrink-0 items-center justify-center">
+      {/* Fixed-width icon slot — relative so dot badge can be positioned on the icon */}
+      <span className="relative flex h-10 w-[40px] shrink-0 items-center justify-center">
         {link.icon}
+        {hasBadge && !open && (
+          <span
+            className="absolute h-1.5 w-1.5 rounded-full bg-[var(--color-accent)]"
+            style={{ top: '8px', right: '8px' }}
+          />
+        )}
       </span>
 
       {/* Label — always in DOM, animated via opacity+maxWidth only */}
@@ -220,10 +228,27 @@ export const SidebarLink = ({
           maxWidth: animate ? (open ? 160 : 0) : 160,
         }}
         transition={{ duration: 0.18, ease: [0.4, 0, 0.2, 1] }}
-        className="overflow-hidden whitespace-nowrap text-xs font-medium"
+        className="flex-1 overflow-hidden whitespace-nowrap text-xs font-medium"
       >
         {link.label}
       </motion.span>
+
+      {/* Count badge — visible only when sidebar is expanded */}
+      {hasBadge && (
+        <motion.span
+          initial={false}
+          animate={{
+            opacity: animate ? (open ? 1 : 0) : 0,
+            maxWidth: animate ? (open ? 48 : 0) : 48,
+          }}
+          transition={{ duration: 0.18, ease: [0.4, 0, 0.2, 1] }}
+          className="overflow-hidden shrink-0 flex items-center pr-3"
+        >
+          <span className="inline-flex items-center justify-center rounded-full border border-[var(--color-border)] bg-[var(--color-bg-card)] px-1.5 h-[18px] text-[10px] font-semibold text-[var(--color-text-muted)] min-w-[18px]">
+            {link.badgeCount}
+          </span>
+        </motion.span>
+      )}
     </Link>
   );
 };

@@ -8,25 +8,31 @@ from .views import (
     PRFAdminChartView,
     PRFAdminExportView,
     PRFAdminListView,
+    PRFAdminPendingCountView,
     PRFAdminUpdateView,
+    PRFMarkSeenView,
     PRFMetaView,
     PRFRequestCancelView,
     PRFRequestDetailView,
     PRFRequestListCreateView,
+    PRFUnseenCountView,
 )
 
 urlpatterns = [
     path('requests',                        PRFRequestListCreateView.as_view(), name='prf-list-create'),
+    path('requests/unseen-count',           PRFUnseenCountView.as_view(),       name='prf-unseen-count'),
     path('requests/<int:pk>',               PRFRequestDetailView.as_view(),     name='prf-detail'),
     path('requests/<int:pk>/cancel',        PRFRequestCancelView.as_view(),     name='prf-cancel'),
+    path('requests/<int:pk>/mark-seen',     PRFMarkSeenView.as_view(),          name='prf-mark-seen'),
     path('meta',                            PRFMetaView.as_view(),              name='prf-meta'),
     path('emergency-loan/check',             EmergencyLoanPreCheckView.as_view(), name='prf-el-check'),
     path('emergency-loan',                  EmergencyLoanCreateView.as_view(),  name='prf-emergency-loan'),
     path('medicine-allowance/check',        MedicineAllowancePreCheckView.as_view(), name='prf-ma-check'),
     path('medicine-allowance',              MedicineAllowanceCreateView.as_view(),   name='prf-ma-create'),
     # Admin
-    path('admin/requests',                  PRFAdminListView.as_view(),         name='prf-admin-list'),
+    path('admin/pending-count',          PRFAdminPendingCountView.as_view(),     name='prf-admin-pending-count'),
+    path('admin/requests',               PRFAdminListView.as_view(),             name='prf-admin-list'),
     path('admin/requests/<int:pk>',         PRFAdminUpdateView.as_view(),       name='prf-admin-update'),
     path('admin/chart',                     PRFAdminChartView.as_view(),        name='prf-admin-chart'),
-    path('admin/export',                    PRFAdminExportView.as_view(),       name='prf-admin-export'),
+    path('admin/export',                 PRFAdminExportView.as_view(),       name='prf-admin-export'),
 ]

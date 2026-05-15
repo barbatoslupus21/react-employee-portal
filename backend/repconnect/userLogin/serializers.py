@@ -26,8 +26,10 @@ class LoginSerializer(serializers.Serializer):
 
 
 class UserSerializer(serializers.ModelSerializer):
-    avatar = serializers.SerializerMethodField()
-    is_approver = serializers.SerializerMethodField()
+    avatar               = serializers.SerializerMethodField()
+    is_approver          = serializers.SerializerMethodField()
+    employment_type_name = serializers.SerializerMethodField()
+    date_hired           = serializers.SerializerMethodField()
 
     def get_avatar(self, obj):
         return _avatar_url(obj)
@@ -36,6 +38,28 @@ class UserSerializer(serializers.ModelSerializer):
         """True if this user is designated as the approver for at least one other employee."""
         from userProfile.models import workInformation
         return workInformation.objects.filter(approver=obj).exists()
+
+    def _get_work(self, obj):
+        """Return the first workInformation record for this user, cached per instance."""
+        if not hasattr(self, '_wi_cache'):
+            self._wi_cache = {}
+        if obj.pk not in self._wi_cache:
+            from userProfile.models import workInformation
+            self._wi_cache[obj.pk] = (
+                workInformation.objects
+                .filter(employee=obj)
+                .select_related('employment_type')
+                .first()
+            )
+        return self._wi_cache[obj.pk]
+
+    def get_employment_type_name(self, obj):
+        wi = self._get_work(obj)
+        return wi.employment_type.name if wi and wi.employment_type_id else None
+
+    def get_date_hired(self, obj):
+        wi = self._get_work(obj)
+        return str(wi.date_hired) if wi and wi.date_hired else None
 
     class Meta:
         model = User
@@ -63,6 +87,8 @@ class UserSerializer(serializers.ModelSerializer):
             'date_joined',
             'last_login',
             'is_approver',
+            'employment_type_name',
+            'date_hired',
         ]
         read_only_fields = fields
 

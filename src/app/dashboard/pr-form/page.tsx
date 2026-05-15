@@ -90,6 +90,7 @@ interface PRFRequest {
     end_date:        string;
     coverage_period: string;
   } | null;
+  seen:                boolean;
   created_at:          string;
   updated_at:          string;
 }
@@ -483,7 +484,7 @@ function EmergencyLoanModal({
             type="button"
             onClick={onClose}
             disabled={saving}
-            className="px-4 py-2 rounded-lg text-sm font-medium border border-[var(--color-border)]
+            className="px-4 py-2 rounded-lg text-xs font-normal border border-[var(--color-border)]
               text-[var(--color-text-primary)] hover:bg-[var(--color-bg-card)]
               transition-colors disabled:opacity-50"
           >
@@ -494,11 +495,11 @@ function EmergencyLoanModal({
             onClick={handleConfirm}
             disabled={!isValid || saving}
             className="flex min-w-[150px] items-center justify-center gap-1.5 px-4 py-2 rounded-lg
-              bg-[#2845D6] text-white text-sm font-semibold hover:bg-[#1f38c0]
+              bg-[#2845D6] text-white text-xs font-normal hover:bg-[#1f38c0]
               disabled:opacity-50 transition-colors"
           >
             {saving
-              ? <TextShimmer duration={1.2} className="text-sm font-semibold [--base-color:#a5b4fc] [--base-gradient-color:#ffffff]">
+              ? <TextShimmer duration={1.2} className="text-xs font-normal [--base-color:#a5b4fc] [--base-gradient-color:#ffffff]">
                   Submitting…
                 </TextShimmer>
               : <><Check size={14} /><span>Confirm Request</span></>
@@ -1184,7 +1185,7 @@ function SubmitPRFModal({
             type="button"
             onClick={onClose}
             disabled={saving}
-            className="px-4 py-2 rounded-lg text-sm font-medium border border-[var(--color-border)]
+            className="px-4 py-2 rounded-lg text-xs font-normal border border-[var(--color-border)]
               text-[var(--color-text-primary)] hover:bg-[var(--color-bg-card)]
               transition-colors disabled:opacity-50"
           >
@@ -1195,11 +1196,11 @@ function SubmitPRFModal({
             onClick={handleSubmit}
             disabled={!isValid || saving}
             className="flex min-w-[130px] items-center justify-center gap-1.5 px-4 py-2 rounded-lg
-              bg-[#2845D6] text-white text-sm font-semibold hover:bg-[#1f38c0]
+              bg-[#2845D6] text-white text-xs font-normal hover:bg-[#1f38c0]
               disabled:opacity-50 transition-colors"
           >
             {saving
-              ? <TextShimmer duration={1.2} className="text-sm font-semibold [--base-color:#a5b4fc] [--base-gradient-color:#ffffff]">
+              ? <TextShimmer duration={1.2} className="text-xs font-normal [--base-color:#a5b4fc] [--base-gradient-color:#ffffff]">
                   {prfType === 'medicine_allowance' || prfType === 'emergency_loan' ? 'Checking…' : 'Submitting…'}
                 </TextShimmer>
               : prfType === 'emergency_loan' || prfType === 'medicine_allowance'
@@ -1391,7 +1392,7 @@ function ViewPRFModal({ request, onClose }: { request: PRFRequest; onClose: () =
         {/* ── Footer ── */}
         <div className="px-6 py-4 flex justify-end">
           <button type="button" onClick={onClose}
-            className="px-4 py-2 rounded-lg text-sm font-medium border border-[var(--color-border)]
+            className="px-4 py-2 rounded-lg text-xs font-normal border border-[var(--color-border)]
               text-[var(--color-text-primary)] hover:bg-[var(--color-bg-card)] transition-colors">
             Close
           </button>
@@ -1650,17 +1651,17 @@ function EditPRFModal({
         {/* Footer */}
         <div className="border-t border-[var(--color-border)] px-6 py-4 flex items-center justify-end gap-2">
           <button type="button" onClick={onClose} disabled={saving}
-            className="px-4 py-2 rounded-lg text-sm font-medium border border-[var(--color-border)]
+            className="px-4 py-2 rounded-lg text-xs font-normal border border-[var(--color-border)]
               text-[var(--color-text-primary)] hover:bg-[var(--color-bg-card)]
               transition-colors disabled:opacity-50">
             Cancel
           </button>
           <button type="button" onClick={handleSubmit} disabled={!isValid || saving}
             className="flex min-w-[130px] items-center justify-center gap-1.5 px-4 py-2 rounded-lg
-              bg-[#2845D6] text-white text-sm font-semibold hover:bg-[#1f38c0]
+              bg-[#2845D6] text-white text-xs font-normal hover:bg-[#1f38c0]
               disabled:opacity-50 transition-colors">
             {saving
-              ? <TextShimmer duration={1.2} className="text-sm font-semibold [--base-color:#a5b4fc] [--base-gradient-color:#ffffff]">Saving…</TextShimmer>
+              ? <TextShimmer duration={1.2} className="text-xs font-normal [--base-color:#a5b4fc] [--base-gradient-color:#ffffff]">Saving…</TextShimmer>
               : <><Check size={14} /><span>Save Changes</span></>
             }
           </button>
@@ -1736,17 +1737,17 @@ function CancelConfirmModal({
         </div>
         <div className="border-t border-[var(--color-border)] px-6 py-4 flex items-center justify-end gap-2">
           <button type="button" onClick={onClose} disabled={cancelling}
-            className="px-4 py-2 rounded-lg text-sm font-medium border border-[var(--color-border)]
+            className="px-4 py-2 rounded-lg text-xs font-normal border border-[var(--color-border)]
               text-[var(--color-text-primary)] hover:bg-[var(--color-bg-card)]
               transition-colors disabled:opacity-50">
             Keep Request
           </button>
           <button type="button" onClick={handleConfirm} disabled={cancelling}
             className="flex min-w-[130px] items-center justify-center gap-1.5 px-4 py-2 rounded-lg
-              bg-[var(--btn-danger-bg)] text-white text-sm  hover:bg-[var(--btn-danger-hover)]
+              bg-[var(--btn-danger-bg)] text-white text-xs font-normal hover:bg-[var(--btn-danger-hover)]
               disabled:opacity-50 transition-colors">
             {cancelling
-              ? <TextShimmer duration={1.2} className="text-sm [--base-color:#fca5a5] [--base-gradient-color:#ffffff]">Cancelling…</TextShimmer>
+              ? <TextShimmer duration={1.2} className="text-xs [--base-color:#fca5a5] [--base-gradient-color:#ffffff]">Cancelling…</TextShimmer>
               : <><XCircle size={14} /><span>Yes, I confirm</span></>
             }
           </button>
@@ -1799,7 +1800,7 @@ function FilterListContent({
           type="button"
           onClick={() => onChange('')}
           className={cn(
-            'w-full rounded-md px-2 py-1.5 text-left text-xs transition-colors',
+            'w-full rounded-md px-4 py-2 text-left text-xs font-normal transition-colors',
             !value
               ? 'bg-[#2845D6]/10 font-medium text-[#2845D6]'
               : 'text-[var(--color-text-muted)] hover:bg-[var(--color-bg-card)]',
@@ -1813,7 +1814,7 @@ function FilterListContent({
             type="button"
             onClick={() => onChange(o.value)}
             className={cn(
-              'w-full rounded-md px-2 py-1.5 text-left text-xs transition-colors',
+              'w-full rounded-md px-4 py-2 text-left text-xs font-normal transition-colors',
               value === o.value
                 ? 'bg-[#2845D6]/10 font-medium text-[#2845D6]'
                 : 'text-[var(--color-text-muted)] hover:bg-[var(--color-bg-card)]',
@@ -2063,7 +2064,18 @@ export default function PRFormPage() {
           <button
             type="button"
             title="View"
-            onClick={() => setViewReq(req)}
+            onClick={() => {
+              setViewReq(req);
+              if (!req.seen) {
+                fetch(`/api/prform/requests/${req.id}/mark-seen`, {
+                  method: 'POST',
+                  credentials: 'include',
+                  headers: { 'X-CSRFToken': document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? '' },
+                }).then(() => {
+                  window.dispatchEvent(new Event('prf-badge-refresh'));
+                }).catch(() => {});
+              }
+            }}
             className="flex h-7 w-7 items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[#2845D6] hover:bg-[#2845D6]/10 transition-colors"
           >
             <Eye size={14} />

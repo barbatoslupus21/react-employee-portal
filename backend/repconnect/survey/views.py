@@ -18,7 +18,10 @@ from collections import defaultdict
 from typing import Any
 
 from django.db import transaction
-from django.db.models import Q, Max, Avg, F, ExpressionWrapper, DurationField
+from django.db.models import (
+    Q, Max, Avg, F, ExpressionWrapper, DurationField, Count,
+    OuterRef, Subquery, Case, When, Value, IntegerField,
+)
 from django.utils import timezone
 from rest_framework import status as http_status
 from rest_framework.permissions import IsAuthenticated
@@ -110,6 +113,15 @@ def _paginate(qs, request, page_size: int = 20) -> tuple:
         page = max(1, int(request.query_params.get('page', 1)))
     except (ValueError, TypeError):
         page = 1
+
+    try:
+        requested_page_size = int(request.query_params.get('page_size', page_size))
+        if requested_page_size <= 0:
+            requested_page_size = page_size
+    except (ValueError, TypeError):
+        requested_page_size = page_size
+
+    page_size = min(requested_page_size, 100)
     total = qs.count()
     start = (page - 1) * page_size
     items = list(qs[start:start + page_size])
@@ -193,6 +205,11 @@ class AdminSurveyListCreateView(APIView):
         else:
             template_type = ''
 
+        status_value = data.get('status', Survey.STATUS_ACTIVE)
+        if status_value == Survey.STATUS_DRAFT:
+            status_value = Survey.STATUS_ACTIVE
+        data['status'] = status_value
+
         survey = Survey.objects.create(
             **data,
             created_by=request.user,
@@ -201,6 +218,11 @@ class AdminSurveyListCreateView(APIView):
         if survey.target_type == Survey.TARGET_SPECIFIC and target_user_ids:
             SurveyTargetUser.objects.bulk_create([
                 SurveyTargetUser(survey=survey, user_id=uid) for uid in target_user_ids
+            ], ignore_conflicts=True)
+        elif survey.target_type == Survey.TARGET_ALL:
+            SurveyTargetUser.objects.bulk_create([
+                SurveyTargetUser(survey=survey, user_id=uid)
+                for uid in _eligible_survey_recipients().values_list('id', flat=True)
             ], ignore_conflicts=True)
         # Seed questions from template if template_id provided
         template_id = request.data.get('template_id')
@@ -289,6 +311,11 @@ class AdminSurveyDetailView(APIView):
                 SurveyTargetUser.objects.bulk_create([
                     SurveyTargetUser(survey=survey, user_id=uid) for uid in target_user_ids
                 ], ignore_conflicts=True)
+            elif survey.target_type == Survey.TARGET_ALL:
+                SurveyTargetUser.objects.bulk_create([
+                    SurveyTargetUser(survey=survey, user_id=uid)
+                    for uid in _eligible_survey_recipients().values_list('id', flat=True)
+                ], ignore_conflicts=True)
 
         if template is not None:
             survey.questions.all().delete()
@@ -326,8 +353,14 @@ class AdminSurveyDetailView(APIView):
         survey = Survey.objects.filter(pk=pk).first()
         if not survey:
             return Response({'detail': 'Not found.'}, status=http_status.HTTP_404_NOT_FOUND)
-        if survey.status != Survey.STATUS_DRAFT:
-            return Response({'detail': 'Only Draft surveys can be deleted.'}, status=http_status.HTTP_400_BAD_REQUEST)
+        total_targeted = survey.target_users.count()
+        total_responses = SurveyResponse.objects.filter(survey=survey, is_complete=True).count()
+        response_percent = (total_responses / total_targeted * 100) if total_targeted > 0 else 0.0
+        if response_percent > 10:
+            return Response(
+                {'detail': 'Surveys with more than 10% completed responses cannot be deleted.'},
+                status=http_status.HTTP_400_BAD_REQUEST,
+            )
         survey.delete()
         return Response(status=http_status.HTTP_204_NO_CONTENT)
 
@@ -475,7 +508,14 @@ class AdminTemplateQuestionListCreateView(APIView):
         ser = SurveyQuestionWriteSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
         max_order = template.questions.aggregate(m=Max('order'))['m'] or 0
-        question = ser.save(template=template, order=max_order + 1)
+        order = ser.validated_data.get('order')
+        if order is None:
+            order = max_order + 1
+        else:
+            order = max(0, int(order))
+            if order <= max_order:
+                template.questions.filter(order__gte=order).update(order=F('order') + 1)
+        question = ser.save(template=template, order=order)
         return Response(SurveyQuestionSerializer(question).data, status=http_status.HTTP_201_CREATED)
 
 
@@ -768,7 +808,7 @@ class AdminSurveyResultsView(APIView):
                 'total_responses': total_answered,
             }
 
-            if q.question_type in CHOICE_BASED_TYPES | {'yes_no', 'likert', 'linear_scale'}:
+            if q.question_type in CHOICE_BASED_TYPES:
                 counts: dict = defaultdict(int)
                 for ans in answered_qs.prefetch_related('selected_options'):
                     for opt in ans.selected_options.all():
@@ -779,6 +819,47 @@ class AdminSurveyResultsView(APIView):
                      'percentage': round(counts.get(opt.pk, 0) / total_answered * 100, 1) if total_answered else 0.0}
                     for opt in q.options.order_by('order')
                 ]
+            elif q.question_type == 'yes_no':
+                # stored as text_value ("Yes" / "No")
+                text_counts: dict = defaultdict(int)
+                for val in answered_qs.exclude(text_value='').values_list('text_value', flat=True):
+                    text_counts[val] += 1
+                result['options'] = [
+                    {'option_id': None, 'option_text': label,
+                     'count': text_counts.get(label, 0),
+                     'percentage': round(text_counts.get(label, 0) / total_answered * 100, 1) if total_answered else 0.0}
+                    for label in ('Yes', 'No')
+                ]
+            elif q.question_type == 'likert':
+                # stored as text_value (e.g. "Strongly Agree")
+                likert_labels = ['Strongly Disagree', 'Disagree', 'Neutral', 'Agree', 'Strongly Agree']
+                text_counts = defaultdict(int)
+                for val in answered_qs.exclude(text_value='').values_list('text_value', flat=True):
+                    text_counts[val] += 1
+                result['options'] = [
+                    {'option_id': None, 'option_text': label,
+                     'count': text_counts.get(label, 0),
+                     'percentage': round(text_counts.get(label, 0) / total_answered * 100, 1) if total_answered else 0.0}
+                    for label in likert_labels
+                ]
+            elif q.question_type == 'linear_scale':
+                # stored as number_value (numeric scale)
+                values = list(answered_qs.filter(number_value__isnull=False).values_list('number_value', flat=True))
+                avg = (sum(values) / len(values)) if values else None
+                dist: dict = defaultdict(int)
+                for v in values:
+                    dist[v] += 1
+                try:
+                    cfg = q.rating_config
+                    min_v, max_v = cfg.min_value, cfg.max_value
+                except SurveyQuestionRatingConfig.DoesNotExist:
+                    min_v, max_v = (1, 10) if not dist else (int(min(dist)), int(max(dist)))
+                distribution = []
+                for v in range(min_v, max_v + 1):
+                    cnt = dist.get(float(v), dist.get(v, 0))
+                    distribution.append({'value': v, 'count': cnt, 'percentage': round(cnt / len(values) * 100, 1) if values else 0.0})
+                result['average'] = round(avg, 2) if avg is not None else None
+                result['distribution'] = distribution
             elif q.question_type in {'rating', 'number'}:
                 values = list(answered_qs.filter(number_value__isnull=False).values_list('number_value', flat=True))
                 avg = (sum(values) / len(values)) if values else None
@@ -821,73 +902,422 @@ class AdminSurveyResultsView(APIView):
 
 
 class AdminSurveyExportView(APIView):
-    """GET — XLSX export, max 500 rows (R13)."""
+    """GET — Multi-sheet XLSX survey report (Overall Summary, Response Summary, and supplementary sheets)."""
     permission_classes = [IsAuthenticated]
 
-    def get(self, request, pk: int):
+    def get(self, request, pk: int):  # noqa: C901
         denied = _require_admin_hr_or_iad(request)
         if denied:
             return denied
-        survey = Survey.objects.prefetch_related('questions__options').filter(pk=pk).first()
+
+        survey = Survey.objects.filter(pk=pk).first()
         if not survey:
             return Response({'detail': 'Not found.'}, status=http_status.HTTP_404_NOT_FOUND)
+
         try:
             import openpyxl
-            from openpyxl.styles import Font, PatternFill, Alignment
+            from openpyxl.styles import Font, PatternFill, Border, Side
+            from openpyxl.utils import get_column_letter
         except ImportError:
             return Response({'detail': 'openpyxl not installed.'}, status=http_status.HTTP_503_SERVICE_UNAVAILABLE)
 
         from django.http import StreamingHttpResponse
-        wb = openpyxl.Workbook()
-        ws = wb.active
-        ws.title = 'Responses'
-        questions = list(survey.questions.order_by('order'))
+        from statistics import median as _median
+        from userLogin.models import loginCredentials
+        from userProfile.models import workInformation
 
-        headers = ['Response ID', 'Respondent', 'Submitted At', 'Completed']
-        if not survey.is_anonymous:
-            headers.insert(1, 'Employee ID')
+        # ── Shared styles ──────────────────────────────────────────────────────
+        _BLUE   = PatternFill('solid', fgColor='2845D6')
+        _WH_B   = Font(bold=True, color='FFFFFF')
+        _BOLD   = Font(bold=True)
+        _THIN   = Side(style='thin')
+        _BORDER = Border(left=_THIN, right=_THIN, top=_THIN, bottom=_THIN)
+
+        def _hdr(ws, row, ncols):
+            for c in range(1, ncols + 1):
+                cell = ws.cell(row=row, column=c)
+                cell.fill = _BLUE
+                cell.font = _WH_B
+                cell.border = _BORDER
+
+        def _border_row(ws, row, ncols):
+            for c in range(1, ncols + 1):
+                ws.cell(row=row, column=c).border = _BORDER
+
+        def _auto_width(ws):
+            for col in ws.columns:
+                ltr = get_column_letter(col[0].column)
+                max_len = max(
+                    (len(str(cell.value)) for cell in col if cell.value is not None),
+                    default=0,
+                )
+                ws.column_dimensions[ltr].width = min(max(max_len + 4, 10), 60)
+
+        # ── Type sets ─────────────────────────────────────────────────────────
+        INSTRUCTION_TYPES = {'section', 'subsection', 'statement'}
+        FREE_FORM_TYPES   = {'short_text', 'long_text', 'number', 'date'}
+        CHOICE_OPT_TYPES  = CHOICE_BASED_TYPES | {'yes_no', 'likert', 'linear_scale'}
+        SUMMARY_TYPES     = CHOICE_OPT_TYPES | {'rating'}
+
+        # ── Questions (ordered, with options and rating_config pre-fetched) ───
+        questions = list(
+            SurveyQuestion.objects.filter(survey=survey)
+            .order_by('order')
+            .select_related('rating_config')
+            .prefetch_related('options')
+        )
+        answerable_q = [q for q in questions if q.question_type not in INSTRUCTION_TYPES]
+
+        # Numbering: instruction blocks don't consume a number
+        q_numbers: dict = {}
+        counter = 0
         for q in questions:
-            headers.append(f'Q{q.order}: {q.question_text[:50]}')
-        ws.append(headers)
-        fill = PatternFill('solid', fgColor='2845D6')
-        font = Font(bold=True, color='FFFFFF')
-        for cell in ws[1]:
-            cell.fill = fill
-            cell.font = font
+            if q.question_type not in INSTRUCTION_TYPES:
+                counter += 1
+                q_numbers[q.pk] = counter
 
-        responses = survey.responses.filter(is_complete=True).select_related('employee')[:500]
-        answer_map = {(a.response_id, a.question_id): a for a in
-                      SurveyAnswer.objects.filter(response__survey=survey, response__is_complete=True).prefetch_related('selected_options')}
+        # ── Target users (excluding admin / hr / accounting) ──────────────────
+        excl_filter = Q(admin=True) | Q(hr=True) | Q(accounting=True)
+        if survey.target_type == Survey.TARGET_SPECIFIC:
+            raw = list(
+                survey.target_users.select_related('user')
+                .exclude(user__admin=True)
+                .exclude(user__hr=True)
+                .exclude(user__accounting=True)
+                .values_list('user_id', 'user__idnumber', 'user__firstname', 'user__lastname')
+            )
+        else:
+            raw = list(
+                loginCredentials.objects.filter(is_active=True)
+                .exclude(excl_filter)
+                .values_list('id', 'idnumber', 'firstname', 'lastname')
+            )
 
-        for resp in responses:
-            if survey.is_anonymous:
-                respondent, emp_id = 'Anonymous', ''
-            else:
-                respondent = f'{resp.employee.firstname} {resp.employee.lastname}' if resp.employee else '-'
-                emp_id = str(resp.employee.idnumber) if resp.employee else '-'
-            row = [resp.pk, respondent, str(resp.submitted_at or ''), 'Yes']
-            if not survey.is_anonymous:
-                row.insert(1, emp_id)
-            for q in questions:
-                ans = answer_map.get((resp.pk, q.pk))
+        target_user_ids = {r[0] for r in raw}
+        total_target    = len(raw)
+
+        # ── Completed responses (targeted users only) ─────────────────────────
+        completed = list(
+            SurveyResponse.objects.filter(
+                survey=survey,
+                is_complete=True,
+                employee_id__in=target_user_ids,
+            ).select_related('employee').order_by('submitted_at')
+        )
+        completed_resp_ids = [r.pk for r in completed]
+        completed_emp_ids  = {r.employee_id for r in completed}
+        total_responses    = len(completed)
+        completion_pct     = (total_responses / total_target * 100) if total_target else 0.0
+
+        # ── All answers for completed responses ───────────────────────────────
+        all_answers = list(
+            SurveyAnswer.objects.filter(response_id__in=completed_resp_ids)
+            .prefetch_related('selected_options')
+        )
+        ans_map = {(a.response_id, a.question_id): a for a in all_answers}
+
+        # ── Aggregate counts per question ─────────────────────────────────────
+        q_by_id        = {q.pk: q for q in questions}
+        opt_count      = defaultdict(lambda: defaultdict(int))  # q_id → opt_id → n
+        text_count     = defaultdict(lambda: defaultdict(int))  # q_id → text_value → n
+        numeric_count  = defaultdict(lambda: defaultdict(int))  # q_id → numeric value → n
+        rating_count   = defaultdict(lambda: defaultdict(int))  # q_id → value  → n
+        q_respondents  = defaultdict(int)                       # q_id → n respondents
+
+        for ans in all_answers:
+            q = q_by_id.get(ans.question_id)
+            if q is None:
+                continue
+            if q.question_type == 'rating':
+                if ans.number_value is not None:
+                    q_respondents[q.pk] += 1
+                    rating_count[q.pk][int(ans.number_value)] += 1
+            elif q.question_type in CHOICE_BASED_TYPES:
+                opts = list(ans.selected_options.all())
+                if opts:
+                    q_respondents[q.pk] += 1
+                    for opt in opts:
+                        opt_count[q.pk][opt.pk] += 1
+            elif q.question_type == 'yes_no':
+                if ans.text_value:
+                    q_respondents[q.pk] += 1
+                    text_count[q.pk][ans.text_value] += 1
+            elif q.question_type == 'likert':
+                if ans.text_value:
+                    q_respondents[q.pk] += 1
+                    text_count[q.pk][ans.text_value] += 1
+            elif q.question_type == 'linear_scale':
+                if ans.number_value is not None:
+                    q_respondents[q.pk] += 1
+                    numeric_count[q.pk][int(ans.number_value)] += 1
+
+        # ── Department map: employee_id → dept name ───────────────────────────
+        dept_map = {
+            wi.employee_id: (wi.department.name if wi.department else '')
+            for wi in workInformation.objects.filter(
+                employee_id__in=target_user_ids,
+            ).select_related('department')
+        }
+
+        # ── Build workbook ─────────────────────────────────────────────────────
+        wb = openpyxl.Workbook()
+
+        # ══════════════════════════════════════════════════════════════════════
+        # SHEET 1 — Overall Summary
+        # ══════════════════════════════════════════════════════════════════════
+        ws1 = wb.active
+        ws1.title = 'Overall Summary'
+
+        ws1.append(['RYONAN ELECTRIC PHILIPPINES CORPORATION'])
+        ws1.append([f'{survey.title} Overall Summary'])
+        ws1.append([])
+
+        # Completion table
+        ws1.append(['Total Users', 'Total Responses', 'Completion Rate'])
+        _hdr(ws1, ws1.max_row, 3)
+        ws1.append([total_target, total_responses, f'{completion_pct:.1f}%'])
+        _border_row(ws1, ws1.max_row, 3)
+        ws1.append([])
+
+        # Questions
+        for q in questions:
+            qtype = q.question_type
+            if qtype in INSTRUCTION_TYPES:
+                ws1.append([q.question_text])
+                ws1.cell(row=ws1.max_row, column=1).font = _BOLD
+                ws1.append([])
+            elif qtype in FREE_FORM_TYPES:
+                qn = q_numbers[q.pk]
+                ws1.append([f'Q{qn}. {q.question_text}'])
+                ws1.cell(row=ws1.max_row, column=1).font = _BOLD
+                ws1.append([])
+            elif qtype in SUMMARY_TYPES:
+                qn = q_numbers[q.pk]
+                ws1.append([f'Q{qn}. {q.question_text}'])
+                ws1.cell(row=ws1.max_row, column=1).font = _BOLD
+                ws1.append(['Option', 'Count', 'Percentage'])
+                ws1.cell(row=ws1.max_row, column=1).font = _BOLD
+                ws1.cell(row=ws1.max_row, column=2).font = _BOLD
+                ws1.cell(row=ws1.max_row, column=3).font = _BOLD
+                total_ans = q_respondents.get(q.pk, 0)
+                if qtype == 'rating':
+                    cfg = getattr(q, 'rating_config', None)
+                    min_v = cfg.min_value if cfg else 1
+                    max_v = cfg.max_value if cfg else 5
+                    for val in range(min_v, max_v + 1):
+                        cnt = rating_count[q.pk].get(val, 0)
+                        pct = (cnt / total_ans * 100) if total_ans else 0.0
+                        ws1.append([str(val), cnt, f'{pct:.1f}%'])
+                elif qtype == 'yes_no':
+                    for label in ('Yes', 'No'):
+                        cnt = text_count[q.pk].get(label, 0)
+                        pct = (cnt / total_ans * 100) if total_ans else 0.0
+                        ws1.append([label, cnt, f'{pct:.1f}%'])
+                elif qtype == 'likert':
+                    likert_labels = [
+                        'Strongly Disagree',
+                        'Disagree',
+                        'Neutral',
+                        'Agree',
+                        'Strongly Agree',
+                    ]
+                    for label in likert_labels:
+                        cnt = text_count[q.pk].get(label, 0)
+                        pct = (cnt / total_ans * 100) if total_ans else 0.0
+                        ws1.append([label, cnt, f'{pct:.1f}%'])
+                elif qtype == 'linear_scale':
+                    opts = list(q.options.all())
+                    if opts:
+                        for val in range(1, len(opts) + 1):
+                            cnt = numeric_count[q.pk].get(val, 0)
+                            pct = (cnt / total_ans * 100) if total_ans else 0.0
+                            ws1.append([str(val), cnt, f'{pct:.1f}%'])
+                    else:
+                        try:
+                            cfg = q.rating_config
+                            min_v, max_v = cfg.min_value, cfg.max_value
+                        except SurveyQuestionRatingConfig.DoesNotExist:
+                            min_v, max_v = 1, 10
+                        for val in range(min_v, max_v + 1):
+                            cnt = numeric_count[q.pk].get(val, 0)
+                            pct = (cnt / total_ans * 100) if total_ans else 0.0
+                            ws1.append([str(val), cnt, f'{pct:.1f}%'])
+                else:
+                    for opt in q.options.all():
+                        cnt = opt_count[q.pk].get(opt.pk, 0)
+                        pct = (cnt / total_ans * 100) if total_ans else 0.0
+                        ws1.append([opt.option_text, cnt, f'{pct:.1f}%'])
+                ws1.append([])
+
+        _auto_width(ws1)
+
+        # ══════════════════════════════════════════════════════════════════════
+        # SHEET 2 — Response Summary
+        # ══════════════════════════════════════════════════════════════════════
+        ws2 = wb.create_sheet(title='Response Summary')
+        ws2.append(['RYONAN ELECTRIC PHILIPPINES CORPORATION'])
+        ws2.append([f'{survey.title} Response Summary'])
+        ws2.append([])
+
+        rs_headers = ['ID Number', 'Employee Name', 'Department', 'Date Submitted']
+        for q in answerable_q:
+            rs_headers.append(f'Q{q_numbers[q.pk]}. {q.question_text}')
+        ws2.append(rs_headers)
+        _hdr(ws2, ws2.max_row, len(rs_headers))
+
+        for resp in completed:
+            emp = resp.employee
+            row_data = [
+                str(emp.idnumber) if emp else '',
+                f'{emp.lastname}, {emp.firstname}' if emp else 'Anonymous',
+                dept_map.get(emp.pk, '') if emp else '',
+                resp.submitted_at.strftime('%Y-%m-%d') if resp.submitted_at else '',
+            ]
+            for q in answerable_q:
+                ans = ans_map.get((resp.pk, q.pk))
                 if not ans:
-                    row.append('')
-                elif q.question_type in CHOICE_BASED_TYPES | {'yes_no', 'likert', 'linear_scale'}:
+                    row_data.append('')
+                elif q.question_type in CHOICE_BASED_TYPES:
                     opts = [o.option_text for o in ans.selected_options.all()]
                     if ans.other_text:
                         opts.append(f'Other: {ans.other_text}')
-                    row.append(', '.join(opts))
+                    row_data.append(', '.join(opts))
+                elif q.question_type == 'yes_no':
+                    row_data.append(ans.text_value)
+                elif q.question_type == 'likert':
+                    row_data.append(ans.text_value)
+                elif q.question_type == 'linear_scale':
+                    row_data.append(ans.number_value if ans.number_value is not None else '')
                 elif q.question_type in {'rating', 'number'}:
-                    row.append(ans.number_value if ans.number_value is not None else '')
+                    row_data.append(ans.number_value if ans.number_value is not None else '')
                 else:
-                    row.append(ans.text_value)
-            ws.append(row)
+                    row_data.append(ans.text_value)
+            ws2.append(row_data)
+            _border_row(ws2, ws2.max_row, len(rs_headers))
 
-        buffer = io.BytesIO()
-        wb.save(buffer)
-        buffer.seek(0)
-        http_resp = StreamingHttpResponse(streaming_content=buffer, content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-        http_resp['Content-Disposition'] = f'attachment; filename="survey_{pk}_responses.xlsx"'
+        _auto_width(ws2)
+
+        # ══════════════════════════════════════════════════════════════════════
+        # SHEET 3 — Non-Respondents
+        # ══════════════════════════════════════════════════════════════════════
+        ws3 = wb.create_sheet(title='Non-Respondents')
+        nr_headers = ['ID Number', 'Employee Name', 'Department']
+        ws3.append(nr_headers)
+        _hdr(ws3, ws3.max_row, len(nr_headers))
+        for uid, id_num, fname, lname in raw:
+            if uid not in completed_emp_ids:
+                ws3.append([str(id_num), f'{lname}, {fname}', dept_map.get(uid, '')])
+                _border_row(ws3, ws3.max_row, len(nr_headers))
+        _auto_width(ws3)
+
+        # ══════════════════════════════════════════════════════════════════════
+        # SHEET 4 — Question Analysis (Rating Scale — numeric stats)
+        # ══════════════════════════════════════════════════════════════════════
+        rating_qs = [q for q in answerable_q if q.question_type == 'rating']
+        if rating_qs:
+            ws4 = wb.create_sheet(title='Question Analysis')
+            qa_headers = ['Question', 'Responses', 'Average', 'Median', 'Min', 'Max']
+            ws4.append(qa_headers)
+            _hdr(ws4, ws4.max_row, len(qa_headers))
+            for q in rating_qs:
+                qn = q_numbers[q.pk]
+                values = [
+                    a.number_value
+                    for a in all_answers
+                    if a.question_id == q.pk and a.number_value is not None
+                ]
+                if values:
+                    ws4.append([
+                        f'Q{qn}. {q.question_text}',
+                        len(values),
+                        round(sum(values) / len(values), 2),
+                        round(_median(values), 2),
+                        min(values),
+                        max(values),
+                    ])
+                else:
+                    ws4.append([f'Q{qn}. {q.question_text}', 0, '', '', '', ''])
+                _border_row(ws4, ws4.max_row, len(qa_headers))
+            _auto_width(ws4)
+
+        # ══════════════════════════════════════════════════════════════════════
+        # SHEET 5 — Open-Ended Responses (Short Text / Long Text)
+        # ══════════════════════════════════════════════════════════════════════
+        open_qs = [q for q in answerable_q if q.question_type in {'short_text', 'long_text'}]
+        if open_qs:
+            ws5 = wb.create_sheet(title='Open-Ended Responses')
+            oe_headers = ['Q No.', 'Question Text', 'Employee Name', 'Response']
+            ws5.append(oe_headers)
+            _hdr(ws5, ws5.max_row, len(oe_headers))
+            resp_lookup = {r.pk: r for r in completed}
+            for q in open_qs:
+                qn = q_numbers[q.pk]
+                for ans in all_answers:
+                    if ans.question_id != q.pk or not ans.text_value:
+                        continue
+                    resp = resp_lookup.get(ans.response_id)
+                    if not resp:
+                        continue
+                    if survey.is_anonymous:
+                        name = 'Anonymous'
+                    elif resp.employee:
+                        name = f'{resp.employee.lastname}, {resp.employee.firstname}'
+                    else:
+                        name = '-'
+                    ws5.append([f'Q{qn}', q.question_text, name, ans.text_value])
+                    _border_row(ws5, ws5.max_row, len(oe_headers))
+            _auto_width(ws5)
+
+        # ══════════════════════════════════════════════════════════════════════
+        # SHEET 6 — Respondent Timeline
+        # ══════════════════════════════════════════════════════════════════════
+        ws6 = wb.create_sheet(title='Respondent Timeline')
+        tl_headers = ['ID Number', 'Employee Name', 'Department', 'Submitted At']
+        ws6.append(tl_headers)
+        _hdr(ws6, ws6.max_row, len(tl_headers))
+        for resp in completed:
+            emp = resp.employee
+            ws6.append([
+                str(emp.idnumber) if emp else '',
+                f'{emp.lastname}, {emp.firstname}' if emp else 'Anonymous',
+                dept_map.get(emp.pk, '') if emp else '',
+                resp.submitted_at.strftime('%Y-%m-%d %H:%M') if resp.submitted_at else '',
+            ])
+            _border_row(ws6, ws6.max_row, len(tl_headers))
+        _auto_width(ws6)
+
+        # ══════════════════════════════════════════════════════════════════════
+        # SHEET 7 — Department Breakdown
+        # ══════════════════════════════════════════════════════════════════════
+        ws7 = wb.create_sheet(title='Department Breakdown')
+        db_headers = ['Department', 'Total Users', 'Responded', 'Response Rate']
+        ws7.append(db_headers)
+        _hdr(ws7, ws7.max_row, len(db_headers))
+        dept_users = defaultdict(list)
+        for uid, _id_num, _fname, _lname in raw:
+            dept_users[dept_map.get(uid, 'Unknown')].append(uid)
+        for dept_name, uids in sorted(dept_users.items()):
+            responded = sum(1 for uid in uids if uid in completed_emp_ids)
+            total     = len(uids)
+            rate      = f'{responded / total * 100:.1f}%' if total else '0.0%'
+            ws7.append([dept_name, total, responded, rate])
+            _border_row(ws7, ws7.max_row, len(db_headers))
+        _auto_width(ws7)
+
+        # ── Serialize & respond ───────────────────────────────────────────────
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        safe_title = ''.join(
+            c for c in survey.title if c.isalnum() or c in (' ', '-', '_')
+        )[:50].strip() or 'survey'
+        http_resp = StreamingHttpResponse(
+            streaming_content=buf,
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+        http_resp['Content-Disposition'] = (
+            f'attachment; filename="{safe_title}_report.xlsx"'
+        )
         return http_resp
 
 
@@ -903,50 +1333,208 @@ class AdminIndividualResponsesView(APIView):
         if not survey:
             return Response({'detail': 'Not found.'}, status=http_status.HTTP_404_NOT_FOUND)
 
-        qs = SurveyResponse.objects.filter(survey=survey).select_related('employee').order_by('-submitted_at', '-pk')
-
-        # Filter: status (complete / partial)
         status_filter = request.query_params.get('status', 'all')
-        if status_filter == 'complete':
-            qs = qs.filter(is_complete=True)
-        elif status_filter == 'partial':
-            qs = qs.filter(is_complete=False)
-
-        # Filter: date range on submitted_at
-        date_from = request.query_params.get('date_from', '').strip()
-        date_to = request.query_params.get('date_to', '').strip()
-        if date_from:
-            qs = qs.filter(submitted_at__date__gte=date_from)
-        if date_to:
-            qs = qs.filter(submitted_at__date__lte=date_to)
-
-        # Filter: search by name or employee ID (only for non-anonymous surveys)
         search = request.query_params.get('search', '').strip()
-        if search and not survey.is_anonymous:
-            qs = qs.filter(
-                Q(employee__firstname__icontains=search) |
-                Q(employee__lastname__icontains=search) |
-                Q(employee__idnumber__icontains=search)
-            )
+        sort = request.query_params.get('sort', 'name')
+        dir_ = request.query_params.get('dir', 'asc')
+        prefix = '-' if dir_ == 'desc' else ''
 
-        items, meta = _paginate(qs, request)
+        if survey.target_type == Survey.TARGET_SPECIFIC:
+            submitted_subq = SurveyResponse.objects.filter(
+                survey=survey, employee=OuterRef('user')
+            ).values('submitted_at')[:1]
+            is_complete_subq = SurveyResponse.objects.filter(
+                survey=survey, employee=OuterRef('user')
+            ).values('is_complete')[:1]
+            response_pk_subq = SurveyResponse.objects.filter(
+                survey=survey, employee=OuterRef('user')
+            ).values('pk')[:1]
 
-        results = []
-        for resp in items:
-            if survey.is_anonymous or not resp.employee:
-                name = 'Anonymous'
-                idnumber = '—'
+            qs = (SurveyTargetUser.objects
+                  .filter(survey=survey)
+                  .exclude(user__admin=True)
+                  .exclude(user__hr=True)
+                  .exclude(user__accounting=True)
+                  .select_related('user')
+                  .annotate(
+                      resp_submitted_at=Subquery(submitted_subq),
+                      resp_is_complete=Subquery(is_complete_subq),
+                      resp_id=Subquery(response_pk_subq),
+                  ))
+
+            if search and not survey.is_anonymous:
+                qs = qs.filter(
+                    Q(user__firstname__icontains=search) |
+                    Q(user__lastname__icontains=search) |
+                    Q(user__idnumber__icontains=search)
+                )
+
+            if status_filter == 'complete':
+                qs = qs.filter(resp_is_complete=True)
+            elif status_filter == 'partial':
+                qs = qs.filter(resp_is_complete=False)
+            elif status_filter == 'not_started':
+                qs = qs.filter(resp_is_complete__isnull=True)
+
+            if sort == 'idnumber':
+                qs = qs.order_by(f'{prefix}user__idnumber')
+            elif sort == 'submitted_at':
+                qs = qs.order_by(f'{prefix}resp_submitted_at')
+            elif sort == 'status':
+                qs = qs.annotate(status_order=Case(
+                    When(resp_is_complete=True, then=Value(1)),
+                    When(resp_is_complete=False, then=Value(2)),
+                    default=Value(3),
+                    output_field=IntegerField(),
+                )).order_by(f'{prefix}status_order')
             else:
-                name = f'{resp.employee.firstname or ""} {resp.employee.lastname or ""}'.strip() or resp.employee.idnumber
-                idnumber = resp.employee.idnumber
-            results.append({
-                'id': resp.pk,
-                'respondent_name': name,
-                'idnumber': idnumber,
-                'submitted_at': resp.submitted_at.isoformat() if resp.submitted_at else None,
-                'started_at': resp.started_at.isoformat() if resp.started_at else None,
-                'is_complete': resp.is_complete,
-            })
+                qs = qs.order_by(f'{prefix}user__lastname', f'{prefix}user__firstname')
+
+            items, meta = _paginate(qs, request)
+            results = []
+            for target in items:
+                user = target.user
+                if survey.is_anonymous:
+                    firstname = 'Anonymous'
+                    lastname = ''
+                    idnumber = '—'
+                else:
+                    firstname = user.firstname or ''
+                    lastname = user.lastname or ''
+                    idnumber = user.idnumber
+                rc = target.resp_is_complete
+                if rc is True:
+                    status = 'Complete'
+                elif rc is False:
+                    status = 'Partial'
+                else:
+                    status = 'Not started'
+                results.append({
+                    'id': target.resp_id if target.resp_id else f'user-{user.pk}',
+                    'response_id': target.resp_id,
+                    'firstname': firstname,
+                    'lastname': lastname,
+                    'idnumber': idnumber,
+                    'submitted_at': target.resp_submitted_at.isoformat() if target.resp_submitted_at else None,
+                    'is_complete': bool(rc is True),
+                    'status': status,
+                })
+
+        elif survey.target_type == Survey.TARGET_ALL:
+            from django.contrib.auth import get_user_model
+            User = get_user_model()
+
+            submitted_subq = SurveyResponse.objects.filter(
+                survey=survey, employee=OuterRef('pk')
+            ).values('submitted_at')[:1]
+            is_complete_subq = SurveyResponse.objects.filter(
+                survey=survey, employee=OuterRef('pk')
+            ).values('is_complete')[:1]
+            response_pk_subq = SurveyResponse.objects.filter(
+                survey=survey, employee=OuterRef('pk')
+            ).values('pk')[:1]
+
+            qs = (User.objects
+                  .filter(is_active=True)
+                  .exclude(admin=True)
+                  .exclude(hr=True)
+                  .exclude(accounting=True)
+                  .annotate(
+                      resp_submitted_at=Subquery(submitted_subq),
+                      resp_is_complete=Subquery(is_complete_subq),
+                      resp_id=Subquery(response_pk_subq),
+                  ))
+
+            if search and not survey.is_anonymous:
+                qs = qs.filter(
+                    Q(firstname__icontains=search) |
+                    Q(lastname__icontains=search) |
+                    Q(idnumber__icontains=search)
+                )
+
+            if status_filter == 'complete':
+                qs = qs.filter(resp_is_complete=True)
+            elif status_filter == 'partial':
+                qs = qs.filter(resp_is_complete=False)
+            elif status_filter == 'not_started':
+                qs = qs.filter(resp_is_complete__isnull=True)
+
+            if sort == 'idnumber':
+                qs = qs.order_by(f'{prefix}idnumber')
+            elif sort == 'submitted_at':
+                qs = qs.order_by(f'{prefix}resp_submitted_at')
+            elif sort == 'status':
+                qs = qs.annotate(status_order=Case(
+                    When(resp_is_complete=True, then=Value(1)),
+                    When(resp_is_complete=False, then=Value(2)),
+                    default=Value(3),
+                    output_field=IntegerField(),
+                )).order_by(f'{prefix}status_order')
+            else:
+                qs = qs.order_by(f'{prefix}lastname', f'{prefix}firstname')
+
+            items, meta = _paginate(qs, request)
+            results = []
+            for user in items:
+                if survey.is_anonymous:
+                    firstname = 'Anonymous'
+                    lastname = ''
+                    idnumber = '—'
+                else:
+                    firstname = user.firstname or ''
+                    lastname = user.lastname or ''
+                    idnumber = user.idnumber
+                rc = user.resp_is_complete
+                if rc is True:
+                    status = 'Complete'
+                elif rc is False:
+                    status = 'Partial'
+                else:
+                    status = 'Not started'
+                results.append({
+                    'id': user.resp_id if user.resp_id else f'user-{user.pk}',
+                    'response_id': user.resp_id,
+                    'firstname': firstname,
+                    'lastname': lastname,
+                    'idnumber': idnumber,
+                    'submitted_at': user.resp_submitted_at.isoformat() if user.resp_submitted_at else None,
+                    'is_complete': bool(rc is True),
+                    'status': status,
+                })
+
+        else:
+            qs = SurveyResponse.objects.filter(survey=survey).select_related('employee').order_by('-submitted_at', '-pk')
+            if status_filter == 'complete':
+                qs = qs.filter(is_complete=True)
+            elif status_filter == 'partial':
+                qs = qs.filter(is_complete=False)
+            if search and not survey.is_anonymous:
+                qs = qs.filter(
+                    Q(employee__firstname__icontains=search) |
+                    Q(employee__lastname__icontains=search) |
+                    Q(employee__idnumber__icontains=search)
+                )
+            items, meta = _paginate(qs, request)
+            results = []
+            for resp in items:
+                if survey.is_anonymous or not resp.employee:
+                    firstname = 'Anonymous'
+                    lastname = ''
+                    idnumber = '—'
+                else:
+                    firstname = resp.employee.firstname or ''
+                    lastname = resp.employee.lastname or ''
+                    idnumber = resp.employee.idnumber
+                results.append({
+                    'id': resp.pk,
+                    'response_id': resp.pk,
+                    'firstname': firstname,
+                    'lastname': lastname,
+                    'idnumber': idnumber,
+                    'submitted_at': resp.submitted_at.isoformat() if resp.submitted_at else None,
+                    'is_complete': resp.is_complete,
+                    'status': 'Complete' if resp.is_complete else 'Partial',
+                })
 
         return Response({'results': results, 'pagination': meta, 'is_anonymous': survey.is_anonymous})
 
@@ -1027,28 +1615,64 @@ class AdminUserSearchView(APIView):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class MySurveysView(APIView):
-    """GET /api/survey/my-surveys — active and closed surveys targeted at the authenticated user."""
+    """GET /api/survey/my-surveys — surveys targeted at the authenticated user."""
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         user = request.user
         targeted = Survey.objects.filter(
-            status__in=[Survey.STATUS_ACTIVE, Survey.STATUS_CLOSED]
-        ).filter(
             Q(target_type=Survey.TARGET_ALL) |
             Q(target_type=Survey.TARGET_SPECIFIC, target_users__user=user)
-        ).distinct()
+        ).annotate(
+            question_count=Count('questions', distinct=True)
+        ).distinct().order_by('-created_at')
+
+        # Fetch all SurveyTargetUser rows for this user in one query
+        target_map = {
+            stu.survey_id: stu.is_seen
+            for stu in SurveyTargetUser.objects.filter(
+                survey__in=targeted, user=user
+            ).only('survey_id', 'is_seen')
+        }
+
+        # Map template_type to the latest template description so the UI can show template summary text.
+        template_types = {s.template_type for s in targeted if s.template_type}
+        template_map = {}
+        if template_types:
+            for tmpl in SurveyTemplate.objects.filter(template_type__in=template_types).order_by('template_type', '-created_at'):
+                template_map.setdefault(tmpl.template_type, tmpl.description)
+
         results = []
         for s in targeted:
             response = SurveyResponse.objects.filter(survey=s, employee=user).first()
             results.append({
-                'id': s.pk, 'title': s.title, 'description': s.description,
-                'is_anonymous': s.is_anonymous, 'start_date': s.start_date, 'end_date': s.end_date,
+                'id': s.pk,
+                'title': s.title,
+                'description': s.description,
+                'template_description': template_map.get(s.template_type, ''),
+                'is_anonymous': s.is_anonymous,
+                'start_date': s.start_date,
+                'end_date': s.end_date,
                 'status': s.status,
                 'is_complete': response.is_complete if response else False,
                 'response_id': response.pk if response else None,
+                'is_seen': target_map.get(s.pk, False),
+                'question_count': s.question_count,
             })
         return Response(results)
+
+
+class SurveyMarkSeenView(APIView):
+    """PATCH /api/survey/my-surveys/<survey_id>/seen — mark a survey as seen (idempotent)."""
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, survey_id: int):
+        updated = SurveyTargetUser.objects.filter(
+            survey_id=survey_id, user=request.user
+        ).update(is_seen=True)
+        if updated == 0:
+            return Response({'detail': 'Not found.'}, status=http_status.HTTP_404_NOT_FOUND)
+        return Response(status=http_status.HTTP_204_NO_CONTENT)
 
 
 class ResponseCreateView(APIView):
@@ -1121,7 +1745,13 @@ class ResponseSubmitView(APIView):
             return Response({'detail': 'Already submitted.'}, status=http_status.HTTP_200_OK)
         if response.survey.status != Survey.STATUS_ACTIVE:
             return Response({'detail': 'Survey is no longer accepting responses.', 'code': 'survey_closed'}, status=http_status.HTTP_400_BAD_REQUEST)
-        required_ids = set(SurveyQuestion.objects.filter(survey=response.survey, is_required=True).values_list('id', flat=True))
+        instruction_types = ['section', 'subsection', 'statement']
+        required_ids = set(
+            SurveyQuestion.objects
+                .filter(survey=response.survey, is_required=True)
+                .exclude(question_type__in=instruction_types)
+                .values_list('id', flat=True)
+        )
         answered_ids = set(response.answers.values_list('question_id', flat=True))
         missing = required_ids - answered_ids
         if missing:

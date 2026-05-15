@@ -175,11 +175,12 @@ class SurveyDetailSerializer(serializers.ModelSerializer):
     target_user_ids = serializers.SerializerMethodField()
     response_count  = serializers.SerializerMethodField()
     has_responses   = serializers.SerializerMethodField()
+    template_type   = serializers.CharField(read_only=True)
 
     class Meta:
         model  = Survey
         fields = (
-            'id', 'title', 'description', 'status', 'target_type', 'is_anonymous',
+            'id', 'title', 'description', 'status', 'template_type', 'target_type', 'is_anonymous',
             'start_date', 'end_date', 'created_by_name', 'created_at', 'updated_at',
             'questions', 'target_user_ids', 'response_count', 'has_responses',
         )

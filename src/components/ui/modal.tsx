@@ -3,6 +3,9 @@
 import React from 'react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { X } from 'lucide-react';
+
+type PointerDownOutsideEvent = CustomEvent<{ originalEvent: PointerEvent }>;
+
 import { AnimatePresence, motion } from 'motion/react';
 import { cn } from '@/lib/utils';
 import { useIsMobile } from '@/hooks/use-media-query';
@@ -107,6 +110,16 @@ const ModalContent = ({ className, children }: ModalContentProps) => {
   // data-state CSS classes (animate-in, zoom-in-95, etc.) produce no effect.
   // We replicate the same animation as the Export Leave Report modal:
   // overlay fades in/out, content fades + scales + translates.
+  const handlePointerDownOutside = (event: PointerDownOutsideEvent) => {
+    const target = event.detail?.originalEvent?.target as HTMLElement | null;
+    if (
+      target?.closest('[data-datetime-picker-popover]') ||
+      target?.closest('[data-inactivity-warning-modal]')
+    ) {
+      event.preventDefault();
+    }
+  };
+
   return (
     <AnimatePresence>
       {open && (
@@ -120,7 +133,11 @@ const ModalContent = ({ className, children }: ModalContentProps) => {
               transition={{ duration: 0.18 }}
             />
           </DialogPrimitive.Overlay>
-          <DialogPrimitive.Content asChild forceMount>
+          <DialogPrimitive.Content
+            forceMount
+            onPointerDownOutside={handlePointerDownOutside}
+            asChild
+          >
             <motion.div
               className={cn(
                 'fixed left-1/2 top-1/2 z-50 w-full max-w-lg -translate-x-1/2 -translate-y-1/2',
@@ -129,10 +146,10 @@ const ModalContent = ({ className, children }: ModalContentProps) => {
                 'shadow-2xl sm:rounded-2xl',
                 className,
               )}
-              initial={{ opacity: 0, scale: 0.97, y: 8 }}
+              initial={{ opacity: 0, scale: 0.96, y: 10 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.97, y: 8 }}
-              transition={{ duration: 0.18 }}
+              exit={{ opacity: 0, scale: 0.96, y: 10 }}
+              transition={{ duration: 0.2, ease: [0.25, 0.46, 0.45, 0.94] }}
             >
               {children}
             </motion.div>

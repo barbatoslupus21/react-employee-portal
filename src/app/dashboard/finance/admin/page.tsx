@@ -3135,7 +3135,7 @@ export default function FinanceAdminPage() {
       .then(r => r.ok ? r.json() : null)
       .then((data: UserData | null) => {
         if (authTimerRef.current) clearTimeout(authTimerRef.current);
-        if (!data || !data.admin || !data.accounting) {
+        if (!data || !data.accounting) {
           router.replace('/dashboard');
           return;
         }
