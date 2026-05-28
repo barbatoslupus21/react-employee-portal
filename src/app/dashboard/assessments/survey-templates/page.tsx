@@ -432,7 +432,7 @@ function TemplatesContent({ user }: { user: UserData }) {
       <div className="w-full">
         <div className="text-center mb-8">
           <h2 className="text-2xl font-bold text-[var(--color-text-primary)]">Explore Survey Templates</h2>
-          <p className="text-sm text-[var(--color-text-muted)] mt-1.5">
+          <p className="text-xs text-[var(--color-text-muted)]">
             Create, select, or personalize survey templates to perfectly fit your needs
           </p>
         </div>

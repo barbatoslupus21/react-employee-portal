@@ -51,7 +51,7 @@ const TextareaWithCharactersLeft = React.forwardRef<
         {label && (
           <label
             htmlFor={id}
-            className="text-[10px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wide"
+            className="text-[11px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wide"
           >
             {label}
           </label>
@@ -79,7 +79,7 @@ const TextareaWithCharactersLeft = React.forwardRef<
           {...props}
         />
 
-        <div className="flex items-center justify-between text-[12px] tabular-nums transition-colors gap-2">
+        <div className="flex items-center justify-between text-[10px] tabular-nums transition-colors gap-2">
           {error ? (
             <p id={`${id}-error`} className="text-[12px] text-red-500 flex-1">
               {error}

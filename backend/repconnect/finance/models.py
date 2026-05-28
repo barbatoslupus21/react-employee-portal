@@ -294,6 +294,10 @@ class Loan(models.Model):
         validators=[MinValueValidator(Decimal('0'))],
         help_text='Expected monthly deduction amount (optional).',
     )
+    seen = models.BooleanField(
+        default=False,
+        help_text='False until the employee views this loan on the finance page.',
+    )
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     updated_at = models.DateTimeField(auto_now=True)
 

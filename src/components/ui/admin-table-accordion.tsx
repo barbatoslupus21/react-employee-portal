@@ -146,7 +146,7 @@ export function FilterListContent({
       <div
         ref={scrollRef}
         onScroll={checkScroll}
-        className="max-h-52 space-y-0.5 overflow-y-scroll [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        className="max-h-52 space-y-0.5 overflow-y-auto no-scrollbar"
       >
         {showAllOption && (
           <button
@@ -268,7 +268,7 @@ export function FilterMultiListContent({
         <div
           ref={scrollRef}
           onScroll={checkScroll}
-          className="max-h-52 space-y-0.5 overflow-y-scroll [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          className="max-h-52 space-y-0.5 overflow-y-auto no-scrollbar"
         >
           {visible.length === 0 ? (
             <p className="px-2 py-2 text-xs text-[var(--color-text-muted)]">No options.</p>

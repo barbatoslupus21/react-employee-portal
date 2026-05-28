@@ -109,7 +109,7 @@ function renderToast(variant: Variant, opts: ToastOptions) {
             <p
               style={{
                 margin: title ? '2px 0 0' : 0,
-                fontSize: '0.875rem',
+                fontSize: '16px',
                 lineHeight: 1.4,
                 color: 'var(--color-text-muted)',
               }}

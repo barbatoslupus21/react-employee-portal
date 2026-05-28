@@ -3,16 +3,16 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "motion/react";
-import { X, Eye, EyeOff, AlertCircle } from "lucide-react";
+import { X, Eye, EyeOff, AlertCircle, Lock } from "lucide-react";
 import { TextShimmer } from "@/components/ui/text-shimmer";
-import { getCsrfToken } from "@/lib/csrf";
+import { getCsrfToken, seedCsrfCookie } from "@/lib/csrf";
 
 interface LoginModalProps {
   open: boolean;
   onClose: () => void;
 }
 
-type LoginError = { message: string };
+type LoginError = { message: string; code?: string };
 
 export default function LoginModal({ open, onClose }: LoginModalProps) {
   const router = useRouter();
@@ -21,6 +21,31 @@ export default function LoginModal({ open, onClose }: LoginModalProps) {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<LoginError | null>(null);
+
+  async function waitForSessionReady(maxAttempts = 6, delayMs = 150) {
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      const meRes = await fetch("/api/auth/me", {
+        method: "GET",
+        credentials: "include",
+        cache: "no-store",
+      });
+
+      if (meRes.ok) {
+        return meRes.json();
+      }
+
+      // If this isn't an auth timing issue, fail fast.
+      if (meRes.status !== 401) {
+        return null;
+      }
+
+      await new Promise<void>((resolve) => {
+        setTimeout(() => resolve(), delayMs);
+      });
+    }
+
+    return null;
+  }
 
   // Reset form when modal closes
   useEffect(() => {
@@ -43,8 +68,7 @@ export default function LoginModal({ open, onClose }: LoginModalProps) {
       // It is normally seeded on page load, but lazy-seed here as a fallback.
       let csrfToken = getCsrfToken();
       if (!csrfToken) {
-        await fetch('/api/auth/csrf', { credentials: 'include' });
-        csrfToken = getCsrfToken();
+        csrfToken = await seedCsrfCookie();
       }
 
       const res = await fetch("/api/auth/login", {
@@ -60,11 +84,23 @@ export default function LoginModal({ open, onClose }: LoginModalProps) {
       const data = await res.json();
 
       if (res.ok) {
+        const hydratedUser = await waitForSessionReady();
+        const nextUser = hydratedUser ?? data?.user;
+
+        if (!nextUser) {
+          setError({
+            message:
+              "Login succeeded, but your session is not ready yet. Please try once more.",
+          });
+          return;
+        }
+
         onClose();
-        if (data?.user?.change_password) {
-          router.push("/dashboard/change-password");
+        // Use hard navigation to avoid stale client state and ensure a fresh authenticated mount.
+        if (nextUser?.change_password) {
+          window.location.href = "/dashboard/change-password";
         } else {
-          router.push("/dashboard");
+          window.location.href = "/dashboard";
         }
         return;
       }
@@ -74,6 +110,7 @@ export default function LoginModal({ open, onClose }: LoginModalProps) {
           setError({
             message:
               "Your account is locked. Please proceed to HR for unlocking.",
+            code: "account_locked",
           });
         } else if (data.code === "account_inactive") {
           setError({
@@ -86,9 +123,12 @@ export default function LoginModal({ open, onClose }: LoginModalProps) {
       } else {
         setError({ message: "Invalid ID number or password." });
       }
-    } catch {
+    } catch (err) {
       setError({
-        message: "Unable to reach the server. Please try again.",
+        message:
+          err instanceof Error
+            ? err.message
+            : "Unable to reach the server. Please try again.",
       });
     } finally {
       setLoading(false);
@@ -153,11 +193,13 @@ export default function LoginModal({ open, onClose }: LoginModalProps) {
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: -6 }}
                     transition={{ duration: 0.2 }}
-                    className="mb-4 flex items-start gap-2.5 rounded-xl border
-                      border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700
-                      dark:border-red-800/40 dark:bg-red-950/30 dark:text-red-400"
+                    className={error.code === "account_locked"
+                      ? "mb-4 flex items-start gap-2.5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-700/40 dark:bg-amber-950/30 dark:text-amber-300"
+                      : "mb-4 flex items-start gap-2.5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800/40 dark:bg-red-950/30 dark:text-red-400"}
                   >
-                    <AlertCircle size={16} className="mt-0.5 shrink-0" />
+                    {error.code === "account_locked"
+                      ? <Lock size={16} className="mt-0.5 shrink-0" />
+                      : <AlertCircle size={16} className="mt-0.5 shrink-0" />}
                     <span>{error.message}</span>
                   </motion.div>
                 )}

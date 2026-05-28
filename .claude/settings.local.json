@@ -1,7 +1,14 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npx tsc *)"
+      "Bash(npx tsc *)",
+      "Bash(Get-ChildItem -Path \"d:\\\\Desktop\\\\REPCONNECT_REACT\\\\src\\\\app\\\\dashboard\" -Filter \"*setting*\" -Recurse)",
+      "Bash(mkdir -p d:/Desktop/REPCONNECT_REACT/backend/repconnect/feedback/migrations)",
+      "Bash(python manage.py makemigrations feedback)",
+      "Bash(python manage.py migrate feedback)"
+    ],
+    "additionalDirectories": [
+      "d:\\Desktop\\REPCONNECT_REACT\\backend\\repconnect\\feedback"
     ]
   }
 }

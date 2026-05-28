@@ -12,6 +12,7 @@ from .views import (
 
 urlpatterns = [
     path('categories',             CertificateCategoryListView.as_view(), name='cert-categories'),
+    path('categories/<int:pk>',    CertificateCategoryListView.as_view(), name='cert-category-detail'),
     path('my',                     CertificateUserListView.as_view(),     name='cert-user-list'),
     path('admin/upload',           CertificateUploadView.as_view(),       name='cert-admin-upload'),
     path('admin/list',             CertificateAdminListView.as_view(),    name='cert-admin-list'),

@@ -32,6 +32,28 @@ class CalendarEventSerializer(serializers.ModelSerializer):
     members_detail = CalendarMemberSerializer(source='members', many=True, read_only=True)
     owner = serializers.IntegerField(source='owner_id', read_only=True)
     owner_detail = CalendarMemberSerializer(read_only=True)
+    seen = serializers.SerializerMethodField(read_only=True)
+    member_scope = serializers.ChoiceField(
+        choices=['all', 'selected'],
+        required=False,
+        write_only=True,
+    )
+
+    def get_seen(self, obj) -> bool:
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+        if not user or not user.is_authenticated:
+            return True
+
+        if obj.owner_id == user.id:
+            return True
+
+        seen_map = self.context.get('seen_map')
+        if isinstance(seen_map, dict):
+            return seen_map.get(obj.id, False)
+
+        rec = obj.participant_seen_records.filter(user=user).only('seen').first()
+        return bool(rec.seen) if rec else False
 
     class Meta:
         model = CalendarEvent
@@ -46,6 +68,8 @@ class CalendarEventSerializer(serializers.ModelSerializer):
             'owner_detail',
             'members',
             'members_detail',
+            'seen',
+            'member_scope',
             'created_at',
             'updated_at',
         ]

@@ -53,6 +53,7 @@ import { ChoiceboxGroup } from '@/components/ui/choicebox-1';
 import BasicCheckbox from '@/components/ui/checkbox-1';
 import { Rating } from '@/components/ui/rating';
 import { getCsrfToken } from '@/lib/csrf';
+import { useNavigationGuard } from '@/lib/navigation-guard-context';
 import { cn } from '@/lib/utils';
 import { useMediaQuery } from '@/hooks/use-media-query';
 import { DateTimePicker } from '@/components/ui/datetime-picker';
@@ -186,7 +187,7 @@ const STATUS_OPTIONS = [
   { value: 'closed', label: 'Closed' },
 ];
 
-const CHOICE_BASED_TYPES = new Set(['single_choice', 'multiple_choice', 'dropdown']);
+const CHOICE_BASED_TYPES = new Set(['single_choice', 'multiple_choice', 'checkboxes', 'dropdown']);
 const INSTRUCTION_Q_TYPES = new Set(['section', 'subsection', 'statement']);
 
 type AnswerValue = {
@@ -195,6 +196,26 @@ type AnswerValue = {
   other_text?: string;
   selected_option_ids?: number[];
 };
+
+function isQuestionAnswered(question: TrainingQuestion, answer: AnswerValue | undefined): boolean {
+  if (!answer) return false;
+
+  if (['short_text', 'long_text', 'date', 'yes_no'].includes(question.question_type)) {
+    return Boolean(answer.text_value?.trim());
+  }
+
+  if (['number', 'rating', 'linear_scale', 'likert'].includes(question.question_type)) {
+    return answer.number_value != null && answer.number_value !== '';
+  }
+
+  if (CHOICE_BASED_TYPES.has(question.question_type)) {
+    const hasSelectedOption = (answer.selected_option_ids?.length ?? 0) > 0;
+    const hasOtherText = question.allow_other && Boolean(answer.other_text?.trim());
+    return hasSelectedOption || hasOtherText;
+  }
+
+  return false;
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -217,6 +238,19 @@ function getTrainingStatus(dateStr: string): 'scheduled' | 'active' | 'closed' {
 function getTrainingStatusLabel(dateStr: string): string {
   const s = getTrainingStatus(dateStr);
   return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+const TRAINING_BLOCKED_CHARS_RE = /[<>{}\[\]\\|^~`\"]/;
+
+function validateTrainingText(value: string, fieldName: string, required = true): string {
+  const trimmed = value.trim();
+  if (required && !trimmed) {
+    return `${fieldName} is required.`;
+  }
+  if (trimmed && TRAINING_BLOCKED_CHARS_RE.test(trimmed)) {
+    return 'Special characters like < > { } [ ] \\ | ^ ~ ` " are not allowed.';
+  }
+  return '';
 }
 
 type UserPillKey = 'for_confirmation' | 'action_required' | 'in_progress' | 'returned' | 'completed' | 'scheduled' | 'closed';
@@ -794,12 +828,66 @@ function TrainingFormPanel({
   const [savingQId, setSavingQId] = useState<number | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [hasSubmittedThisSession, setHasSubmittedThisSession] = useState(false);
   const saveTimerRef = useRef<Record<number, ReturnType<typeof setTimeout>>>({});
+  // Holds the current submit logic so the nav-guard can call it without stale closures
+  const submitFnRef = useRef<() => Promise<boolean>>(async () => false);
+  const { registerGuard } = useNavigationGuard();
+
+  // ── Fix 2: allRequiredAnswered as useMemo so it's available before early-returns ──
+  const allRequiredAnswered = useMemo(() => {
+    if (!detail) return false;
+    const reqIds = detail.questions
+      .filter(q => q.is_required && !INSTRUCTION_Q_TYPES.has(q.question_type))
+      .map(q => q.id);
+    if (reqIds.length === 0) return true;
+    return reqIds.every(qId => {
+      const q = detail.questions.find(q => q.id === qId)!;
+      return isQuestionAnswered(q, answers[qId]);
+    });
+  }, [detail, answers]);
+
+  // Derived guard condition — computable before early-returns
+  const submitVisible = useMemo(() => {
+    if (!detail || loading) return false;
+    const isReadOnlyLocal = !!(detail.submission?.is_complete);
+    const ts = getTrainingStatus(detail.training_date);
+    const isClosed = ts === 'closed' && !isReadOnlyLocal;
+    const effectiveRO = isReadOnlyLocal || ts === 'scheduled';
+    const hasQs = detail.questions.length > 0;
+    const approval = detail.approval_status;
+    return !effectiveRO && !isClosed && hasQs && allRequiredAnswered && !approval;
+  }, [detail, loading, allRequiredAnswered]);
+
+  const guardActive = submitVisible && !hasSubmittedThisSession;
+
+  // ── Fix 3: Register / deregister the navigation guard ────────────────────────
+  useEffect(() => {
+    if (!guardActive) {
+      registerGuard(null);
+      return;
+    }
+    registerGuard({
+      isDirty: true,
+      trySubmit: () => submitFnRef.current(),
+    });
+    return () => { registerGuard(null); };
+  }, [guardActive, registerGuard]);
+
+  // beforeunload — browser tab / window close
+  useEffect(() => {
+    if (!guardActive) return;
+    const handler = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [guardActive]);
 
   const fetchDetail = useCallback(async () => {
     const r = await fetch(`/api/training/my/${trainingId}`, { credentials: 'include' });
     const d: TrainingDetail = await r.json();
     setDetail(d);
+    // Initialize answers with all pre-loaded DB data so allRequiredAnswered
+    // evaluates correctly on first render — mirrors the survey page pattern.
     const initAnswers: Record<number, AnswerValue> = {};
     for (const ans of d.answers ?? []) {
       initAnswers[ans.question_id] = {
@@ -856,48 +944,7 @@ function TrainingFormPanel({
   }
 
   async function handleSubmit() {
-    if (submitting || effectiveReadOnly) return;
-    setSubmitting(true);
-    try {
-      // Cancel any pending debounce timers and flush all current answers NOW
-      // so the backend sees them before the submit validation runs.
-      const pendingIds = Object.keys(saveTimerRef.current).map(Number);
-      pendingIds.forEach(qId => {
-        clearTimeout(saveTimerRef.current[qId]);
-        delete saveTimerRef.current[qId];
-      });
-      const currentAnswers = Object.entries(answers);
-      if (currentAnswers.length > 0) {
-        // Send sequentially — SQLite cannot handle concurrent write transactions
-        for (const [qIdStr, val] of currentAnswers) {
-          try {
-            await fetch(`/api/training/my/${trainingId}/answer`, {
-              method: 'POST',
-              credentials: 'include',
-              headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
-              body: JSON.stringify(buildPayload(Number(qIdStr), val)),
-            });
-          } catch { /* silent */ }
-        }
-      }
-
-      const res = await fetch(`/api/training/my/${trainingId}/submit`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'X-CSRFToken': getCsrfToken() },
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        toast.error(data.detail ?? 'Submission failed.', { title: 'Error' });
-        return;
-      }
-      toast.success('Training evaluation submitted successfully.', { title: 'Submitted' });
-      window.dispatchEvent(new Event('training-eval-badge-refresh'));
-      onSubmitted();
-      await fetchDetail();
-    } finally {
-      setSubmitting(false);
-    }
+    await submitFnRef.current();
   }
 
   async function handleConfirm() {
@@ -944,21 +991,6 @@ function TrainingFormPanel({
   if (!detail) return null;
 
   const hasQuestions = detail.questions.length > 0;
-  const requiredQIds = detail.questions
-    .filter(q => q.is_required && !INSTRUCTION_Q_TYPES.has(q.question_type))
-    .map(q => q.id);
-
-  const allRequiredAnswered = requiredQIds.every(qId => {
-    const a = answers[qId];
-    if (!a) return false;
-    const q = detail.questions.find(q => q.id === qId)!;
-    if (['short_text', 'long_text', 'date'].includes(q.question_type)) return !!a.text_value?.trim();
-    if (q.question_type === 'number') return a.number_value != null && a.number_value !== '';
-    if (q.question_type === 'yes_no') return !!a.text_value;
-    if (['rating', 'linear_scale', 'likert'].includes(q.question_type)) return !!a.number_value;
-    if (CHOICE_BASED_TYPES.has(q.question_type)) return (a.selected_option_ids?.length ?? 0) > 0;
-    return false;
-  });
 
   const trainingStatus = getTrainingStatus(detail.training_date);
   const isClosed = trainingStatus === 'closed' && !isReadOnly;
@@ -971,6 +1003,52 @@ function TrainingFormPanel({
   const isSecondFinalApproval = approvalStatus === 'second_final_approval';
   const isReturned = approvalStatus === 'returned';
   const isCompleted = approvalStatus === 'completed';
+
+  // ── Keep submitFnRef current with the latest closure values ────────────────
+  submitFnRef.current = async () => {
+    if (submitting || effectiveReadOnly) return false;
+    setSubmitting(true);
+    try {
+      const pendingIds = Object.keys(saveTimerRef.current).map(Number);
+      pendingIds.forEach(qId => {
+        clearTimeout(saveTimerRef.current[qId]);
+        delete saveTimerRef.current[qId];
+      });
+      const currentAnswers = Object.entries(answers);
+      if (currentAnswers.length > 0) {
+        for (const [qIdStr, val] of currentAnswers) {
+          try {
+            await fetch(`/api/training/my/${trainingId}/answer`, {
+              method: 'POST',
+              credentials: 'include',
+              headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+              body: JSON.stringify(buildPayload(Number(qIdStr), val)),
+            });
+          } catch { /* silent */ }
+        }
+      }
+      const res = await fetch(`/api/training/my/${trainingId}/submit`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'X-CSRFToken': getCsrfToken() },
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.detail ?? 'Submission failed.', { title: 'Error' });
+        return false;
+      }
+      toast.success('Training evaluation submitted successfully.', { title: 'Submitted' });
+      window.dispatchEvent(new Event('training-eval-badge-refresh'));
+      setHasSubmittedThisSession(true);
+      onSubmitted();
+      await fetchDetail();
+      return true;
+    } catch {
+      return false;
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   let questionCounter = 0;
 
@@ -1173,10 +1251,10 @@ function TrainingFormPanel({
         {!effectiveReadOnly && !isClosed && hasQuestions && allRequiredAnswered && !approvalStatus && (
           <motion.div
             key="submit-footer"
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.22, ease: 'easeOut' }}
+            initial={{ opacity: 0, y: 10, height: 0 }}
+            animate={{ opacity: 1, y: 0, height: 'auto' }}
+            exit={{ opacity: 0, y: 10, height: 0 }}
+            transition={{ duration: 0.25, ease: 'easeOut' }}
             className="shrink-0 px-4 pb-4 pt-3 border-t border-[var(--color-border)] flex justify-end overflow-hidden"
           >
             <button
@@ -1238,30 +1316,38 @@ function TrainingUserView() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [showFormSkeleton, setShowFormSkeleton] = useState(false);
   const skeletonTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const trainingListFetchRef = useRef<Promise<void> | null>(null);
   const isNarrow = useMediaQuery('(max-width: 780px)');
 
   useEffect(() => { if (!isNarrow) setLeftPanelOpen(false); }, [isNarrow]);
 
-  const fetchTrainings = useCallback(async () => {
-    try {
-      const res = await fetch('/api/training/my', { credentials: 'include' });
-      const data = await res.json();
-      const items: MyTrainingItem[] = Array.isArray(data) ? data : (data.results ?? []);
-      setTrainings(items);
-    } catch { /* silent */ }
+  const fetchTrainings = useCallback(async (showLoading = false) => {
+    if (trainingListFetchRef.current) {
+      return trainingListFetchRef.current;
+    }
+
+    const request = (async () => {
+      if (showLoading) setLoadingList(true);
+      try {
+        const res = await fetch('/api/training/my', { credentials: 'include' });
+        if (!res.ok) return;
+        const data = await res.json();
+        const items: MyTrainingItem[] = Array.isArray(data) ? data : (data.results ?? []);
+        setTrainings(items);
+      } catch { /* silent */ }
+      finally {
+        if (showLoading) setLoadingList(false);
+        trainingListFetchRef.current = null;
+      }
+    })();
+
+    trainingListFetchRef.current = request;
+    return request;
   }, []);
 
   useEffect(() => {
-    setLoadingList(true);
-    fetch('/api/training/my', { credentials: 'include' })
-      .then(r => r.json())
-      .then(data => {
-        const items: MyTrainingItem[] = Array.isArray(data) ? data : (data.results ?? []);
-        setTrainings(items);
-      })
-      .catch(() => {})
-      .finally(() => setLoadingList(false));
-  }, []);
+    void fetchTrainings(true);
+  }, [fetchTrainings]);
 
   useEffect(() => {
     const interval = setInterval(fetchTrainings, 30_000);
@@ -1384,7 +1470,7 @@ function TrainingUserView() {
         )}
         <div>
           <h1 className="text-lg font-bold text-[var(--color-text-primary)]">My Training Evaluations</h1>
-          <p className="text-xs text-[var(--color-text-muted)] mt-0.5">View and submit evaluations for your assigned trainings.</p>
+          <p className="text-xs text-[var(--color-text-muted)]">View and submit evaluations for your assigned trainings.</p>
         </div>
       </div>
 
@@ -1519,6 +1605,158 @@ function FilterContentList({
   );
 }
 
+function TrainingFormFields({
+  modalTitle,
+  formTitle,
+  speaker,
+  trainingDate,
+  objective,
+  templateId,
+  targetType,
+  memberIds,
+  errors,
+  templates,
+  allUsers,
+  usersLoading,
+  onTitleChange,
+  onSpeakerChange,
+  onTrainingDateChange,
+  onObjectiveChange,
+  onTemplateChange,
+  onTargetTypeChange,
+  onMemberIdsChange,
+  templateDisabled = false,
+}: {
+  modalTitle: string;
+  formTitle: string;
+  speaker: string;
+  trainingDate: Date | undefined;
+  objective: string;
+  templateId: string;
+  targetType: 'all_users' | 'specific_users';
+  memberIds: number[];
+  errors: Record<string, string>;
+  templates: TemplateOption[];
+  allUsers: TrainingUser[];
+  usersLoading: boolean;
+  onTitleChange: (value: string) => void;
+  onSpeakerChange: (value: string) => void;
+  onTrainingDateChange: (value: Date | undefined) => void;
+  onObjectiveChange: (value: string) => void;
+  onTemplateChange: (value: string) => void;
+  onTargetTypeChange: (value: 'all_users' | 'specific_users') => void;
+  onMemberIdsChange: (value: number[]) => void;
+  templateDisabled?: boolean;
+}) {
+  return (
+    <ModalBody className="flex flex-col gap-4">
+      <div className="flex flex-col gap-1.5">
+        <label className="text-[10px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wide">
+          Training Title {!formTitle.trim() && <span className="text-red-500 normal-case tracking-normal">*</span>}
+        </label>
+        <Input
+          value={formTitle}
+          onChange={e => onTitleChange(e.target.value)}
+          maxLength={200}
+          placeholder="e.g. First Aid Training"
+          className={cn(errors.title && 'border-destructive')}
+        />
+        {errors.title && <p className="text-[10px] text-red-500">{errors.title}</p>}
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <label className="text-[10px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wide">
+          Speaker {!speaker.trim() && <span className="text-red-500 normal-case tracking-normal">*</span>}
+        </label>
+        <Input
+          value={speaker}
+          onChange={e => onSpeakerChange(e.target.value)}
+          maxLength={200}
+          placeholder="Speaker name"
+          className={cn(errors.speaker && 'border-destructive')}
+        />
+        {errors.speaker && <p className="text-[10px] text-red-500">{errors.speaker}</p>}
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <label className="text-[10px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wide">
+          Training Date {!trainingDate && <span className="text-red-500 normal-case tracking-normal">*</span>}
+        </label>
+        <DateTimePicker
+          value={trainingDate}
+          onChange={date => onTrainingDateChange(date)}
+          placeholder="Select training date"
+          className={cn(errors.training_date && 'border-destructive')}
+          portal={false}
+        />
+        {errors.training_date && <p className="text-[10px] text-red-500">{errors.training_date}</p>}
+      </div>
+
+      <TextareaWithCharactersLeft
+        value={objective}
+        onChange={e => onObjectiveChange(e.target.value)}
+        maxLength={1000}
+        rows={3}
+        placeholder="Training objective"
+        error={errors.objective}
+        label={<>
+          Objective {!objective.trim() && <span className="text-red-500 normal-case tracking-normal">*</span>}
+        </>}
+      />
+
+      <div className="flex flex-col gap-1.5">
+        <label className="text-[10px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wide">
+          Evaluation Template {!templateId && <span className="text-red-500 normal-case tracking-normal">*</span>}
+        </label>
+        <Select value={templateId} onValueChange={onTemplateChange} disabled={templateDisabled}>
+          <SelectTrigger>
+            <SelectValue placeholder="Select template" />
+          </SelectTrigger>
+          <SelectContent>
+            {templates.map(t => (
+              <SelectItem key={t.id} value={String(t.id)}>{t.title}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="flex flex-col gap-2">
+        <ChoiceboxGroup
+          direction="row"
+          label="Participants"
+          showLabel
+          type="radio"
+          value={targetType}
+          onChange={(value: string) => onTargetTypeChange(value as 'all_users' | 'specific_users')}
+        >
+          <ChoiceboxGroup.Item title="All Employees" description="Sent to every active employee" value="all_users" />
+          <ChoiceboxGroup.Item title="Specific Users" description="Manually select participants" value="specific_users" />
+        </ChoiceboxGroup>
+        <AnimatePresence initial={false}>
+          {targetType === 'specific_users' && (
+            <motion.div
+              key={`${modalTitle.toLowerCase().replace(/\s+/g, '-')}-picker`}
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.2 }}
+              style={{ overflow: 'hidden' }}
+            >
+              <MemberPicker
+                value={memberIds}
+                onChange={onMemberIdsChange}
+                users={allUsers}
+                loading={usersLoading}
+              />
+              {errors.members && <p className="mt-1 text-[10px] text-red-500">{errors.members}</p>}
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+    </ModalBody>
+  );
+}
+
 // ── Admin view ─────────────────────────────────────────────────────────────────
 
 function TrainingAdminView({ user }: { user: UserData }) {
@@ -1548,7 +1786,6 @@ function TrainingAdminView({ user }: { user: UserData }) {
   const [allUsers, setAllUsers] = useState<TrainingUser[]>([]);
   const [usersLoading, setUsersLoading] = useState(false);
 
-  // Create form
   const [cTitle, setCTitle] = useState('');
   const [cSpeaker, setCSpeaker] = useState('');
   const [cDate, setCDate] = useState<Date | undefined>(undefined);
@@ -1558,7 +1795,6 @@ function TrainingAdminView({ user }: { user: UserData }) {
   const [cMemberIds, setCMemberIds] = useState<number[]>([]);
   const [cErrors, setCErrors] = useState<Record<string, string>>({});
 
-  // Edit form
   const [eTitle, setETitle] = useState('');
   const [eSpeaker, setESpeaker] = useState('');
   const [eDate, setEDate] = useState<Date | undefined>(undefined);
@@ -1576,7 +1812,10 @@ function TrainingAdminView({ user }: { user: UserData }) {
     cDate &&
     cObjective.trim() &&
     cTemplateId &&
-    (cTargetType !== 'specific_users' || cMemberIds.length > 0),
+    (cTargetType !== 'specific_users' || cMemberIds.length > 0) &&
+    !TRAINING_BLOCKED_CHARS_RE.test(cTitle) &&
+    !TRAINING_BLOCKED_CHARS_RE.test(cSpeaker) &&
+    !TRAINING_BLOCKED_CHARS_RE.test(cObjective),
   );
 
   const isEditFormValid = Boolean(
@@ -1585,7 +1824,10 @@ function TrainingAdminView({ user }: { user: UserData }) {
     eDate &&
     eObjective.trim() &&
     eTemplateId &&
-    (eTargetType !== 'specific_users' || eMemberIds.length > 0),
+    (eTargetType !== 'specific_users' || eMemberIds.length > 0) &&
+    !TRAINING_BLOCKED_CHARS_RE.test(eTitle) &&
+    !TRAINING_BLOCKED_CHARS_RE.test(eSpeaker) &&
+    !TRAINING_BLOCKED_CHARS_RE.test(eObjective),
   );
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1683,11 +1925,27 @@ function TrainingAdminView({ user }: { user: UserData }) {
 
   async function handleCreate() {
     const errors: Record<string, string> = {};
-    if (!cTitle.trim()) errors.title = 'Title is required.';
-    if (!cSpeaker.trim()) errors.speaker = 'Speaker is required.';
+    const titleError = validateTrainingText(cTitle, 'Title');
+    const speakerError = validateTrainingText(cSpeaker, 'Speaker');
+    const objectiveError = validateTrainingText(cObjective, 'Objective', true);
+    if (titleError) errors.title = titleError;
+    if (speakerError) errors.speaker = speakerError;
+    if (objectiveError) errors.objective = objectiveError;
     if (!cDate) errors.training_date = 'Training date is required.';
     if (cTargetType === 'specific_users' && cMemberIds.length === 0) errors.members = 'Select at least one participant.';
     if (Object.keys(errors).length) { setCErrors(errors); return; }
+
+    // Duplicate check — same title + speaker + date already exists
+    const cDateStr = cDate ? format(cDate, 'yyyy-MM-dd') : '';
+    const isDuplicateCreate = rows.some(row =>
+      row.title.trim().toLowerCase() === cTitle.trim().toLowerCase() &&
+      row.speaker.trim().toLowerCase() === cSpeaker.trim().toLowerCase() &&
+      row.training_date === cDateStr
+    );
+    if (isDuplicateCreate) {
+      toast.error('A training with the same title, speaker, and date already exists.', { title: 'Duplicate Training' });
+      return;
+    }
 
     setCreateSaving(true);
     setCErrors({});
@@ -1704,14 +1962,26 @@ function TrainingAdminView({ user }: { user: UserData }) {
       const res = await fetch('/api/training/admin', {
         method: 'POST',
         credentials: 'include',
-        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+          'X-CSRFToken': getCsrfToken(),
+        },
         body: JSON.stringify(body),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         const fe: Record<string, string> = {};
-        for (const [k, v] of Object.entries(data)) fe[k] = Array.isArray(v) ? (v as string[])[0] : String(v);
-        setCErrors(fe);
+        if (data && typeof data === 'object') {
+          for (const [k, v] of Object.entries(data)) {
+            fe[k] = Array.isArray(v) ? (v as string[])[0] : String(v);
+          }
+        }
+        if (Object.keys(fe).length) {
+          setCErrors(fe);
+          return;
+        }
+        toast.error((data as any)?.detail ?? 'Failed to create training.', { title: 'Error' });
         return;
       }
       toast.success('Training created.', { title: 'Created' });
@@ -1757,11 +2027,28 @@ function TrainingAdminView({ user }: { user: UserData }) {
 
   async function handleEdit() {
     const errors: Record<string, string> = {};
-    if (!eTitle.trim()) errors.title = 'Title is required.';
-    if (!eSpeaker.trim()) errors.speaker = 'Speaker is required.';
+    const titleError = validateTrainingText(eTitle, 'Title');
+    const speakerError = validateTrainingText(eSpeaker, 'Speaker');
+    const objectiveError = validateTrainingText(eObjective, 'Objective', true);
+    if (titleError) errors.title = titleError;
+    if (speakerError) errors.speaker = speakerError;
+    if (objectiveError) errors.objective = objectiveError;
     if (!eDate) errors.training_date = 'Training date is required.';
     if (eTargetType === 'specific_users' && eMemberIds.length === 0) errors.members = 'Select at least one participant.';
     if (Object.keys(errors).length) { setEErrors(errors); return; }
+
+    // Duplicate check — same title + speaker + date exists on a different training
+    const eDateStr = eDate ? format(eDate, 'yyyy-MM-dd') : '';
+    const isDuplicateEdit = rows.some(row =>
+      row.id !== editId &&
+      row.title.trim().toLowerCase() === eTitle.trim().toLowerCase() &&
+      row.speaker.trim().toLowerCase() === eSpeaker.trim().toLowerCase() &&
+      row.training_date === eDateStr
+    );
+    if (isDuplicateEdit) {
+      toast.error('A training with the same title, speaker, and date already exists.', { title: 'Duplicate Training' });
+      return;
+    }
 
     setEditSaving(true);
     setEErrors({});
@@ -1780,14 +2067,26 @@ function TrainingAdminView({ user }: { user: UserData }) {
       const res = await fetch(`/api/training/admin/${editId}`, {
         method: 'PATCH',
         credentials: 'include',
-        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+          'X-CSRFToken': getCsrfToken(),
+        },
         body: JSON.stringify(body),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         const fe: Record<string, string> = {};
-        for (const [k, v] of Object.entries(data)) fe[k] = Array.isArray(v) ? (v as string[])[0] : String(v);
-        setEErrors(fe);
+        if (data && typeof data === 'object') {
+          for (const [k, v] of Object.entries(data)) {
+            fe[k] = Array.isArray(v) ? (v as string[])[0] : String(v);
+          }
+        }
+        if (Object.keys(fe).length) {
+          setEErrors(fe);
+          return;
+        }
+        toast.error((data as any)?.detail ?? 'Failed to update training.', { title: 'Error' });
         return;
       }
       toast.success('Training updated.', { title: 'Updated' });
@@ -1995,97 +2294,35 @@ function TrainingAdminView({ user }: { user: UserData }) {
         emptyAction={showEmptyStateAction ? { label: 'New Training', onClick: openCreate, icon: <Plus className="size-4" /> } : undefined}
       />
 
-      {/* Create Modal */}
-      <Modal open={createOpen} onOpenChange={v => !createSaving && !v && setCreateOpen(false)}>
+      <Modal open={createOpen} onOpenChange={open => !createSaving && !open && setCreateOpen(false)} mobileVariant="dialog">
         <ModalContent className="max-w-lg">
           <ModalHeader>
             <ModalTitle>New Training</ModalTitle>
           </ModalHeader>
-          <ModalBody className="flex flex-col gap-4">
-            <div className="flex flex-col gap-1.5">
-              <label className="text-[10px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wide">
-                Training Title {!cTitle.trim() && <span className="text-red-500 normal-case tracking-normal">*</span>}
-              </label>
-              <Input value={cTitle} onChange={e => setCTitle(e.target.value)} maxLength={200} placeholder="e.g. First Aid Training" className={cn(cErrors.title && 'border-destructive')} />
-              {cErrors.title && <p className="text-[10px] text-red-500">{cErrors.title}</p>}
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label className="text-[10px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wide">
-                Speaker {!cSpeaker.trim() && <span className="text-red-500 normal-case tracking-normal">*</span>}
-              </label>
-              <Input value={cSpeaker} onChange={e => setCSpeaker(e.target.value)} maxLength={200} placeholder="Speaker name" className={cn(cErrors.speaker && 'border-destructive')} />
-              {cErrors.speaker && <p className="text-[10px] text-red-500">{cErrors.speaker}</p>}
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label className="text-[10px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wide">
-                Training Date {!cDate && <span className="text-red-500 normal-case tracking-normal">*</span>}
-              </label>
-              <DateTimePicker
-                value={cDate}
-                onChange={setCDate}
-                placeholder="Select training date"
-                className={cn(cErrors.training_date && 'border-destructive')}
-                portal={true}
-              />
-              {cErrors.training_date && <p className="text-[10px] text-red-500">{cErrors.training_date}</p>}
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label className="text-[10px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wide">
-                Objective {!cObjective.trim() && <span className="text-red-500 normal-case tracking-normal">*</span>}
-              </label>
-              <textarea
-                value={cObjective}
-                onChange={e => setCObjective(e.target.value)}
-                maxLength={1000}
-                rows={3}
-                placeholder="Optional training objective…"
-                className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2 text-xs resize-none focus:outline-none"
-              />
-              <p className="text-[10px] text-[var(--color-text-muted)] text-right">{cObjective.length}/1000</p>
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label className="text-[10px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wide">
-                Evaluation Template {!cTemplateId && <span className="text-red-500 normal-case tracking-normal">*</span>}
-              </label>
-              <Select value={cTemplateId} onValueChange={setCTemplateId}>
-                <SelectTrigger><SelectValue placeholder="Select template (optional)" /></SelectTrigger>
-                <SelectContent>
-                  {templates.map(t => <SelectItem key={t.id} value={String(t.id)}>{t.title}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="flex flex-col gap-2">
-              <ChoiceboxGroup
-                direction="row"
-                label="Participants"
-                showLabel
-                type="radio"
-                value={cTargetType}
-                onChange={(v: string) => {
-                  setCTargetType(v as 'all_users' | 'specific_users');
-                  if (v === 'all_users') setCMemberIds([]);
-                }}
-              >
-                <ChoiceboxGroup.Item title="All Employees" description="Sent to every active employee" value="all_users" />
-                <ChoiceboxGroup.Item title="Specific Users" description="Manually select participants" value="specific_users" />
-              </ChoiceboxGroup>
-              <AnimatePresence initial={false}>
-                {cTargetType === 'specific_users' && (
-                  <motion.div
-                    key="create-picker"
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: 'auto' }}
-                    exit={{ opacity: 0, height: 0 }}
-                    transition={{ duration: 0.2 }}
-                    style={{ overflow: 'hidden' }}
-                  >
-                    <MemberPicker value={cMemberIds} onChange={setCMemberIds} users={allUsers} loading={usersLoading} />
-                    {cErrors.members && <p className="text-[10px] text-red-500 mt-1">{cErrors.members}</p>}
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
-          </ModalBody>
+          <TrainingFormFields
+            modalTitle="New Training"
+            formTitle={cTitle}
+            speaker={cSpeaker}
+            trainingDate={cDate}
+            objective={cObjective}
+            templateId={cTemplateId}
+            targetType={cTargetType}
+            memberIds={cMemberIds}
+            errors={cErrors}
+            templates={templates}
+            allUsers={allUsers}
+            usersLoading={usersLoading}
+            onTitleChange={setCTitle}
+            onSpeakerChange={setCSpeaker}
+            onTrainingDateChange={setCDate}
+            onObjectiveChange={setCObjective}
+            onTemplateChange={setCTemplateId}
+            onTargetTypeChange={value => {
+              setCTargetType(value);
+              if (value === 'all_users') setCMemberIds([]);
+            }}
+            onMemberIdsChange={setCMemberIds}
+          />
           <ModalFooter className="flex justify-end">
             <button
               onClick={handleCreate}
@@ -2095,7 +2332,7 @@ function TrainingAdminView({ user }: { user: UserData }) {
                 (createSaving || !isCreateFormValid) && 'opacity-70 cursor-not-allowed',
               )}
             >
-              <Plus size={14} />
+              {!createSaving && <Plus size={14} />}
               {createSaving ? (
                 <TextShimmer duration={1.2} className="text-xs font-normal [--base-color:#a5b4fc] [--base-gradient-color:#ffffff]">
                   Creating…
@@ -2106,111 +2343,48 @@ function TrainingAdminView({ user }: { user: UserData }) {
         </ModalContent>
       </Modal>
 
-      {/* Edit Modal */}
-      <Modal open={editOpen} onOpenChange={v => !editSaving && !v && setEditOpen(false)}>
+      <Modal open={editOpen} onOpenChange={open => !editSaving && !open && setEditOpen(false)} mobileVariant="dialog">
         <ModalContent className="max-w-lg">
           <ModalHeader>
             <ModalTitle>Edit Training</ModalTitle>
           </ModalHeader>
-          <ModalBody className="flex flex-col gap-4">
-            <div className="flex flex-col gap-1.5">
-              <label className="text-[10px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wide">
-                Training Title {!eTitle.trim() && <span className="text-red-500 normal-case tracking-normal">*</span>}
-              </label>
-              <Input value={eTitle} onChange={e => setETitle(e.target.value)} maxLength={200} className={cn(eErrors.title && 'border-destructive')} />
-              {eErrors.title && <p className="text-[10px] text-red-500">{eErrors.title}</p>}
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label className="text-[10px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wide">
-                Speaker {!eSpeaker.trim() && <span className="text-red-500 normal-case tracking-normal">*</span>}
-              </label>
-              <Input value={eSpeaker} onChange={e => setESpeaker(e.target.value)} maxLength={200} className={cn(eErrors.speaker && 'border-destructive')} />
-              {eErrors.speaker && <p className="text-[10px] text-red-500">{eErrors.speaker}</p>}
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label className="text-[10px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wide">
-                Training Date {!eDate && <span className="text-red-500 normal-case tracking-normal">*</span>}
-              </label>
-              <DateTimePicker
-                value={eDate}
-                onChange={setEDate}
-                placeholder="Select training date"
-                className={cn(eErrors.training_date && 'border-destructive')}
-                portal={true}
-              />
-              {eErrors.training_date && <p className="text-[10px] text-red-500">{eErrors.training_date}</p>}
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label className="text-[10px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wide">
-                Objective {!eObjective.trim() && <span className="text-red-500 normal-case tracking-normal">*</span>}
-              </label>
-              <textarea
-                value={eObjective}
-                onChange={e => setEObjective(e.target.value)}
-                maxLength={1000}
-                rows={3}
-                className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2 text-xs resize-none focus:outline-none focus:ring-1 focus:ring-ring"
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label className="text-[10px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wide">
-                Evaluation Template {!eTemplateId && <span className="text-red-500 normal-case tracking-normal">*</span>}
-              </label>
-              <Select value={eTemplateId} onValueChange={setETemplateId} disabled={eResponseCount > 1}>
-                <SelectTrigger><SelectValue placeholder="Select template (optional)" /></SelectTrigger>
-                <SelectContent>
-                  {templates.map(t => <SelectItem key={t.id} value={String(t.id)}>{t.title}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="flex flex-col gap-2">
-              <ChoiceboxGroup
-                direction="row"
-                label="Participants"
-                showLabel
-                type="radio"
-                value={eTargetType}
-                onChange={(v: string) => setETargetType(v as 'all_users' | 'specific_users')}
-              >
-                <ChoiceboxGroup.Item title="All Employees" description="Sent to every active employee" value="all_users" />
-                <ChoiceboxGroup.Item title="Specific Users" description="Manually select participants" value="specific_users" />
-              </ChoiceboxGroup>
-              <AnimatePresence initial={false}>
-                {eTargetType === 'specific_users' && (
-                  <motion.div
-                    key="edit-picker"
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: 'auto' }}
-                    exit={{ opacity: 0, height: 0 }}
-                    transition={{ duration: 0.2 }}
-                    style={{ overflow: 'hidden' }}
-                  >
-                    <MemberPicker value={eMemberIds} onChange={setEMemberIds} users={allUsers} loading={usersLoading} />
-                    {eErrors.members && <p className="text-[10px] text-red-500 mt-1">{eErrors.members}</p>}
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
-          </ModalBody>
-          <ModalFooter className="flex justify-end mt-2">
+          <TrainingFormFields
+            modalTitle="Edit Training"
+            formTitle={eTitle}
+            speaker={eSpeaker}
+            trainingDate={eDate}
+            objective={eObjective}
+            templateId={eTemplateId}
+            targetType={eTargetType}
+            memberIds={eMemberIds}
+            errors={eErrors}
+            templates={templates}
+            allUsers={allUsers}
+            usersLoading={usersLoading}
+            onTitleChange={setETitle}
+            onSpeakerChange={setESpeaker}
+            onTrainingDateChange={setEDate}
+            onObjectiveChange={setEObjective}
+            onTemplateChange={setETemplateId}
+            onTargetTypeChange={setETargetType}
+            onMemberIdsChange={setEMemberIds}
+            templateDisabled={eResponseCount > 1}
+          />
+          <ModalFooter className="flex justify-end">
             <button
               onClick={handleEdit}
               disabled={editSaving || !isEditFormValid}
               className={cn(
-                'min-w-[120px] inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-xs font-normal text-white transition-all bg-[#2845D6]',
+                'min-w-[130px] inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-xs font-normal text-white transition-all bg-[#2845D6]',
                 (editSaving || !isEditFormValid) && 'opacity-70 cursor-not-allowed',
               )}
             >
+              {!editSaving && <Check size={14} />}
               {editSaving ? (
                 <TextShimmer duration={1.2} className="text-xs font-normal [--base-color:#a5b4fc] [--base-gradient-color:#ffffff]">
                   Saving…
                 </TextShimmer>
-              ) : (
-                <>
-                  <Check size={14} />
-                  <span>Save Changes</span>
-                </>
-              )}
+              ) : <span>Save Changes</span>}
             </button>
           </ModalFooter>
         </ModalContent>

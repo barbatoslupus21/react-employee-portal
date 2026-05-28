@@ -359,7 +359,7 @@ function EmergencyLoanModal({
 
           {/* Amount */}
           <div className="space-y-1.5">
-            <label className="text-[12px] font-semibold text-[var(--color-text-primary)] uppercase tracking-wide">
+            <label className="text-[11px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wide">
               Amount(₱)<span className="text-red-500 normal-case tracking-normal">*</span>
             </label>
             <Select
@@ -381,7 +381,7 @@ function EmergencyLoanModal({
 
           {/* Number of Cut-offs */}
           <div className="space-y-1.5">
-            <label className="text-[12px] font-semibold text-[var(--color-text-primary)] uppercase tracking-wide">
+            <label className="text-[11px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wide">
               Number of Cut-Off <span className="text-red-500 normal-case tracking-normal">*</span>
             </label>
             <Select
@@ -404,7 +404,7 @@ function EmergencyLoanModal({
 
           {/* Starting Date */}
           <div className="space-y-1.5">
-            <label className="text-[12px] font-semibold text-[var(--color-text-primary)] uppercase tracking-wide">
+            <label className="text-[11px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wide">
               Starting Date <span className="text-red-500 normal-case tracking-normal">*</span>
             </label>
             <DateTimePicker
@@ -423,8 +423,8 @@ function EmergencyLoanModal({
           </div>
 
           {/* Agreement */}
-          <div className="rounded-lg bg-[var(--color-bg-card)] border border-[var(--color-border)] px-4 py-6">
-            <p className="text-xs font-bold text-[var(--color-text-primary)] mb-2">Agreement</p>
+          <div className="rounded-lg bg-[var(--color-bg-card)] border border-[var(--color-border)] p-4">
+            <p className="text-sm font-bold text-[var(--color-text-primary)] mb-2">Loan Agreement</p>
             <p className="text-xs text-[var(--color-text-muted)] leading-relaxed">
               This is to authorize Finance and Accounting Department to deduct from my salary
               the amount of{' '}
@@ -441,7 +441,7 @@ function EmergencyLoanModal({
 
           {/* Full Name Confirmation */}
           <div className="space-y-1.5">
-            <label className="text-[12px] font-semibold text-[var(--color-text-primary)] uppercase tracking-wide">
+            <label className="text-[11px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wide">
               Enter full name to confirm transaction <span className="text-red-500 normal-case tracking-normal">*</span>
             </label>
             <Input
@@ -679,7 +679,7 @@ function MedicineAllowanceModal({
         </div>
 
         {/* Body */}
-        <div className="space-y-4 p-6 max-h-[calc(100vh-14rem)] overflow-y-auto [scrollbar-width:thin]">
+        <div className="space-y-2 px-6 py-4 max-h-[calc(100vh-14rem)] overflow-y-auto [scrollbar-width:thin]">
 
           {/* Available Balance Card */}
           <div className="rounded-lg bg-[var(--color-bg-card)] border border-[var(--color-border)] px-4 py-4 space-y-1">
@@ -690,7 +690,7 @@ function MedicineAllowanceModal({
               ₱{balanceNum.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </p>
             {draft.coveredPeriod && (
-              <p className="text-[12px] text-[var(--color-text-muted)]">
+              <p className="text-[11px] text-[var(--color-text-muted)]">
                 Covered Period: {draft.coveredPeriod}
               </p>
             )}
@@ -699,7 +699,7 @@ function MedicineAllowanceModal({
           {/* Period Start + Period End — one row */}
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1.5">
-              <label className="text-[12px] font-semibold text-[var(--color-text-primary)] uppercase tracking-wide">
+              <label className="text-[11px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wide">
                 Period Start <span className="text-red-500 normal-case tracking-normal">*</span>
               </label>
               <DateTimePicker
@@ -709,7 +709,7 @@ function MedicineAllowanceModal({
               />
             </div>
             <div className="space-y-1.5">
-              <label className="text-[12px] font-semibold text-[var(--color-text-primary)] uppercase tracking-wide">
+              <label className="text-[11px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wide">
                 Period End <span className="text-red-500 normal-case tracking-normal">*</span>
               </label>
               <DateTimePicker
@@ -725,7 +725,7 @@ function MedicineAllowanceModal({
 
           {/* Amount */}
           <div className="space-y-1.5">
-            <label className="text-[12px] font-semibold text-[var(--color-text-primary)] uppercase tracking-wide">
+            <label className="text-[11px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wide">
               Amount (₱) <span className="text-red-500 normal-case tracking-normal">*</span>
             </label>
             <div className="relative flex items-stretch">
@@ -744,7 +744,7 @@ function MedicineAllowanceModal({
                 }}
                 className={cn(
                   'flex h-9 w-full rounded-lg border border-[var(--color-border)]',
-                  'bg-[var(--color-bg-elevated)] px-3 py-1 text-sm text-[var(--color-text-primary)]',
+                  'bg-[var(--color-bg-elevated)] px-3 py-1 text-xs text-[var(--color-text-primary)]',
                   'placeholder:text-[var(--color-text-muted)]',
                   'focus:outline-none focus:border-transparent focus:shadow-sm',
                   amountErr && 'border-red-500',
@@ -790,7 +790,7 @@ function MedicineAllowanceModal({
             type="button"
             onClick={onClose}
             disabled={saving}
-            className="px-4 py-2 rounded-lg text-sm font-medium border border-[var(--color-border)]
+            className="px-4 py-2 rounded-lg text-xs font-normal border border-[var(--color-border)]
               text-[var(--color-text-primary)] hover:bg-[var(--color-bg-card)]
               transition-colors disabled:opacity-50"
           >
@@ -801,11 +801,11 @@ function MedicineAllowanceModal({
             onClick={handleConfirm}
             disabled={!isValid || saving}
             className="flex min-w-[150px] items-center justify-center gap-1.5 px-4 py-2 rounded-lg
-              bg-[#2845D6] text-white text-sm font-semibold hover:bg-[#1f38c0]
+              bg-[#2845D6] text-white text-xs font-normal hover:bg-[#1f38c0]
               disabled:opacity-50 transition-colors"
           >
             {saving
-              ? <TextShimmer duration={1.2} className="text-sm font-semibold [--base-color:#a5b4fc] [--base-gradient-color:#ffffff]">
+              ? <TextShimmer duration={1.2} className="text-xs font-normal [--base-color:#a5b4fc] [--base-gradient-color:#ffffff]">
                   Submitting…
                 </TextShimmer>
               : <><Check size={14} /><span>Confirm Request</span></>
@@ -1035,11 +1035,11 @@ function SubmitPRFModal({
         </div>
 
         {/* Body */}
-        <div className="space-y-4 p-6 max-h-[calc(100vh-13rem)] overflow-y-auto [scrollbar-width:thin]">
+        <div className="space-y-2 py-4 px-6 max-h-[calc(100vh-13rem)] overflow-y-auto [scrollbar-width:thin]">
 
           {/* PRF Category */}
           <div className="space-y-1.5">
-            <label className="text-[12px] font-semibold text-[var(--color-text-primary)] uppercase tracking-wide">
+            <label className="text-[11px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wide">
               PRF Category <span className="text-red-500 normal-case tracking-normal">*</span>
             </label>
             <Select value={category} onValueChange={handleCategoryChange}>
@@ -1066,7 +1066,7 @@ function SubmitPRFModal({
                 style={{ overflow: 'hidden' }}
                 className="space-y-1.5"
               >
-                <label className="text-xs font-semibold text-[var(--color-text-primary)] uppercase tracking-wide">
+                <label className="text-[11px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wide">
                   PRF Type <span className="text-red-500 normal-case tracking-normal">*</span>
                 </label>
                 <Select value={prfType} onValueChange={handleTypeChange}>
@@ -1097,7 +1097,7 @@ function SubmitPRFModal({
                 style={{ overflow: 'hidden' }}
                 className="space-y-1.5"
               >
-                <label className="text-xs font-semibold text-[var(--color-text-primary)] uppercase tracking-wide">
+                <label className="text-[11px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wide">
                   Control Number <span className="text-red-500 normal-case tracking-normal">*</span>
                 </label>
                 <Input
@@ -1115,8 +1115,8 @@ function SubmitPRFModal({
                   }}
                 />
                 {controlNumberErr
-                  ? <p className="text-xs text-red-500" role="alert">{controlNumberErr}</p>
-                  : <p className="text-xs text-[var(--color-text-muted)] text-right">{controlNumber.length}/{controlMax}</p>
+                  ? <p className="text-[10px] text-red-500" role="alert">{controlNumberErr}</p>
+                  : <p className="text-[10px] text-[var(--color-text-muted)] text-right">{controlNumber.length}/{controlMax}</p>
                 }
               </motion.div>
             )}
@@ -1134,7 +1134,7 @@ function SubmitPRFModal({
                 style={{ overflow: 'hidden' }}
                 className="space-y-1.5"
               >
-                <label className="text-xs font-semibold text-[var(--color-text-primary)] uppercase tracking-wide">
+                <label className="text-[11px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wide">
                   Specify PRF Type <span className="text-red-500 normal-case tracking-normal">*</span>
                 </label>
                 <TextareaWithCharactersLeft
@@ -1158,7 +1158,7 @@ function SubmitPRFModal({
 
           {/* Purpose of Request */}
           <div className="space-y-1.5">
-            <label className="text-[12px] font-semibold text-[var(--color-text-primary)] uppercase tracking-wide">
+            <label className="text-[11px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wide">
               Purpose of Request <span className="text-red-500 normal-case tracking-normal">*</span>
             </label>
             <TextareaWithCharactersLeft
@@ -1220,12 +1220,12 @@ function DetailRow({ label, value, mono, multiline }: {
   label: string; value: string; mono?: boolean; multiline?: boolean;
 }) {
   return (
-    <div className="space-y-0.5">
-      <p className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
+    <div className="space-y-1">
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
         {label}
       </p>
       <p className={cn(
-        'text-sm text-[var(--color-text-primary)]',
+        'text-xs text-[var(--color-text-primary)]',
         mono && 'font-mono',
         multiline && 'leading-relaxed whitespace-pre-wrap',
       )}>
@@ -1260,7 +1260,7 @@ function ViewPRFModal({ request, onClose }: { request: PRFRequest; onClose: () =
         exit={{ opacity: 0, scale: 0.95, y: 10 }}
         transition={{ type: 'spring', stiffness: 320, damping: 28 }}
         onClick={e => e.stopPropagation()}
-        className="w-full max-w-lg rounded-2xl border border-[var(--color-border)]
+        className="w-full max-w-md rounded-2xl border border-[var(--color-border)]
           bg-[var(--color-bg-elevated)] shadow-2xl overflow-hidden"
       >
         {/* ── Header ── */}
@@ -1276,7 +1276,7 @@ function ViewPRFModal({ request, onClose }: { request: PRFRequest; onClose: () =
         </div>
 
         {/* ── PRF number + status + date row ── */}
-        <div className="flex items-center justify-between px-6 pt-4 mb-3">
+        <div className="flex items-center justify-between px-6 pt-4 mb-2">
           <div className="flex items-center gap-2">
             <span className="text-base font-bold text-[var(--color-text-primary)]">
               {request.prf_control_number}
@@ -1311,11 +1311,11 @@ function ViewPRFModal({ request, onClose }: { request: PRFRequest; onClose: () =
           </div>
 
           {/* Purpose — full width */}
-          <div className="mt-4">
+          <div className="mt-4 space-y-1">
             <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
               Purpose of Request:
             </p>
-            <p className="text-sm text-[var(--color-text-primary)] leading-relaxed whitespace-pre-wrap">
+            <p className="text-xs text-[var(--color-text-primary)] leading-relaxed whitespace-pre-wrap">
               {request.purpose}
             </p>
           </div>
@@ -1379,7 +1379,7 @@ function ViewPRFModal({ request, onClose }: { request: PRFRequest; onClose: () =
               <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)] mb-1">
                 Admin Remarks:
               </p>
-              <p className="text-sm text-[var(--color-text-primary)] leading-relaxed whitespace-pre-wrap">
+              <p className="text-xs text-[var(--color-text-primary)] leading-relaxed whitespace-pre-wrap">
                 {request.admin_remarks}
               </p>
             </div>
@@ -1390,7 +1390,7 @@ function ViewPRFModal({ request, onClose }: { request: PRFRequest; onClose: () =
         </div>
 
         {/* ── Footer ── */}
-        <div className="px-6 py-4 flex justify-end">
+        <div className="px-6 py-4 flex justify-end border-t border-[var(--color-border)]">
           <button type="button" onClick={onClose}
             className="px-4 py-2 rounded-lg text-xs font-normal border border-[var(--color-border)]
               text-[var(--color-text-primary)] hover:bg-[var(--color-bg-card)] transition-colors">
@@ -1519,7 +1519,7 @@ function EditPRFModal({
         exit={{ opacity: 0, scale: 0.95, y: 10 }}
         transition={{ type: 'spring', stiffness: 320, damping: 28 }}
         onClick={e => e.stopPropagation()}
-        className="w-full max-w-lg rounded-2xl border border-[var(--color-border)]
+        className="w-full max-w-md rounded-2xl border border-[var(--color-border)]
           bg-[var(--color-bg-elevated)] shadow-2xl overflow-hidden"
       >
         {/* Header */}
@@ -1536,10 +1536,10 @@ function EditPRFModal({
         </div>
 
         {/* Body */}
-        <div className="space-y-4 p-6 max-h-[calc(100vh-13rem)] overflow-y-auto [scrollbar-width:thin]">
+        <div className="space-y-2 py-2 px-6 max-h-[calc(100vh-13rem)] overflow-y-auto [scrollbar-width:thin]">
           {/* PRF Category */}
           <div className="space-y-1.5">
-            <label className="text-[12px] font-semibold text-[var(--color-text-primary)] uppercase tracking-wide">
+            <label className="text-[11px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wide">
               PRF Category <span className="text-red-500 normal-case tracking-normal">*</span>
             </label>
             <Select value={category} onValueChange={handleCategoryChange}>
@@ -1558,7 +1558,7 @@ function EditPRFModal({
                 exit={{ opacity: 0, y: -8, height: 0 }}
                 transition={{ duration: 0.22, ease: [0.4, 0, 0.2, 1] }}
                 style={{ overflow: 'hidden' }} className="space-y-1.5">
-                <label className="text-[12px] font-semibold text-[var(--color-text-primary)] uppercase tracking-wide">
+                <label className="text-[11px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wide">
                   PRF Type <span className="text-red-500 normal-case tracking-normal">*</span>
                 </label>
                 <Select value={prfType} onValueChange={handleTypeChange}>
@@ -1583,7 +1583,7 @@ function EditPRFModal({
                 exit={{ opacity: 0, y: -8, height: 0 }}
                 transition={{ duration: 0.22, ease: [0.4, 0, 0.2, 1] }}
                 style={{ overflow: 'hidden' }} className="space-y-1.5">
-                <label className="text-xs font-semibold text-[var(--color-text-primary)] uppercase tracking-wide">
+                <label className="text-[11px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wide">
                   Control Number <span className="text-red-500 normal-case tracking-normal">*</span>
                 </label>
                 <Input placeholder="e.g., LN-2024-001" value={controlNumber} maxLength={controlMax}
@@ -1594,8 +1594,8 @@ function EditPRFModal({
                     if (BLOCKED_CHARS_RE.test(pasted)) { e.preventDefault(); setControlNumberErr('Special characters are not allowed.'); }
                   }} />
                 {controlNumberErr
-                  ? <p className="text-xs text-red-500" role="alert">{controlNumberErr}</p>
-                  : <p className="text-xs text-[var(--color-text-muted)] text-right">{controlNumber.length}/{controlMax}</p>
+                  ? <p className="text-[10px] text-red-500" role="alert">{controlNumberErr}</p>
+                  : <p className="text-[10px] text-[var(--color-text-muted)] text-right">{controlNumber.length}/{controlMax}</p>
                 }
               </motion.div>
             )}
@@ -1609,7 +1609,7 @@ function EditPRFModal({
                 exit={{ opacity: 0, y: -8, height: 0 }}
                 transition={{ duration: 0.22, ease: [0.4, 0, 0.2, 1] }}
                 style={{ overflow: 'hidden' }} className="space-y-1.5">
-                <label className="text-xs font-semibold text-[var(--color-text-primary)] uppercase tracking-wide">
+                <label className="text-[11px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wide">
                   Specify PRF Type <span className="text-red-500 normal-case tracking-normal">*</span>
                 </label>
                 <TextareaWithCharactersLeft
@@ -1630,7 +1630,7 @@ function EditPRFModal({
 
           {/* Purpose */}
           <div className="space-y-1.5">
-            <label className="text-[12px] font-semibold text-[var(--color-text-primary)] uppercase tracking-wide">
+            <label className="text-[11px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wide">
               Purpose of Request <span className="text-red-500 normal-case tracking-normal">*</span>
             </label>
             <TextareaWithCharactersLeft
@@ -1657,7 +1657,7 @@ function EditPRFModal({
             Cancel
           </button>
           <button type="button" onClick={handleSubmit} disabled={!isValid || saving}
-            className="flex min-w-[130px] items-center justify-center gap-1.5 px-4 py-2 rounded-lg
+            className="flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg
               bg-[#2845D6] text-white text-xs font-normal hover:bg-[#1f38c0]
               disabled:opacity-50 transition-colors">
             {saving
@@ -1727,7 +1727,7 @@ function CancelConfirmModal({
         exit={{ opacity: 0, scale: 0.95, y: 10 }}
         transition={{ type: 'spring', stiffness: 320, damping: 28 }}
         onClick={e => e.stopPropagation()}
-        className="w-full max-w-md rounded-2xl border border-[var(--color-border)]
+        className="w-full max-w-sm rounded-2xl border border-[var(--color-border)]
           bg-[var(--color-bg-elevated)] shadow-2xl overflow-hidden"
       >
         <div className="p-6">
@@ -1748,7 +1748,7 @@ function CancelConfirmModal({
               disabled:opacity-50 transition-colors">
             {cancelling
               ? <TextShimmer duration={1.2} className="text-xs [--base-color:#fca5a5] [--base-gradient-color:#ffffff]">Cancelling…</TextShimmer>
-              : <><XCircle size={14} /><span>Yes, I confirm</span></>
+              : <><XCircle size={14} /><span>Yes, Cancel It</span></>
             }
           </button>
         </div>
@@ -2059,8 +2059,10 @@ export default function PRFormPage() {
     {
       key: 'actions',
       label: 'Actions',
+      thClassName: 'flex justify-center',
+      tdClassName: 'text-center',
       render: req => (
-        <div className="flex items-center gap-0.5">
+        <div className="flex items-center gap-0.5 justify-center">
           <button
             type="button"
             title="View"
@@ -2114,8 +2116,8 @@ export default function PRFormPage() {
         {/* ── Page header ── */}
         <div className="flex items-start justify-between gap-3">
           <div>
-            <h1 className="text-xl font-bold text-[var(--color-text-primary)]">Personal Request Form</h1>
-            <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
+            <h1 className="text-lg font-bold text-[var(--color-text-primary)]">Personal Request Form</h1>
+            <p className="text-xs text-[var(--color-text-muted)]">
               Manage and track your personnel request forms
             </p>
           </div>
@@ -2134,7 +2136,7 @@ export default function PRFormPage() {
             </div>
 
             {/* Active filter chips */}
-            <AnimatePresence initial={false}>
+            {/* <AnimatePresence initial={false}>
               {filterType && meta && (
                 <motion.span
                   key="chip-type"
@@ -2175,7 +2177,7 @@ export default function PRFormPage() {
                   </button>
                 </motion.span>
               )}
-            </AnimatePresence>
+            </AnimatePresence> */}
           </div>
 
           {!loading && totalEver > 0 && (
@@ -2183,7 +2185,7 @@ export default function PRFormPage() {
               type="button"
               onClick={() => setModalOpen(true)}
               className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#2845D6] text-white
-                text-xs hover:bg-[#1f38c0] transition-colors shrink-0"
+                text-xs hover:bg-[#1f38c0] transition-colors shrink-0 font-normal"
             >
               <Plus size={14} />
               New Request

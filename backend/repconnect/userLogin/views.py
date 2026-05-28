@@ -35,9 +35,13 @@ _REFRESH_PATH = '/api/auth/token/refresh'
 
 
 def _get_client_ip(request):
-    forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR', '')
-    if forwarded_for:
-        return forwarded_for.split(',')[0].strip()
+    # Only trust X-Forwarded-For when a known reverse proxy sits in front.
+    # In development (DEBUG=True) there is no proxy, so always use REMOTE_ADDR
+    # to prevent spoofed headers from bypassing IP-based rate limiting.
+    if not settings.DEBUG:
+        forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR', '')
+        if forwarded_for:
+            return forwarded_for.split(',')[0].strip()
     return request.META.get('REMOTE_ADDR', '127.0.0.1')
 
 
@@ -50,6 +54,7 @@ def _set_auth_cookies(response, access, refresh):
     access_max = int(jwt['ACCESS_TOKEN_LIFETIME'].total_seconds())
     refresh_max = int(jwt['REFRESH_TOKEN_LIFETIME'].total_seconds())
     secure = _cookie_secure()
+    same_site = 'Lax' if settings.DEBUG else 'Strict'
 
     response.set_cookie(
         key=_ACCESS_COOKIE,
@@ -57,7 +62,7 @@ def _set_auth_cookies(response, access, refresh):
         max_age=access_max,
         httponly=True,
         secure=secure,
-        samesite='Strict',
+        samesite=same_site,
         path='/',
     )
     response.set_cookie(
@@ -66,7 +71,7 @@ def _set_auth_cookies(response, access, refresh):
         max_age=refresh_max,
         httponly=True,
         secure=secure,
-        samesite='Strict',
+        samesite=same_site,
         path=_REFRESH_PATH,
     )
     return response
@@ -76,6 +81,30 @@ def _clear_auth_cookies(response):
     response.delete_cookie(_ACCESS_COOKIE, path='/')
     response.delete_cookie(_REFRESH_COOKIE, path=_REFRESH_PATH)
     return response
+
+
+def _get_password_lockout_settings() -> tuple[bool, int]:
+    """Read account-lockout settings from password policy with safe fallbacks."""
+    try:
+        from generalsettings.models import PasswordPolicy
+
+        policy = PasswordPolicy.get()
+        enabled = bool(getattr(policy, 'enable_account_lockout', True))
+        max_attempts = int(getattr(policy, 'max_failed_login_attempts', MAX_FAILED_ATTEMPTS))
+        if max_attempts < 1:
+            max_attempts = MAX_FAILED_ATTEMPTS
+        return enabled, max_attempts
+    except Exception:
+        return True, MAX_FAILED_ATTEMPTS
+
+
+def _lock_user_account(user):
+    """Lock a user account and persist lock timestamp."""
+    if user.locked:
+        return
+    user.locked = True
+    user.locked_at = timezone.now()
+    user.save(update_fields=['locked', 'locked_at'])
 
 
 @method_decorator(ensure_csrf_cookie, name='dispatch')
@@ -88,6 +117,7 @@ class CsrfCookieView(APIView):
     """
     permission_classes = [AllowAny]
     authentication_classes = []
+    throttle_classes = []
 
     def get(self, request):
         return Response({'detail': 'CSRF cookie set.'})
@@ -102,9 +132,15 @@ class LoginView(APIView):
     Enforces max 5 failed attempts per IP per 15-minute window.
     """
     permission_classes = [AllowAny]
+    # Global DRF throttle is intentionally disabled here — this view already
+    # enforces per-IP and per-user rate limiting via LoginAttempt DB records.
+    # The global anon throttle (shared per IP) would fire before the custom
+    # logic and produce confusing 429s in office environments with shared NAT IPs.
+    throttle_classes = []
 
     def post(self, request):
         ip = _get_client_ip(request)
+        lockout_enabled, max_failed_attempts = _get_password_lockout_settings()
 
         # Rate-limit check
         window_start = timezone.now() - timedelta(minutes=LOGIN_WINDOW_MINUTES)
@@ -114,7 +150,7 @@ class LoginView(APIView):
             was_successful=False,
         ).count()
 
-        if recent_failures >= MAX_FAILED_ATTEMPTS:
+        if recent_failures >= max_failed_attempts:
             logger.warning('login rate-limit hit ip=%s failures=%d', ip, recent_failures)
             return Response(
                 {'detail': 'Too many failed attempts. Please wait 15 minutes and try again.'},
@@ -127,18 +163,75 @@ class LoginView(APIView):
             LoginAttempt.objects.create(ip_address=ip, was_successful=False)
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+        username = serializer.validated_data['username']
+        user_record = User.objects.filter(idnumber=username).first()
+
+        if lockout_enabled and user_record:
+            user_failures = LoginAttempt.objects.filter(
+                user=user_record,
+                created_at__gte=window_start,
+                was_successful=False,
+            ).count()
+            if user_failures >= max_failed_attempts and not user_record.locked:
+                _lock_user_account(user_record)
+
+            if user_record.locked:
+                logger.warning('locked account login attempt username=%s ip=%s', username, ip)
+                return Response(
+                    {
+                        'detail': 'Your account is locked. Please proceed to HR for unlocking.',
+                        'code': 'account_locked',
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
         # Authenticate
         user = authenticate(
             request,
-            username=serializer.validated_data['username'],
+            username=username,
             password=serializer.validated_data['password'],
         )
 
         if user is None:
-            LoginAttempt.objects.create(ip_address=ip, was_successful=False)
+            LoginAttempt.objects.create(ip_address=ip, user=user_record, was_successful=False)
+
+            if user_record:
+                user_record.failed_login_attempts = (user_record.failed_login_attempts or 0) + 1
+                user_record.last_failed_attempt = timezone.now()
+                user_record.save(update_fields=["failed_login_attempts", "last_failed_attempt"])
+
+                if lockout_enabled and not user_record.locked:
+                    if user_record.failed_login_attempts >= max_failed_attempts:
+                        _lock_user_account(user_record)
+                        logger.warning('account locked (per-user counter) username=%s ip=%s', username, ip)
+                        return Response(
+                            {
+                                'detail': 'Your account is locked. Please proceed to HR for unlocking.',
+                                'code': 'account_locked',
+                            },
+                            status=status.HTTP_403_FORBIDDEN,
+                        )
+
+            if lockout_enabled and user_record and not user_record.locked:
+                failures_after_attempt = LoginAttempt.objects.filter(
+                    user=user_record,
+                    created_at__gte=window_start,
+                    was_successful=False,
+                ).count()
+                if failures_after_attempt >= max_failed_attempts:
+                    _lock_user_account(user_record)
+                    logger.warning('account locked username=%s ip=%s', username, ip)
+                    return Response(
+                        {
+                            'detail': 'Your account is locked. Please proceed to HR for unlocking.',
+                            'code': 'account_locked',
+                        },
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
+
             logger.warning(
                 'failed login username=%s ip=%s',
-                serializer.validated_data['username'],
+                username,
                 ip,
             )
             return Response(
@@ -180,6 +273,12 @@ class LoginView(APIView):
         LoginAttempt.objects.create(ip_address=ip, user=user, was_successful=True)
         logger.info('successful login user_id=%d ip=%s', user.pk, ip)
 
+        # Reset per-user failed attempt counter on successful login
+        if user.failed_login_attempts != 0:
+            user.failed_login_attempts = 0
+            user.last_failed_attempt = None
+            user.save(update_fields=["failed_login_attempts", "last_failed_attempt"])
+
         refresh = RefreshToken.for_user(user)
         response = Response(
             {'detail': 'Login successful.', 'user': UserSerializer(user).data},
@@ -195,6 +294,7 @@ class LogoutView(APIView):
     Blacklists the refresh token and clears auth cookies.
     """
     permission_classes = [IsAuthenticated]
+    throttle_classes = []
 
     def post(self, request):
         raw_refresh = request.COOKIES.get(_REFRESH_COOKIE)
@@ -214,6 +314,7 @@ class TokenRefreshView(APIView):
     Issues a new access token using the HttpOnly refresh cookie.
     """
     permission_classes = [AllowAny]
+    throttle_classes = []
 
     def post(self, request):
         raw_refresh = request.COOKIES.get(_REFRESH_COOKIE)
@@ -234,10 +335,22 @@ class TokenRefreshView(APIView):
 
 
 class MeView(APIView):
-    """GET /api/auth/me/ — returns the currently authenticated user."""
+    """GET/PATCH /api/auth/me/ — returns or updates the currently authenticated user."""
     permission_classes = [IsAuthenticated]
+    throttle_classes = []
 
     def get(self, request):
+        return Response(UserSerializer(request.user).data)
+
+    def patch(self, request):
+        theme = request.data.get('theme')
+        if not isinstance(theme, bool):
+            return Response(
+                {'detail': 'Theme must be true or false.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        request.user.theme = theme
+        request.user.save(update_fields=['theme'])
         return Response(UserSerializer(request.user).data)
 
 
@@ -473,8 +586,13 @@ class EmployeeAdminStatusView(APIView):
             target.locked = True
         elif action == 'unlock':
             target.locked = False
+            target.failed_login_attempts = 0
+            target.last_failed_attempt = None
 
-        target.save(update_fields=['active', 'locked'])
+        save_fields = ['active', 'locked']
+        if action == 'unlock':
+            save_fields = ['active', 'locked', 'failed_login_attempts', 'last_failed_attempt']
+        target.save(update_fields=save_fields)
 
         result = {
             'id':     target.pk,

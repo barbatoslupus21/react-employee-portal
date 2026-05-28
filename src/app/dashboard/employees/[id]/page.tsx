@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { motion, AnimatePresence, animate } from "motion/react";
 import {
@@ -15,6 +15,7 @@ import { Input } from "@/components/ui/input";
 import { DateTimePicker } from "@/components/ui/datetime-picker";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { getCsrfToken } from "@/lib/csrf";
+import { useMediaQuery } from "@/hooks/use-media-query";
 
 // ── Types (same shape as profile-settings ProfileData) ──────────────────────
 
@@ -123,7 +124,7 @@ function ReadField({ label, value }: { label: string; value: string | null | und
   return (
     <div className="flex flex-col gap-1">
       <span className="text-[10px] font-semibold uppercase text-[var(--color-text-muted)]">{label}</span>
-      <span className="text-sm text-[var(--color-text-primary)]">
+      <span className="text-xs text-[var(--color-text-primary)]">
         {value || <span className="italic text-[var(--color-text-muted)]">—</span>}
       </span>
     </div>
@@ -317,6 +318,10 @@ function ProfileCompletionCard({ profile }: { profile: ProfileData }) {
 function LeftCard({ profile }: { profile: ProfileData }) {
   const [certsExpanded, setCertsExpanded] = useState(false);
   const [isExpanded, setIsExpanded] = useState(true);
+  const [canScrollUp, setCanScrollUp] = useState(false);
+  const [canScrollDown, setCanScrollDown] = useState(false);
+  const bodyScrollRef = useRef<HTMLDivElement | null>(null);
+  const isDesktop = useMediaQuery("(min-width: 1024px)");
 
   const wi         = profile.work_info;
   const displayAv  = profile.avatar ?? "/default-avatar.png";
@@ -325,9 +330,188 @@ function LeftCard({ profile }: { profile: ProfileData }) {
   const certPreview = profile.certificates.slice(0, 4);
   const certExtra   = profile.certificates.slice(4);
   const extraCount  = certExtra.length;
+  const isBodyExpanded = isDesktop || isExpanded;
+  const hasAnyEmploymentDetail = !!(wi?.date_hired || wi?.tin_number || wi?.sss_number || wi?.hdmf_number || wi?.philhealth_number || wi?.bank_account);
+
+  const updateScrollState = useCallback(() => {
+    const node = bodyScrollRef.current;
+    if (!node || !isDesktop) {
+      setCanScrollUp(false);
+      setCanScrollDown(false);
+      return;
+    }
+
+    setCanScrollUp(node.scrollTop > 2);
+    setCanScrollDown(node.scrollTop + node.clientHeight < node.scrollHeight - 2);
+  }, [isDesktop]);
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(updateScrollState);
+    if (!isDesktop) return;
+
+    const handleResize = () => updateScrollState();
+    window.addEventListener("resize", handleResize);
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("resize", handleResize);
+    };
+  }, [certsExpanded, hasAnyEmploymentDetail, isDesktop, profile, updateScrollState]);
+
+  const scrollCardBody = (delta: number) => {
+    const node = bodyScrollRef.current;
+    if (!node) return;
+    node.scrollBy({ top: delta, behavior: "smooth" });
+  };
+
+  const cardBody = (
+    <div className="relative flex-1 min-h-0 overflow-hidden">
+      <div
+        ref={bodyScrollRef}
+        onScroll={updateScrollState}
+        className="profile-left-card-scroll h-full overflow-y-auto px-5 pb-3 space-y-3"
+      >
+
+        {wi?.employment_type_name && (
+          <div className="flex items-start justify-between gap-3">
+            <span className="text-[10px] font-semibold uppercase text-[var(--color-text-muted)]">Employment type</span>
+            <Pill>{wi.employment_type_name}</Pill>
+          </div>
+        )}
+
+        {hasAnyEmploymentDetail && (
+          <div className="space-y-2.5">
+            <InfoRow label="Date Hired"      value={formatDisplayDate(wi?.date_hired)} />
+            <InfoRow label="TIN Number"      value={wi?.tin_number} />
+            <InfoRow label="SSS Number"      value={wi?.sss_number} />
+            <InfoRow label="HDMF / Pag-IBIG" value={wi?.hdmf_number} />
+            <InfoRow label="PhilHealth"      value={wi?.philhealth_number} />
+            <InfoRow label="Bank Account"    value={wi?.bank_account} />
+          </div>
+        )}
+
+        {profile.skills.length > 0 && (
+          profile.skills.length <= 2 ? (
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-[10px] font-semibold uppercase text-[var(--color-text-muted)]">Skills</span>
+              <div className="flex flex-wrap justify-end gap-1 max-w-[70%]">
+                {profile.skills.map((skill) => <Pill key={skill.name}>{skill.name}</Pill>)}
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              <span className="text-[10px] font-semibold uppercase text-[var(--color-text-muted)]">Skills</span>
+              <div className="flex flex-wrap gap-1">
+                {profile.skills.map((skill) => <Pill key={skill.name}>{skill.name}</Pill>)}
+              </div>
+            </div>
+          )
+        )}
+
+        {profile.certificates.length > 0 && (
+          <div className="space-y-1">
+            <span className="text-[9px] font-semibold uppercase text-[var(--color-text-muted)]">Certificates</span>
+            <div className="space-y-0">
+              {certPreview.map((c) => (
+                <div key={c.id} className="flex items-center gap-2 py-1.5">
+                  <Award size={13} className="shrink-0 text-[#2845D6]" />
+                  <div className="min-w-0">
+                    <p className="text-xs font-medium text-[var(--color-text-primary)] truncate leading-snug">{c.title}</p>
+                    <p className="text-[10px] text-[var(--color-text-muted)] truncate">{c.category_name}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <AnimatePresence initial={false}>
+              {certsExpanded && extraCount > 0 && (
+                <motion.div
+                  key="cert-extra"
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: "auto", opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.28, ease: "easeInOut" }}
+                  className="overflow-hidden"
+                >
+                  {certExtra.map((c) => (
+                    <div key={c.id} className="flex items-center gap-2 py-1.5">
+                      <Award size={13} className="shrink-0 text-[#2845D6]" />
+                      <div className="min-w-0">
+                        <p className="text-xs font-medium text-[var(--color-text-primary)] truncate leading-snug">{c.title}</p>
+                        <p className="text-[10px] text-[var(--color-text-muted)] truncate">{c.category_name}</p>
+                      </div>
+                    </div>
+                  ))}
+                </motion.div>
+              )}
+            </AnimatePresence>
+            {extraCount > 0 && (
+              <button
+                type="button"
+                onClick={() => setCertsExpanded((v) => !v)}
+                className="flex items-center gap-1 text-[10px] text-[#2845D6] hover:text-[#1e37b8] font-medium transition-colors pt-0.5"
+              >
+                {certsExpanded
+                  ? <>See less <ChevronUp size={12} /></>
+                  : <>See {extraCount} more <ChevronDown size={12} /></>
+                }
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
+      {isDesktop && canScrollUp && (
+        <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex justify-center bg-gradient-to-b from-[var(--color-bg-elevated)] via-[var(--color-bg-elevated)]/85 to-transparent pt-1.5">
+          <button
+            type="button"
+            onClick={() => scrollCardBody(-88)}
+            className="pointer-events-auto z-20 flex h-7 w-7 items-center justify-center bg-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] transition-colors"
+            aria-label="Scroll profile card up"
+          >
+            <ChevronUp size={14} />
+          </button>
+        </div>
+      )}
+
+      {isDesktop && canScrollDown && (
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex justify-center bg-gradient-to-t from-[var(--color-bg-elevated)] via-[var(--color-bg-elevated)]/85 to-transparent pb-1.5">
+          <button
+            type="button"
+            onClick={() => scrollCardBody(88)}
+            className="pointer-events-auto z-20 flex h-7 w-7 items-center justify-center bg-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] transition-colors"
+            aria-label="Scroll profile card down"
+          >
+            <ChevronDown size={14} />
+          </button>
+        </div>
+      )}
+    </div>
+  );
 
   return (
-    <aside className="w-full lg:w-64 xl:w-72 shrink-0 lg:h-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] flex flex-col overflow-hidden">
+    <>
+      <style jsx global>{`
+        .profile-left-card-scroll {
+          scrollbar-width: none;
+          -ms-overflow-style: none;
+        }
+
+        .profile-left-card-scroll::-webkit-scrollbar {
+          width: 0 !important;
+          height: 0 !important;
+          display: none !important;
+          background: transparent;
+        }
+
+        .profile-left-card-scroll::-webkit-scrollbar-thumb {
+          background: transparent;
+        }
+
+        .profile-left-card-scroll::-webkit-scrollbar-track {
+          background: transparent;
+        }
+      `}</style>
+      <aside className="w-full lg:w-64 xl:w-72 shrink-0 lg:h-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] flex flex-col overflow-hidden">
 
       {/* Cover image */}
       <div className="relative shrink-0 h-[80px] overflow-visible rounded-t-2xl">
@@ -363,129 +547,47 @@ function LeftCard({ profile }: { profile: ProfileData }) {
         </p>
       </div>
 
-      {/* Expandable body — always open on desktop, toggle-able on mobile */}
-      <AnimatePresence initial={false}>
-        {isExpanded && (
-          <motion.div
-            key="card-body"
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.3, ease: "easeInOut" }}
-            className="overflow-hidden"
-          >
-            <div className="overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden px-5 pb-3 space-y-3">
-
-              {wi?.employment_type_name && (
-                <div className="flex items-start justify-between gap-3">
-                  <span className="text-[10px] font-semibold uppercase text-[var(--color-text-muted)]">Employment type</span>
-                  <Pill>{wi.employment_type_name}</Pill>
+      {isDesktop ? (
+        cardBody
+      ) : (
+        <>
+          <AnimatePresence initial={false}>
+            {isBodyExpanded && (
+              <motion.div
+                key="card-body"
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: "auto", opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.3, ease: "easeInOut" }}
+                className="overflow-hidden"
+              >
+                <div className="max-h-[420px]">
+                  {cardBody}
                 </div>
-              )}
+              </motion.div>
+            )}
+          </AnimatePresence>
 
-              {(wi?.date_hired || wi?.tin_number || wi?.sss_number || wi?.hdmf_number || wi?.philhealth_number || wi?.bank_account) && (
-                <div className="space-y-2.5">
-                  <InfoRow label="Date Hired"      value={formatDisplayDate(wi?.date_hired)} />
-                  <InfoRow label="TIN Number"      value={wi?.tin_number} />
-                  <InfoRow label="SSS Number"      value={wi?.sss_number} />
-                  <InfoRow label="HDMF / Pag-IBIG" value={wi?.hdmf_number} />
-                  <InfoRow label="PhilHealth"      value={wi?.philhealth_number} />
-                  <InfoRow label="Bank Account"    value={wi?.bank_account} />
-                </div>
-              )}
-
-              {/* Skills */}
-              {profile.skills.length > 0 && (
-                profile.skills.length <= 2 ? (
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-[10px] font-semibold uppercase text-[var(--color-text-muted)]">Skills</span>
-                    <div className="flex flex-wrap justify-end gap-1 max-w-[70%]">
-                      {profile.skills.map((skill) => <Pill key={skill.name}>{skill.name}</Pill>)}
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex flex-col gap-2">
-                    <span className="text-[10px] font-semibold uppercase text-[var(--color-text-muted)]">Skills</span>
-                    <div className="flex flex-wrap gap-1">
-                      {profile.skills.map((skill) => <Pill key={skill.name}>{skill.name}</Pill>)}
-                    </div>
-                  </div>
-                )
-              )}
-
-              {/* Certificates */}
-              {profile.certificates.length > 0 && (
-                <div className="space-y-1">
-                  <span className="text-[9px] font-semibold uppercase text-[var(--color-text-muted)]">Certificates</span>
-                  <div className="space-y-0">
-                    {certPreview.map((c) => (
-                      <div key={c.id} className="flex items-center gap-2 py-1.5">
-                        <Award size={13} className="shrink-0 text-[#2845D6]" />
-                        <div className="min-w-0">
-                          <p className="text-xs font-medium text-[var(--color-text-primary)] truncate leading-snug">{c.title}</p>
-                          <p className="text-[10px] text-[var(--color-text-muted)] truncate">{c.category_name}</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                  <AnimatePresence initial={false}>
-                    {certsExpanded && extraCount > 0 && (
-                      <motion.div
-                        key="cert-extra"
-                        initial={{ height: 0, opacity: 0 }}
-                        animate={{ height: "auto", opacity: 1 }}
-                        exit={{ height: 0, opacity: 0 }}
-                        transition={{ duration: 0.28, ease: "easeInOut" }}
-                        className="overflow-hidden"
-                      >
-                        {certExtra.map((c) => (
-                          <div key={c.id} className="flex items-center gap-2 py-1.5">
-                            <Award size={13} className="shrink-0 text-[#2845D6]" />
-                            <div className="min-w-0">
-                              <p className="text-xs font-medium text-[var(--color-text-primary)] truncate leading-snug">{c.title}</p>
-                              <p className="text-[10px] text-[var(--color-text-muted)] truncate">{c.category_name}</p>
-                            </div>
-                          </div>
-                        ))}
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                  {extraCount > 0 && (
-                    <button
-                      onClick={() => setCertsExpanded((v) => !v)}
-                      className="flex items-center gap-1 text-[10px] text-[#2845D6] hover:text-[#1e37b8] font-medium transition-colors pt-0.5"
-                    >
-                      {certsExpanded
-                        ? <>See less <ChevronUp size={12} /></>
-                        : <>See {extraCount} more <ChevronDown size={12} /></>
-                      }
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Expand/collapse toggle — mobile only */}
-      <div className="lg:hidden shrink-0 flex justify-center pb-2 pt-1 mt-auto">
-        <button
-          type="button"
-          onClick={() => setIsExpanded((v) => !v)}
-          className="flex items-center gap-1 text-[10px] text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] transition-colors"
-          aria-label={isExpanded ? "Collapse card" : "Expand card"}
-        >
-          <motion.span
-            animate={{ rotate: isExpanded ? 180 : 0 }}
-            transition={{ duration: 0.25, ease: "easeInOut" }}
-            className="inline-flex"
-          >
-            <ChevronDown size={14} />
-          </motion.span>
-        </button>
-      </div>
-    </aside>
+          <div className="lg:hidden shrink-0 flex justify-center pb-2 pt-1 mt-auto">
+            <button
+              type="button"
+              onClick={() => setIsExpanded((v) => !v)}
+              className="flex items-center gap-1 text-[10px] text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] transition-colors"
+              aria-label={isExpanded ? "Collapse card" : "Expand card"}
+            >
+              <motion.span
+                animate={{ rotate: isExpanded ? 180 : 0 }}
+                transition={{ duration: 0.25, ease: "easeInOut" }}
+                className="inline-flex"
+              >
+                <ChevronDown size={14} />
+              </motion.span>
+            </button>
+          </div>
+        </>
+      )}
+      </aside>
+    </>
   );
 }
 
@@ -856,13 +958,13 @@ export default function EmployeeProfilePage() {
   const wi = profile.work_info;
 
   return (
-    <div className="flex flex-col lg:flex-row lg:h-full lg:overflow-hidden p-4 lg:p-5 gap-4">
+    <div className="flex min-h-0 flex-col gap-4 p-4 lg:h-full lg:flex-row lg:overflow-hidden lg:p-5">
 
       {/* ── Left Card ─────────────────────────────────────────────────────── */}
       <LeftCard profile={profile} />
 
       {/* ── Right Content ──────────────────────────────────────────────────── */}
-      <div className="flex-1 flex flex-col lg:h-full px-2 lg:overflow-hidden rounded-lg overflow-hidden">
+      <div className="flex-1 min-h-0 overflow-hidden rounded-lg px-2 lg:flex lg:h-full lg:flex-col lg:overflow-hidden">
 
         {/* Header: breadcrumb + tabs */}
         <div className="shrink-0 pt-2 pb-0 border-b border-[var(--color-border)] bg-[var(--color-bg)]">
@@ -891,7 +993,7 @@ export default function EmployeeProfilePage() {
         </div>
 
         {/* Tab content */}
-        <div className="flex-1 overflow-hidden">
+        <div className="flex-1 min-h-0 overflow-hidden">
           <AnimatePresence mode="wait">
             <motion.div
               key={activeTab}
@@ -899,17 +1001,17 @@ export default function EmployeeProfilePage() {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -6 }}
               transition={{ duration: 0.2, ease: "easeOut" }}
-              className="h-full"
+              className="h-full min-h-0"
             >
 
               {/* ══════════════════════════════════════════════════════════════
                   TAB 1 — Personal Information
               ══════════════════════════════════════════════════════════════ */}
               {activeTab === "personal" && (
-                <div className="flex flex-col lg:flex-row gap-5 h-full overflow-hidden lg:overflow-hidden pt-6">
+                <div className="flex min-h-0 flex-col gap-5 overflow-hidden pt-6 lg:h-full lg:flex-row lg:overflow-hidden">
 
                   {/* Left column — full-width on tablet/mobile, 70% on desktop */}
-                  <div className="flex-[7] min-w-0 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden space-y-4 pb-6">
+                  <div className="flex-[7] min-h-0 min-w-0 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden space-y-4 pb-6">
 
                     <AccordionSection title="Basic Information">
                       <div className="grid grid-cols-2 min-[480px]:grid-cols-3 gap-4">
@@ -1027,7 +1129,7 @@ export default function EmployeeProfilePage() {
                           <button
                             type="button"
                             onClick={startEditing}
-                            className="flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-[var(--color-text-muted)] hover:text-[#2845D6] hover:bg-[var(--color-bg-card)] transition-colors"
+                            className="flex items-center gap-1 rounded-full px-2 py-1 text-[11px] font-medium text-[var(--color-text-muted)] hover:text-[#2845D6] hover:bg-[var(--color-bg-card)] transition-colors"
                           >
                             <Pencil size={12} /> Edit
                           </button>
@@ -1037,7 +1139,7 @@ export default function EmployeeProfilePage() {
                               type="button"
                               onClick={cancelEditing}
                               disabled={saving}
-                              className="flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-card)] transition-colors"
+                              className="flex items-center gap-1 rounded-full px-2 py-1 text-[11px] font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-card)] transition-colors"
                             >
                               <X size={12} /> Cancel
                             </button>
@@ -1046,7 +1148,7 @@ export default function EmployeeProfilePage() {
                                 type="button"
                                 onClick={saveEditing}
                                 disabled={saving || !canSave}
-                                className="flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-white bg-[#2845D6] hover:bg-[#1e37b8] disabled:opacity-60 transition-colors"
+                                className="flex items-center gap-1 rounded-full px-2 py-1 text-[11px] font-medium text-white bg-[#2845D6] hover:bg-[#1e37b8] disabled:opacity-60 transition-colors"
                               >
                                 {saving
                                   ? <TextShimmer className="text-[11px]" duration={1}>Saving…</TextShimmer>
@@ -1075,7 +1177,7 @@ export default function EmployeeProfilePage() {
                                     setWiTouched((t) => ({ ...t, position_id: true }));
                                   }}
                                 >
-                                  <SelectTrigger className="h-8 text-sm">
+                                  <SelectTrigger className="h-8 text-xs">
                                     <SelectValue placeholder="Select position" />
                                   </SelectTrigger>
                                   <SelectContent>
@@ -1099,7 +1201,7 @@ export default function EmployeeProfilePage() {
                                     setWiTouched((t) => ({ ...t, employment_type_id: true }));
                                   }}
                                 >
-                                  <SelectTrigger className="h-8 text-sm">
+                                  <SelectTrigger className="h-8 text-xs">
                                     <SelectValue placeholder="Select employment type" />
                                   </SelectTrigger>
                                   <SelectContent>
@@ -1144,7 +1246,7 @@ export default function EmployeeProfilePage() {
                                     loadLines(id);
                                   }}
                                 >
-                                  <SelectTrigger className="h-8 text-sm">
+                                  <SelectTrigger className="h-8 text-xs">
                                     <SelectValue placeholder="Select department" />
                                   </SelectTrigger>
                                   <SelectContent>
@@ -1168,7 +1270,7 @@ export default function EmployeeProfilePage() {
                                     setWiTouched((t) => ({ ...t, line_id: true }));
                                   }}
                                 >
-                                  <SelectTrigger className="h-8 text-sm">
+                                  <SelectTrigger className="h-8 text-xs">
                                     <SelectValue placeholder="Select line" />
                                   </SelectTrigger>
                                   <SelectContent>
@@ -1192,7 +1294,7 @@ export default function EmployeeProfilePage() {
                                     setWiTouched((t) => ({ ...t, approver_id: true }));
                                   }}
                                 >
-                                  <SelectTrigger className="h-8 text-sm">
+                                  <SelectTrigger className="h-8 text-xs">
                                     <SelectValue placeholder="Select approver" />
                                   </SelectTrigger>
                                   <SelectContent>
@@ -1234,7 +1336,7 @@ export default function EmployeeProfilePage() {
                                       {WI_TEXT_LABELS[field]}{(wiTouched[field] || saveAttempted) && (!draftWi[field].trim() || wiErrs[field]) && <span className="ml-0.5 text-red-500">*</span>}
                                     </span>
                                     <Input
-                                      className="h-8 text-sm"
+                                      className="h-8 text-xs"
                                       value={draftWi[field]}
                                       maxLength={WI_TEXT_MAX[field] + 1}
                                       onChange={(e) => {
@@ -1275,11 +1377,11 @@ export default function EmployeeProfilePage() {
                       <div className="space-y-1.5 pt-1">
                         <span className="text-[10px] font-semibold uppercase text-[var(--color-text-muted)]">Children</span>
                         {profile.children.length === 0 ? (
-                          <p className="text-sm italic text-[var(--color-text-muted)]">— No children on record</p>
+                          <p className="text-xs italic text-[var(--color-text-muted)]">— No children on record</p>
                         ) : (
                           <div className="space-y-1">
                             {profile.children.map((child, idx) => (
-                              <p key={child.id ?? idx} className="text-sm text-[var(--color-text-primary)]">
+                              <p key={child.id ?? idx} className="text-xs text-[var(--color-text-primary)]">
                                 {idx + 1}. {child.name || <span className="italic text-[var(--color-text-muted)]">—</span>}
                               </p>
                             ))}
@@ -1290,7 +1392,7 @@ export default function EmployeeProfilePage() {
 
                     <AccordionSection title="Educational Background">
                       {profile.education_records.length === 0 ? (
-                        <p className="text-sm italic text-[var(--color-text-muted)]">— No education records on file</p>
+                        <p className="text-xs italic text-[var(--color-text-muted)]">— No education records on file</p>
                       ) : (
                         <Timeline
                           variant="default"
@@ -1303,12 +1405,12 @@ export default function EmployeeProfilePage() {
                                   {rec.year_attended || "—"}
                                 </div>
                                 <div>
-                                  <span className="inline-flex rounded-full bg-[var(--color-bg-card)] px-1.5 py-1 text-[10px] font-semibold uppercase text-[var(--color-text-muted)]">
+                                  <span className="inline-flex rounded-full bg-[var(--color-bg-card)] px-1.5 py-1 text-[9px] font-semibold uppercase text-[var(--color-text-muted)]">
                                     {EDUCATION_LEVEL_LABELS[rec.education_level] ?? rec.education_level ?? "Education"}
                                   </span>
                                 </div>
                                 <div>
-                                  <span className="text-md font-semibold text-[var(--color-text-primary)] block leading-tight">
+                                  <span className="text-md font-semibold text-[var(--color-text-primary)]">
                                     {rec.institution || "—"}
                                   </span>
                                 </div>

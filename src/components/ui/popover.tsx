@@ -23,7 +23,7 @@ const PopoverContent = React.forwardRef<
       avoidCollisions={avoidCollisions}
       className={cn(
         "z-50 max-h-[var(--radix-popover-content-available-height)] min-w-[8rem]",
-        "overflow-y-auto overflow-x-hidden rounded-xl border border-[var(--color-border)]",
+        "overflow-y-auto overflow-x-hidden rounded-xl border border-[var(--color-border)] [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden",
         "bg-[var(--color-bg-elevated)] text-[var(--color-text-primary)]",
         "shadow-lg shadow-black/10 outline-none",
         "data-[state=open]:animate-in data-[state=closed]:animate-out",

@@ -31,7 +31,7 @@ const nextConfig: NextConfig = {
         // Proxy all /api/* calls to the Django backend so cookies stay
         // on the same origin (localhost:3000) and CORS is not an issue.
         source: '/api/:path*',
-        destination: 'http://localhost:8000/api/:path*',
+        destination: 'http://127.0.0.1:8000/api/:path*',
       },
       {
         // Proxy /media/* so uploaded files (avatars, etc.) are accessible

@@ -18,3 +18,18 @@ export function getCsrfToken(): string {
   }
   return '';
 }
+
+export async function seedCsrfCookie(): Promise<string> {
+  const res = await fetch('/api/auth/csrf', {
+    credentials: 'include',
+    redirect: 'follow',
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to seed CSRF cookie: ${res.status}`);
+  }
+  const token = getCsrfToken();
+  if (!token) {
+    throw new Error('CSRF cookie was not set by the server.');
+  }
+  return token;
+}

@@ -29,6 +29,7 @@ from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from activityLog.models import Notification
 
 from .models import (
     Allowance, AllowanceType,
@@ -56,11 +57,11 @@ from .serializers import (
 # ── Auth helper ───────────────────────────────────────────────────────────────
 
 def _require_accounting_admin(request) -> Response | None:
-    """Return 403 unless user has both admin=True AND accounting=True."""
+    """Return 403 unless user has admin=True OR accounting=True."""
     u = request.user
-    if not (getattr(u, 'admin', False) and getattr(u, 'accounting', False)):
+    if not (getattr(u, 'admin', False) or getattr(u, 'accounting', False)):
         return Response(
-            {'detail': 'Admin and Accounting permission required.'},
+            {'detail': 'Admin or Accounting permission required.'},
             status=status.HTTP_403_FORBIDDEN,
         )
     return None
@@ -314,6 +315,70 @@ def _build_savings_error_excel(original_rows: list[list], failures: list[dict]) 
     return base64.b64encode(buf.read()).decode('utf-8')
 
 
+def _build_loan_error_excel(original_rows: list[list], failures: list[dict]) -> str:
+    """
+    Build a loan-specific error report that preserves the original file structure.
+    Output columns: ID Number | Employee Name | Loan Type | Principal Balance |
+                    Monthly Deduction | Remarks
+    Red header row; erroneous rows rendered in red font.
+    """
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
+
+    wb = Workbook()
+    ws = wb.active
+    assert ws is not None
+    ws.title = 'Loan Errors'
+
+    def _side():
+        return Side(style='thin', color='FF000000')
+
+    thin = Border(left=_side(), right=_side(), top=_side(), bottom=_side())
+    hdr_fill = PatternFill(start_color='FFCC0000', end_color='FFCC0000', fill_type='solid')
+    red_font = Font(color='FFFF0000')
+    hdr_font = Font(bold=True, color='FFFFFFFF')
+
+    display_headers = ['ID Number', 'Employee Name', 'Loan Type', 'Principal Balance', 'Monthly Deduction', 'Remarks']
+    col_widths = [14, 28, 24, 20, 20, 60]
+
+    for col, (h, w) in enumerate(zip(display_headers, col_widths), 1):
+        cell = ws.cell(row=1, column=col, value=h)
+        cell.font = hdr_font
+        cell.fill = hdr_fill
+        cell.border = thin
+        cell.alignment = Alignment(horizontal='center')
+        ws.column_dimensions[get_column_letter(col)].width = w
+
+    error_map: dict[int, str] = {}
+    for f in failures:
+        r = f.get('row')
+        if r is not None:
+            reason = f.get('reason', '')
+            error_map[r] = (error_map[r] + '; ' + reason) if r in error_map else reason
+
+    for i, row in enumerate(original_rows[1:], start=2):
+        while len(row) < 5:
+            row.append(None)
+
+        has_error = i in error_map
+        for col, val in enumerate(row[:5], 1):
+            cell = ws.cell(row=i, column=col, value=str(val) if val is not None else '')
+            cell.border = thin
+            if has_error:
+                cell.font = red_font
+
+        remarks_cell = ws.cell(row=i, column=6, value=error_map.get(i, ''))
+        remarks_cell.border = thin
+        if has_error:
+            remarks_cell.font = red_font
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return base64.b64encode(buf.read()).decode('utf-8')
+
+
 # ── Shared helpers ─────────────────────────────────────────────────────────────
 
 def _parse_decimal(value, field: str, row: int) -> tuple[Decimal | None, dict | None]:
@@ -363,6 +428,33 @@ def _read_xlsx(file_obj) -> tuple[list[list], str | None]:
         return rows, None
     except Exception as exc:
         return [], f'Could not read xlsx file: {exc}'
+
+
+def _queue_finance_notifications(
+    *,
+    notification_type: str,
+    title: str,
+    module: str,
+    user_messages: dict,
+) -> None:
+    """Create one notification per user after the surrounding transaction commits."""
+    if not user_messages:
+        return
+
+    def _emit() -> None:
+        Notification.objects.bulk_create([
+            Notification(
+                recipient=user,
+                notification_scope='specific_user',
+                notification_type=notification_type,
+                title=title,
+                message=message,
+                module=module,
+            )
+            for user, message in user_messages.items()
+        ])
+
+    transaction.on_commit(_emit)
 
 
 # ── Views ─────────────────────────────────────────────────────────────────────
@@ -655,6 +747,8 @@ class FinanceImportView(APIView):
                 error_b64 = _build_deduction_error_excel(rows, failures)
             elif record_type == 'allowance':
                 error_b64 = _build_allowance_error_excel(rows, failures)
+            elif record_type == 'loan':
+                error_b64 = _build_loan_error_excel(rows, failures)
             elif record_type == 'savings':
                 error_b64 = _build_savings_error_excel(rows, failures)
             else:
@@ -844,7 +938,10 @@ class FinanceImportView(APIView):
         imported = 0
         failures = []
         type_map = {t.name.lower(): t for t in LoanType.objects.all()}
+        operations: list[tuple] = []  # (employee, loan_type, principal, monthly_deduction)
+        user_loan_types: dict = {}
 
+        # ── Phase 1: pre-validate every row ───────────────────────────────────
         for row_idx, row in enumerate(rows[1:], start=2):
             while len(row) < 5:
                 row.append(None)
@@ -882,31 +979,11 @@ class FinanceImportView(APIView):
                     failures.append(md_err)
                     continue
 
-            # Stackable: add to the existing active loan balance instead of creating a duplicate.
-            # Non-stackable: reject if an active loan of this type already exists.
-            if l_type.stackable:
-                existing = Loan.objects.filter(
-                    employee=employee, loan_type=l_type, current_balance__gt=Decimal('0')
-                ).order_by('-created_at').first()
-                with transaction.atomic():
-                    if existing is not None:
-                        loan_to_update = Loan.objects.select_for_update().get(pk=existing.pk)
-                        loan_to_update.principal_amount += principal
-                        loan_to_update.current_balance  += principal
-                        if monthly_deduction is not None:
-                            loan_to_update.monthly_deduction = monthly_deduction
-                        loan_to_update.save()
-                    else:
-                        Loan.objects.create(
-                            employee=employee,
-                            loan_type=l_type,
-                            principal_amount=principal,
-                            current_balance=principal,
-                            monthly_deduction=monthly_deduction,
-                        )
-            else:
+            if not l_type.stackable:
                 active_exists = Loan.objects.filter(
-                    employee=employee, loan_type=l_type, current_balance__gt=Decimal('0')
+                    employee=employee,
+                    loan_type=l_type,
+                    current_balance__gt=Decimal('0'),
                 ).exists()
                 if active_exists:
                     failures.append({
@@ -918,17 +995,70 @@ class FinanceImportView(APIView):
                         ),
                     })
                     continue
-                with transaction.atomic():
+
+            operations.append((employee, l_type, principal, monthly_deduction))
+            bucket = user_loan_types.setdefault(employee, set())
+            bucket.add(l_type.name)
+
+        # ── Phase 2: reject entire batch if any row failed ────────────────────
+        if failures:
+            return 0, failures
+
+        # ── Phase 3: apply all loans in one atomic transaction ─────────────────
+        with transaction.atomic():
+            for employee, l_type, principal, monthly_deduction in operations:
+                if l_type.stackable:
+                    existing = Loan.objects.filter(
+                        employee=employee,
+                        loan_type=l_type,
+                        current_balance__gt=Decimal('0'),
+                    ).order_by('-created_at').first()
+
+                    if existing is not None:
+                        loan_to_update = Loan.objects.select_for_update().get(pk=existing.pk)
+                        loan_to_update.principal_amount += principal
+                        loan_to_update.current_balance += principal
+                        loan_to_update.seen = False
+                        if monthly_deduction is not None:
+                            loan_to_update.monthly_deduction = monthly_deduction
+                        loan_to_update.save(update_fields=['principal_amount', 'current_balance', 'monthly_deduction', 'seen', 'updated_at'])
+                    else:
+                        Loan.objects.create(
+                            employee=employee,
+                            loan_type=l_type,
+                            principal_amount=principal,
+                            current_balance=principal,
+                            monthly_deduction=monthly_deduction,
+                            seen=False,
+                        )
+                else:
                     Loan.objects.create(
                         employee=employee,
                         loan_type=l_type,
                         principal_amount=principal,
                         current_balance=principal,
                         monthly_deduction=monthly_deduction,
+                        seen=False,
                     )
-            imported += 1
+                imported += 1
 
-        return imported, failures
+            user_messages = {
+                employee: (
+                    'New loan record(s) were uploaded to your account: '
+                    + ', '.join(sorted(type_names))
+                    + '.'
+                )
+                for employee, type_names in user_loan_types.items()
+                if type_names
+            }
+            _queue_finance_notifications(
+                notification_type='finance_loan_uploaded',
+                title='New Loan Record Uploaded',
+                module='finance',
+                user_messages=user_messages,
+            )
+
+        return imported, []
 
     # ── Deduction import ──────────────────────────────────────────────────────
     # Columns: idnumber*, employee_name[ignored], loan_type*(name), deduction_amount*
@@ -938,7 +1068,8 @@ class FinanceImportView(APIView):
     def _import_deductions(self, rows, cutoff_date) -> tuple[int, list[dict]]:
         failures  = []
         type_map  = {t.name.lower(): t for t in LoanType.objects.all()}
-        operations: list[tuple] = []  # (employee, loan_pk, amount)
+        operations: list[tuple] = []  # (employee, loan_pk, amount, loan_type_name)
+        user_loan_types: dict = {}
 
         # ── Phase 1: pre-validate every row ───────────────────────────────────
         for row_idx, row in enumerate(rows[1:], start=2):
@@ -991,7 +1122,9 @@ class FinanceImportView(APIView):
                 })
                 continue
 
-            operations.append((employee, loan.pk, amount))
+            operations.append((employee, loan.pk, amount, l_type.name))
+            bucket = user_loan_types.setdefault(employee, set())
+            bucket.add(l_type.name)
 
         # ── Phase 2: reject entire batch if any row failed ────────────────────
         if failures:
@@ -1000,7 +1133,7 @@ class FinanceImportView(APIView):
         # ── Phase 3: apply all deductions in a single atomic transaction ──────
         imported = 0
         with transaction.atomic():
-            for employee, loan_pk, amount in operations:
+            for employee, loan_pk, amount, _loan_type_name in operations:
                 loan_obj = Loan.objects.select_for_update().get(pk=loan_pk)
                 loan_obj.current_balance -= amount
                 loan_obj.save(update_fields=['current_balance', 'updated_at'])
@@ -1012,6 +1145,22 @@ class FinanceImportView(APIView):
                     cutoff_date=cutoff_date,
                 )
                 imported += 1
+
+            user_messages = {
+                employee: (
+                    'New loan deduction(s) were uploaded for: '
+                    + ', '.join(sorted(type_names))
+                    + '.'
+                )
+                for employee, type_names in user_loan_types.items()
+                if type_names
+            }
+            _queue_finance_notifications(
+                notification_type='finance_deduction_uploaded',
+                title='Loan Deduction Uploaded',
+                module='finance',
+                user_messages=user_messages,
+            )
 
         return imported, []
 
@@ -1318,7 +1467,7 @@ class FinanceExportView(APIView):
             ws = wb.create_sheet(title=sheet_type.capitalize())
 
             if sheet_type == 'allowance':
-                headers = ['ID', 'Employee ID', 'First Name', 'Last Name', 'Allowance Type', 'Amount', 'Description', 'Created At']
+                headers = ['Employee ID', 'First Name', 'Last Name', 'Allowance Type', 'Amount', 'Description', 'Created At']
                 for col, h in enumerate(headers, 1):
                     _hdr_cell(ws, 1, col, h)
                 qs = _filter_date(
@@ -1326,18 +1475,17 @@ class FinanceExportView(APIView):
                     .filter(employee_id__in=non_priv_ids).order_by('created_at')
                 )
                 for r, obj in enumerate(qs, 2):
-                    _data_cell(ws, r, 1, obj.pk)
-                    _data_cell(ws, r, 2, obj.employee.idnumber)
-                    _data_cell(ws, r, 3, obj.employee.firstname)
-                    _data_cell(ws, r, 4, obj.employee.lastname)
-                    _data_cell(ws, r, 5, obj.allowance_type.name)
-                    _data_cell(ws, r, 6, float(obj.amount))
-                    _data_cell(ws, r, 7, obj.description)
-                    _data_cell(ws, r, 8, obj.created_at.strftime('%Y-%m-%d %H:%M'))
-                col_widths = [8, 14, 16, 16, 22, 14, 30, 18]
+                    _data_cell(ws, r, 1, obj.employee.idnumber)
+                    _data_cell(ws, r, 2, obj.employee.firstname)
+                    _data_cell(ws, r, 3, obj.employee.lastname)
+                    _data_cell(ws, r, 4, obj.allowance_type.name)
+                    _data_cell(ws, r, 5, float(obj.amount))
+                    _data_cell(ws, r, 6, obj.description)
+                    _data_cell(ws, r, 7, obj.created_at.strftime('%B %d, %Y'))
+                col_widths = [14, 16, 16, 22, 14, 30, 20]
 
             elif sheet_type == 'loan':
-                headers = ['ID', 'Employee ID', 'First Name', 'Last Name', 'Loan Type', 'Principal', 'Balance', 'Description', 'Reference No.', 'Created At']
+                headers = ['Employee ID', 'First Name', 'Last Name', 'Loan Type', 'Principal', 'Balance', 'Description', 'Reference No.', 'Created At']
                 for col, h in enumerate(headers, 1):
                     _hdr_cell(ws, 1, col, h)
                 qs = _filter_date(
@@ -1345,39 +1493,37 @@ class FinanceExportView(APIView):
                     .filter(employee_id__in=non_priv_ids).order_by('created_at')
                 )
                 for r, obj in enumerate(qs, 2):
-                    _data_cell(ws, r, 1, obj.pk)
-                    _data_cell(ws, r, 2, obj.employee.idnumber)
-                    _data_cell(ws, r, 3, obj.employee.firstname)
-                    _data_cell(ws, r, 4, obj.employee.lastname)
-                    _data_cell(ws, r, 5, obj.loan_type.name)
-                    _data_cell(ws, r, 6, float(obj.principal_amount))
-                    _data_cell(ws, r, 7, float(obj.current_balance))
-                    _data_cell(ws, r, 8, obj.description)
-                    _data_cell(ws, r, 9, obj.reference_number)
-                    _data_cell(ws, r, 10, obj.created_at.strftime('%Y-%m-%d %H:%M'))
-                col_widths = [8, 14, 16, 16, 22, 14, 14, 30, 18, 18]
+                    _data_cell(ws, r, 1, obj.employee.idnumber)
+                    _data_cell(ws, r, 2, obj.employee.firstname)
+                    _data_cell(ws, r, 3, obj.employee.lastname)
+                    _data_cell(ws, r, 4, obj.loan_type.name)
+                    _data_cell(ws, r, 5, float(obj.principal_amount))
+                    _data_cell(ws, r, 6, float(obj.current_balance))
+                    _data_cell(ws, r, 7, obj.description)
+                    _data_cell(ws, r, 8, obj.reference_number)
+                    _data_cell(ws, r, 9, obj.created_at.strftime('%B %d, %Y'))
+                col_widths = [14, 16, 16, 22, 14, 14, 30, 18, 20]
 
             elif sheet_type == 'deduction':
-                headers = ['ID', 'Employee ID', 'First Name', 'Last Name', 'Loan ID', 'Amount', 'Description', 'Created At']
+                headers = ['Employee ID', 'First Name', 'Last Name', 'Loan Type', 'Amount', 'Description', 'Created At']
                 for col, h in enumerate(headers, 1):
                     _hdr_cell(ws, 1, col, h)
                 qs = _filter_date(
-                    Deduction.objects.select_related('employee', 'loan')
+                    Deduction.objects.select_related('employee', 'loan', 'loan__loan_type')
                     .filter(employee_id__in=non_priv_ids).order_by('created_at')
                 )
                 for r, obj in enumerate(qs, 2):
-                    _data_cell(ws, r, 1, obj.pk)
-                    _data_cell(ws, r, 2, obj.employee.idnumber)
-                    _data_cell(ws, r, 3, obj.employee.firstname)
-                    _data_cell(ws, r, 4, obj.employee.lastname)
-                    _data_cell(ws, r, 5, obj.loan_id)
-                    _data_cell(ws, r, 6, float(obj.amount))
-                    _data_cell(ws, r, 7, obj.description)
-                    _data_cell(ws, r, 8, obj.created_at.strftime('%Y-%m-%d %H:%M'))
-                col_widths = [8, 14, 16, 16, 10, 14, 30, 18]
+                    _data_cell(ws, r, 1, obj.employee.idnumber)
+                    _data_cell(ws, r, 2, obj.employee.firstname)
+                    _data_cell(ws, r, 3, obj.employee.lastname)
+                    _data_cell(ws, r, 4, obj.loan.loan_type.name)
+                    _data_cell(ws, r, 5, float(obj.amount))
+                    _data_cell(ws, r, 6, obj.description)
+                    _data_cell(ws, r, 7, obj.created_at.strftime('%B %d, %Y'))
+                col_widths = [14, 16, 16, 22, 14, 30, 20]
 
             elif sheet_type == 'savings':
-                headers = ['ID', 'Employee ID', 'First Name', 'Last Name', 'Savings Type', 'Amount', 'Description', 'Created At']
+                headers = ['Employee ID', 'First Name', 'Last Name', 'Savings Type', 'Amount', 'Description', 'Created At']
                 for col, h in enumerate(headers, 1):
                     _hdr_cell(ws, 1, col, h)
                 qs = _filter_date(
@@ -1385,39 +1531,40 @@ class FinanceExportView(APIView):
                     .filter(employee_id__in=non_priv_ids).order_by('created_at')
                 )
                 for r, obj in enumerate(qs, 2):
-                    _data_cell(ws, r, 1, obj.pk)
-                    _data_cell(ws, r, 2, obj.employee.idnumber)
-                    _data_cell(ws, r, 3, obj.employee.firstname)
-                    _data_cell(ws, r, 4, obj.employee.lastname)
-                    _data_cell(ws, r, 5, obj.savings_type.name)
-                    _data_cell(ws, r, 6, float(obj.amount))
-                    _data_cell(ws, r, 7, obj.description)
-                    _data_cell(ws, r, 8, obj.created_at.strftime('%Y-%m-%d %H:%M'))
-                col_widths = [8, 14, 16, 16, 22, 14, 30, 18]
+                    _data_cell(ws, r, 1, obj.employee.idnumber)
+                    _data_cell(ws, r, 2, obj.employee.firstname)
+                    _data_cell(ws, r, 3, obj.employee.lastname)
+                    _data_cell(ws, r, 4, obj.savings_type.name)
+                    _data_cell(ws, r, 5, float(obj.amount))
+                    _data_cell(ws, r, 6, obj.description)
+                    _data_cell(ws, r, 7, obj.created_at.strftime('%B %d, %Y'))
+                col_widths = [14, 16, 16, 22, 14, 30, 20]
 
             else:  # payslip
-                headers = ['ID', 'Employee ID', 'First Name', 'Last Name', 'Payslip Type', 'Period Start', 'Period End', 'File URL', 'Description', 'Created At']
+                headers = ['Employee ID', 'First Name', 'Last Name', 'Payslip Type', 'Period Start', 'Period End', 'File URL', 'Description', 'Created At']
                 for col, h in enumerate(headers, 1):
                     _hdr_cell(ws, 1, col, h)
-                qs = _filter_date(
+                qs = (
                     Payslip.objects.select_related('employee', 'payslip_type')
-                    .filter(employee_id__in=non_priv_ids).order_by('period_start'),
-                    date_field='period_start',
+                    .filter(
+                        employee_id__in=non_priv_ids,
+                        period_start__gte=date_from,
+                        period_start__lte=date_to,
+                    ).order_by('period_start')
                 )
                 base_url = request.build_absolute_uri('/')[:-1]
                 for r, obj in enumerate(qs, 2):
                     file_url = f'{base_url}{obj.file.url}' if obj.file else ''
-                    _data_cell(ws, r, 1, obj.pk)
-                    _data_cell(ws, r, 2, obj.employee.idnumber)
-                    _data_cell(ws, r, 3, obj.employee.firstname)
-                    _data_cell(ws, r, 4, obj.employee.lastname)
-                    _data_cell(ws, r, 5, obj.payslip_type.name)
-                    _data_cell(ws, r, 6, str(obj.period_start))
-                    _data_cell(ws, r, 7, str(obj.period_end))
-                    _data_cell(ws, r, 8, file_url)
-                    _data_cell(ws, r, 9, obj.description)
-                    _data_cell(ws, r, 10, obj.created_at.strftime('%Y-%m-%d %H:%M'))
-                col_widths = [8, 14, 16, 16, 22, 14, 14, 50, 30, 18]
+                    _data_cell(ws, r, 1, obj.employee.idnumber)
+                    _data_cell(ws, r, 2, obj.employee.firstname)
+                    _data_cell(ws, r, 3, obj.employee.lastname)
+                    _data_cell(ws, r, 4, obj.payslip_type.name)
+                    _data_cell(ws, r, 5, str(obj.period_start))
+                    _data_cell(ws, r, 6, str(obj.period_end))
+                    _data_cell(ws, r, 7, file_url)
+                    _data_cell(ws, r, 8, obj.description)
+                    _data_cell(ws, r, 9, obj.created_at.strftime('%B %d, %Y'))
+                col_widths = [14, 16, 16, 22, 14, 14, 50, 30, 20]
 
             for col_idx, width in enumerate(col_widths, 1):
                 ws.column_dimensions[get_column_letter(col_idx)].width = width
@@ -1877,6 +2024,17 @@ class FinanceSavingsWithdrawView(APIView):
             savings_row = Savings.objects.select_for_update().get(pk=pk)
             savings_row.withdraw = True
             savings_row.save(update_fields=['withdraw'])
+            _queue_finance_notifications(
+                notification_type='finance_savings_withdrawn',
+                title='Savings Withdrawal Recorded',
+                module='finance',
+                user_messages={
+                    savings_row.employee: (
+                        f'A withdrawal of \u20b1{savings_row.amount} was recorded from '
+                        f'{savings_row.savings_type.name} savings.'
+                    )
+                },
+            )
 
         return Response(
             SavingsSerializer(savings_row).data,
@@ -2195,17 +2353,34 @@ class UserFinanceRecordsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request) -> Response:
-        user   = request.user
-        loans      = Loan.objects.filter(employee=user).order_by('-created_at')
+        user       = request.user
+        loans      = list(Loan.objects.filter(employee=user).order_by('-created_at'))
         allowances = Allowance.objects.filter(employee=user).order_by('-created_at')
         savings    = Savings.objects.filter(employee=user).order_by('-created_at')
         payslips   = Payslip.objects.filter(employee=user).order_by('-created_at')
-        return Response({
+        response_data = {
             'loans':      LoanSerializer(loans,      many=True).data,
             'allowances': AllowanceSerializer(allowances, many=True).data,
             'savings':    SavingsSerializer(savings,  many=True).data,
             'payslips':   PayslipSerializer(payslips, many=True, context={'request': request}).data,
-        })
+        }
+        # Mark unseen loans as seen after serializing so the "New" pill is visible on first load
+        Loan.objects.filter(employee=user, seen=False).update(seen=True)
+        return Response(response_data)
+
+
+class UserFinanceUnseenCountView(APIView):
+    """
+    GET /api/finance/my/unseen-count
+    Returns sidebar badge count from unseen loans + unsent payslips.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request) -> Response:
+        user = request.user
+        unseen_loans = Loan.objects.filter(employee=user, seen=False).count()
+        unsent_payslips = Payslip.objects.filter(employee=user, sent=False).count()
+        return Response({'count': unseen_loans + unsent_payslips})
 
 
 class UserFinanceLoanDeductionsView(APIView):
@@ -2263,7 +2438,24 @@ class UserFinancePayslipSendEmailView(APIView):
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
-        recipient_email = request.user.email
+        requested_recipient = str(request.data.get('recipient_email', '') or '').strip().lower()
+        personal_email = (request.user.email or '').strip().lower()
+
+        work_email = ''
+        try:
+            personal_info = request.user.personal_info
+            work_email = (personal_info.work_email or '').strip().lower()
+        except Exception:
+            work_email = ''
+
+        allowed_recipients = {email for email in [personal_email, work_email] if email}
+        if requested_recipient and requested_recipient not in allowed_recipients:
+            return Response(
+                {'detail': 'Selected email is not allowed for this account.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        recipient_email = requested_recipient or personal_email
         if not recipient_email:
             return Response(
                 {'detail': 'No email address is on file for your account.'},

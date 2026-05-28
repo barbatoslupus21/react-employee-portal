@@ -30,6 +30,7 @@ class UserSerializer(serializers.ModelSerializer):
     is_approver          = serializers.SerializerMethodField()
     employment_type_name = serializers.SerializerMethodField()
     date_hired           = serializers.SerializerMethodField()
+    birth_date           = serializers.SerializerMethodField()
 
     def get_avatar(self, obj):
         return _avatar_url(obj)
@@ -61,6 +62,13 @@ class UserSerializer(serializers.ModelSerializer):
         wi = self._get_work(obj)
         return str(wi.date_hired) if wi and wi.date_hired else None
 
+    def get_birth_date(self, obj):
+        try:
+            personal_info = obj.personal_info
+        except Exception:
+            return None
+        return str(personal_info.birth_date) if personal_info and personal_info.birth_date else None
+
     class Meta:
         model = User
         fields = [
@@ -89,6 +97,7 @@ class UserSerializer(serializers.ModelSerializer):
             'is_approver',
             'employment_type_name',
             'date_hired',
+            'birth_date',
         ]
         read_only_fields = fields
 

@@ -54,6 +54,8 @@ class Notification(models.Model):
     """In-app notification delivered to a specific user when their PRF status changes."""
 
     TYPE_CHOICES = [
+        ('announcement',              'New Announcement'),
+        ('calendar_event',            'Calendar Event'),
         ('prf_approved',              'PRF Request Approved'),
         ('prf_disapproved',           'PRF Request Disapproved'),
         ('prf_cancelled',             'PRF Request Cancelled'),
@@ -72,6 +74,11 @@ class Notification(models.Model):
         ('training_final_approval',   'Training Needs Final Approval'),
         ('training_returned',         'Training Returned for Re-evaluation'),
         ('training_completed',        'Training Evaluation Completed'),
+        ('mis_ticket_created',        'MIS Ticket Created'),
+        ('mis_ticket_updated',        'MIS Ticket Updated'),
+        ('finance_loan_uploaded',     'Loan Record Uploaded'),
+        ('finance_deduction_uploaded','Loan Deduction Uploaded'),
+        ('finance_savings_withdrawn', 'Savings Withdrawal Recorded'),
     ]
 
     SCOPE_CHOICES = [
@@ -112,3 +119,54 @@ class Notification(models.Model):
 
     def __str__(self) -> str:
         return f'[{self.created_at:%Y-%m-%d}] {self.recipient} – {self.title}'
+
+
+class SystemErrorLog(models.Model):
+    """Captures application errors (4xx/5xx, unhandled exceptions, failed API calls).
+
+    * Only admin=True users may view these records via the API.
+    * stack_trace is stored but only exposed in the detail endpoint (never in
+      the list) to prevent server internals from leaking.
+    * Absolute file-system paths in stack_trace are stripped before saving.
+    * resolved=False items appear prominently in the Admin dashboard.
+    """
+
+    ERROR_TYPE_CHOICES = [
+        ('400', 'Bad Request'),
+        ('401', 'Unauthorized'),
+        ('403', 'Forbidden'),
+        ('404', 'Not Found'),
+        ('405', 'Method Not Allowed'),
+        ('500', 'Internal Server Error'),
+        ('502', 'Bad Gateway'),
+        ('503', 'Service Unavailable'),
+        ('unhandled_exception', 'Unhandled Exception'),
+        ('validation_error', 'Validation Error'),
+        ('database_error', 'Database Error'),
+        ('other', 'Other'),
+    ]
+
+    timestamp  = models.DateTimeField(auto_now_add=True, db_index=True)
+    error_type = models.CharField(max_length=30, choices=ERROR_TYPE_CHOICES, default='other', db_index=True)
+    module     = models.CharField(max_length=100, blank=True, db_index=True)
+    message    = models.TextField()
+    # stack_trace: never returned in list endpoints; only in detail (admin only).
+    stack_trace = models.TextField(blank=True)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='triggered_errors',
+    )
+    resolved = models.BooleanField(default=False, db_index=True)
+
+    class Meta:
+        db_table = 'system_error_logs'
+        ordering = ['-timestamp']
+        default_permissions = ('view',)
+        verbose_name = 'System Error Log'
+        verbose_name_plural = 'System Error Logs'
+
+    def __str__(self) -> str:
+        return f'[{self.timestamp:%Y-%m-%d %H:%M}] {self.error_type} – {self.module}'

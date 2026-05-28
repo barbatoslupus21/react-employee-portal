@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Send } from 'lucide-react';
 import { CommentItem, type Comment } from './CommentItem';
 import { TextShimmer } from '@/components/ui/text-shimmer';
+import { UserAvatar } from './UserAvatar';
 
 type CommentSectionProps = {
   announcementId: number;
@@ -30,10 +31,6 @@ export function CommentSection({
   const [submitting, setSubmitting] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const initials = currentUserName
-    ? currentUserName.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase()
-    : '?';
-
   async function handleSubmit() {
     const content = text.trim();
     if (!content) return;
@@ -54,21 +51,15 @@ export function CommentSection({
     <div className="border-t border-[var(--color-border)] pt-3">
       {/* Input */}
       <div className="flex items-center gap-2">
-        {currentUserAvatar ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={currentUserAvatar}
-            alt={currentUserName}
-            className="h-8 w-8 flex-shrink-0 rounded-full object-cover"
-          />
-        ) : (
-          <div className="h-8 w-8 flex-shrink-0 rounded-full bg-[#2845D6]/20 flex items-center justify-center text-xs font-semibold text-[#2845D6]">
-            {initials}
-          </div>
-        )}
+        <UserAvatar
+          src={currentUserAvatar}
+          alt={currentUserName}
+          className="h-8 w-8 flex-shrink-0"
+        />
         <div className="relative flex-1">
           <input
             ref={inputRef}
+            data-comment-input="true"
             type="text"
             value={text}
             onChange={(e) => setText(e.target.value)}
@@ -81,7 +72,7 @@ export function CommentSection({
             placeholder="Write a comment…"
             maxLength={1000}
             disabled={submitting}
-            className="w-full rounded-full border border-[var(--color-border)] bg-[var(--color-bg-subtle)] py-2 pl-4 pr-10 text-sm focus:outline-none focus:ring-1 focus:ring-[#2845D6] disabled:opacity-60 transition-all"
+            className="w-full rounded-full border border-[var(--color-border)] bg-[var(--color-bg-subtle)] py-2 pl-4 pr-10 text-xs focus:outline-none focus:ring-1 focus:ring-[#2845D6] disabled:opacity-60 transition-all"
           />
           <button
             type="button"

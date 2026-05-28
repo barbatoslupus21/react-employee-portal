@@ -84,9 +84,10 @@ export interface DataTableProps<TRow> {
   emptyIcons?: LucideIcon[];
   /** Optional action button shown in the empty state. */
   emptyAction?: {
-    label:   string;
-    onClick: () => void;
-    icon?:   React.ReactNode;
+    label:    string;
+    onClick:  () => void;
+    icon?:    React.ReactNode;
+    variant?: 'default' | 'accent';
   };
   /** Current page number (1-based). */
   page: number;

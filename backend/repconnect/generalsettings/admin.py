@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Department, EmailConfiguration, EmploymentType, Line, Office, PasswordPolicy, Position, Shift
+from .models import Department, EmailConfiguration, EmploymentType, Line, Office, PasswordPolicy, Position, Shift, CompanyWorkdayConfiguration
 
 
 # ── Shift ──────────────────────────────────────────────────────────────────────
@@ -133,3 +133,33 @@ class EmploymentTypeAdmin(admin.ModelAdmin):
     list_display  = ('name',)
     ordering      = ('name',)
     search_fields = ('name',)
+
+@admin.register(CompanyWorkdayConfiguration)
+class CompanyWorkdayConfigurationAdmin(admin.ModelAdmin):
+    list_display = ('id', 'display_workdays', 'hours_per_day')
+    fields = ('workdays', 'hours_per_day', 'weekday_durations')
+
+    def has_add_permission(self, request):
+        # Prevent creating multiple records
+        return not CompanyWorkdayConfiguration.objects.exists()
+
+    def has_delete_permission(self, request, obj=None):
+        # Prevent deleting the singleton config
+        return False
+
+    @admin.display(description='Working Days')
+    def display_workdays(self, obj):
+        weekday_map = {
+            0: 'Monday',
+            1: 'Tuesday',
+            2: 'Wednesday',
+            3: 'Thursday',
+            4: 'Friday',
+            5: 'Saturday',
+            6: 'Sunday',
+        }
+
+        return ', '.join(
+            weekday_map.get(day, str(day))
+            for day in obj.workdays
+        )

@@ -3,6 +3,7 @@
 import * as React from 'react';
 import { Moon, Sun } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { getCsrfToken } from '@/lib/csrf';
 
 interface ThemeSwitchProps {
   className?: string;
@@ -41,6 +42,23 @@ export function ThemeSwitch({ className = '' }: ThemeSwitchProps) {
       localStorage.setItem('repconnect-theme', newTheme);
     } catch {
       // ignore
+    }
+
+    // Persist theme preference to the user's account when authenticated.
+    try {
+      fetch('/api/auth/me', {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRFToken': getCsrfToken(),
+        },
+        body: JSON.stringify({ theme: newTheme === 'dark' }),
+      }).catch(() => {
+        /* silent */
+      });
+    } catch {
+      /* silent */
     }
   }, [theme]);
 

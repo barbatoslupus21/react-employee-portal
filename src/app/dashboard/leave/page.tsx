@@ -102,6 +102,10 @@ interface LeaveBalance {
   used_leave: string;
   remaining_leave: string;
   pending_leave: string;
+  entitled_leave_hours?: string;
+  used_leave_hours?: string;
+  remaining_leave_hours?: string;
+  pending_leave_hours?: string;
 }
 
 interface LeaveType {
@@ -138,6 +142,8 @@ interface LeaveRequest {
   date_start: string;
   date_end: string;
   hours: string;
+  total_hours?: string;
+  total_days?: string;
   days_count: number;
   is_deductible: boolean;
   status: string;
@@ -148,6 +154,7 @@ interface LeaveRequest {
   duration_display: string;
   can_cancel: boolean;
   can_review: boolean;
+  seen?: boolean;
   employee_name: string;
   employee_id?: string;
   employee_id_number?: string;
@@ -190,6 +197,17 @@ interface CalendarLeaveRequest {
   leave_type_name: string;
 }
 
+interface LeaveHolidayRangeResponse {
+  holidays: { date: string; title?: string; event_type?: string }[];
+  sunday_exemptions: string[];
+  workdays?: number[];
+  hours_per_day?: string;
+  half_day_hours?: string;
+  weekday_durations?: Record<string, string | number>;
+}
+
+const DEFAULT_HOURS_PER_DAY = 8;
+
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 function localDateStr(d: Date): string {
@@ -197,6 +215,57 @@ function localDateStr(d: Date): string {
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
+}
+
+function isConfiguredWorkingDate(
+  iso: string,
+  holidays: Set<string>,
+  sundayExemptions: Set<string>,
+  configuredWorkdays: Set<number>,
+): boolean {
+  if (holidays.has(iso)) return false;
+  const day = new Date(`${iso}T00:00:00`);
+  const weekday = day.getDay();
+  if (weekday === 0) {
+    return sundayExemptions.has(iso);
+  }
+  // JS weekdays: Sun=0 ... Sat=6; backend uses Mon=0 ... Sun=6.
+  const pythonWeekday = weekday - 1;
+  return configuredWorkdays.has(pythonWeekday);
+}
+
+function getPythonWeekdayFromIso(iso: string): number {
+  const weekday = new Date(`${iso}T00:00:00`).getDay();
+  return weekday === 0 ? 6 : weekday - 1;
+}
+
+function buildFallbackWeekdayDurations(workdays: Set<number>, hoursPerDay: number): Record<string, number> {
+  const result: Record<string, number> = {};
+  for (let day = 0; day <= 6; day += 1) {
+    result[String(day)] = workdays.has(day) ? hoursPerDay : 0;
+  }
+  return result;
+}
+
+function getConfiguredDayHours(
+  iso: string,
+  weekdayDurations: Record<string, number>,
+  fallbackHoursPerDay: number,
+): number {
+  const weekday = getPythonWeekdayFromIso(iso);
+  const configured = toNumber(weekdayDurations[String(weekday)], 0);
+  return configured > 0 ? configured : fallbackHoursPerDay;
+}
+
+function buildDurationOptionsForDay(dayHours: number): number[] {
+  const normalizedDayHours = Math.max(1, Number(dayHours.toFixed(1)));
+  const values = new Set<number>();
+  const whole = Math.floor(normalizedDayHours);
+  for (let h = 1; h <= whole; h += 1) values.add(h);
+  if (!Number.isInteger(normalizedDayHours)) values.add(Number(normalizedDayHours.toFixed(1)));
+  values.add(Number((normalizedDayHours / 2).toFixed(1)));
+  values.add(Number(normalizedDayHours.toFixed(1)));
+  return Array.from(values).sort((a, b) => a - b);
 }
 
 function daysBetween(start: Date, end: Date): number {
@@ -232,10 +301,19 @@ function formatStepTime(ts: Date): string {
 
 function formatTimeAndDays(days: number, hoursValue: string | number): string {
   const hours = Number(hoursValue);
-  const dayLabel = days === 1 ? 'day' : 'days';
+  const dayLabel = Number(days) === 1 ? 'day' : 'days';
   const hourLabel = hours === 1 ? 'hour' : 'hours';
   const hoursFormatted = Number.isInteger(hours) ? String(hours) : hours.toFixed(1);
   return `${days} ${dayLabel} - ${hoursFormatted} ${hourLabel}`;
+}
+
+function toNumber(value: string | number | undefined, fallback = 0): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function formatDaysHours(days: number, hours: number): string {
+  return `${days.toFixed(2)} days (${hours.toFixed(1)} hrs)`;
 }
 
 const BLOCKED = /[<>{}[\]\\|^~`"]/;
@@ -296,9 +374,12 @@ function BalanceCards({ balances }: { balances: LeaveBalance[] }) {
           className="rounded-xl border border-border bg-card px-4 py-3 flex flex-col gap-1 min-w-[150px]"
         >
           <span className="text-xs font-medium text-muted-foreground">{b.leave_type}</span>
-          <span className="text-2xl font-bold text-foreground">{b.remaining_leave}</span>
+          <span className="text-2xl font-bold text-foreground">{toNumber(b.remaining_leave).toFixed(2)} days</span>
+          {b.remaining_leave_hours && (
+            <span className="text-[10px] text-muted-foreground">{toNumber(b.remaining_leave_hours).toFixed(1)} hrs</span>
+          )}
           <span className="text-[11px] text-muted-foreground">
-            {b.used_leave} used / {b.entitled_leave} entitled
+            {toNumber(b.used_leave).toFixed(2)} used / {toNumber(b.entitled_leave).toFixed(2)} entitled
           </span>
           <span className="text-[10px] text-muted-foreground/70 mt-0.5">
             {fmtPeriod(b.period_start, b.period_end)}
@@ -594,6 +675,7 @@ function LeaveDashboardRow({
   // ── Fiscal-year holiday data (for working-days calculation) ──────────────
   const [fyHolidays, setFyHolidays] = useState<Set<string>>(new Set());
   const [fySundayExemptions, setFySundayExemptions] = useState<Set<string>>(new Set());
+  const [fyConfiguredWorkdays, setFyConfiguredWorkdays] = useState<Set<number>>(new Set([0, 1, 2, 3, 4, 5]));
   useEffect(() => {
     const start = `${fiscalYearStart}-05-01`;
     const end   = `${fiscalYearEnd}-04-30`;
@@ -603,12 +685,13 @@ function LeaveDashboardRow({
     )
       .then(r => {
         if (!r.ok) return null;
-        return r.json() as Promise<{ holidays: { date: string }[]; sunday_exemptions: string[] }>;
+        return r.json() as Promise<LeaveHolidayRangeResponse>;
       })
       .then(data => {
         if (!data) return;
         setFyHolidays(new Set((data.holidays ?? []).map(h => h.date)));
         setFySundayExemptions(new Set(data.sunday_exemptions ?? []));
+        setFyConfiguredWorkdays(new Set(data.workdays ?? [0, 1, 2, 3, 4, 5]));
       })
       .catch(() => {});
   }, [fiscalYearStart, fiscalYearEnd]);
@@ -629,13 +712,7 @@ function LeaveDashboardRow({
       const cursor = new Date(start);
       while (cursor <= end) {
         const iso = localDateStr(cursor);
-        // Exclude non-exempt Sundays
-        if (cursor.getDay() === 0 && !fySundayExemptions.has(iso)) {
-          cursor.setDate(cursor.getDate() + 1);
-          continue;
-        }
-        // Exclude holidays
-        if (fyHolidays.has(iso)) {
+        if (!isConfiguredWorkingDate(iso, fyHolidays, fySundayExemptions, fyConfiguredWorkdays)) {
           cursor.setDate(cursor.getDate() + 1);
           continue;
         }
@@ -653,7 +730,7 @@ function LeaveDashboardRow({
       }
     }
     return counts;
-  }, [filteredRequests, fyHolidays, fySundayExemptions, fiscalYearStart, fiscalYearEnd]);
+  }, [filteredRequests, fyHolidays, fySundayExemptions, fyConfiguredWorkdays, fiscalYearStart, fiscalYearEnd]);
 
   const currentMonthLabel = MONTHS[currentMonth];
 
@@ -716,7 +793,7 @@ function LeaveDashboardRow({
       <div className={skeletonGrid}>
         {/* Col 1 – Balance card skeleton */}
         <div className="flex flex-col gap-4 h-full w-full max-[780px]:col-span-2 max-[480px]:col-span-full lg:order-1">
-          <div className="w-full rounded-lg shadow-sm border border-[var(--color-border)] bg-[var(--color-bg-elevated)] overflow-hidden flex flex-col flex-1 min-h-0">
+          <div className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] overflow-hidden flex flex-col flex-1 min-h-0">
             <div className="px-4 py-2 border-b border-[var(--color-border)]">
               <div className="h-2.5 w-28 rounded bg-[var(--color-border)]" />
             </div>
@@ -736,7 +813,7 @@ function LeaveDashboardRow({
         </div>
 
         {/* Col 2 – Bar chart skeleton */}
-        <div className="rounded-lg shadow-sm border border-[var(--color-border)] bg-[var(--color-bg-elevated)] flex flex-col gap-3 h-full p-4 max-[780px]:col-span-2 lg:order-2">
+        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] flex flex-col gap-3 h-full p-4 max-[780px]:col-span-2 lg:order-2">
           <div className="h-2.5 w-32 rounded bg-[var(--color-border)] mb-1" />
           <div className="flex-1 flex items-end gap-1.5 min-h-[120px]">
             {[55, 30, 80, 45, 70, 50, 90, 38, 65, 75, 48, 60].map((h, i) => (
@@ -751,7 +828,7 @@ function LeaveDashboardRow({
         </div>
 
         {/* Col 3 – Line chart skeleton */}
-        <div className="rounded-lg shadow-sm border border-[var(--color-border)] bg-[var(--color-bg-elevated)] flex flex-col h-full p-4 max-[780px]:col-start-1 max-[780px]:col-end-2 max-[480px]:hidden lg:order-3">
+        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] flex flex-col h-full p-4 max-[780px]:col-start-1 max-[780px]:col-end-2 max-[480px]:hidden lg:order-3">
           <div className="h-2.5 w-24 rounded bg-[var(--color-border)] mb-3" />
           <div className="flex-1 flex items-end gap-4 min-h-[120px] pb-4 px-2">
             {[40, 70, 30, 80].map((h, i) => (
@@ -764,7 +841,7 @@ function LeaveDashboardRow({
         </div>
 
         {/* Col 4 – Mini calendar skeleton */}
-        <div className="w-full self-start rounded-lg shadow-sm border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4 flex flex-col gap-2 max-[780px]:col-start-2 max-[780px]:col-end-3 max-[480px]:col-span-full lg:order-4">
+        <div className="w-full self-start rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4 flex flex-col gap-2 max-[780px]:col-start-2 max-[780px]:col-end-3 max-[480px]:col-span-full lg:order-4">
           <div className="flex items-center justify-between mb-2">
             <div className="h-3 w-6 rounded bg-[var(--color-border)]" />
             <div className="h-3 w-24 rounded bg-[var(--color-border)]" />
@@ -801,7 +878,7 @@ function LeaveDashboardRow({
             return (
               <div
                 key={key}
-                className="w-full rounded-lg shadow-sm border border-[var(--color-border)] bg-[var(--color-bg-elevated)] overflow-hidden flex flex-col flex-1 min-h-0 max-[780px]:basis-[calc(50%-0.75rem)] max-[780px]:w-[calc(50%-0.75rem)] max-[480px]:basis-full max-[480px]:w-full">
+                className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] overflow-hidden flex flex-col flex-1 min-h-0 max-[780px]:basis-[calc(50%-0.75rem)] max-[780px]:w-[calc(50%-0.75rem)] max-[480px]:basis-full max-[480px]:w-full">
                 <div className="px-4 py-2 border-b border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
                   <span className="text-[11px] font-semibold uppercase text-[var(--color-text-muted)]">
                     {fmtPeriod(ps, pe)}
@@ -840,7 +917,7 @@ function LeaveDashboardRow({
             );
           })
         ) : (
-          <div className="w-full rounded-lg shadow-sm border border-[var(--color-border)] bg-[var(--color-bg-elevated)] overflow-hidden flex flex-col flex-1 min-h-0 max-[780px]:basis-[calc(50%-0.75rem)] max-[780px]:w-[calc(50%-0.75rem)] max-[480px]:basis-full max-[480px]:w-full">
+          <div className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] overflow-hidden flex flex-col flex-1 min-h-0 max-[780px]:basis-[calc(50%-0.75rem)] max-[780px]:w-[calc(50%-0.75rem)] max-[480px]:basis-full max-[480px]:w-full">
             <div className="px-4 py-2 border-b border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
               <span className="text-[11px] font-semibold uppercase text-[var(--color-text-muted)]">
                 Leave Balances
@@ -860,7 +937,7 @@ function LeaveDashboardRow({
 
       {/* ── Column 2: Bar Chart ───────────────────────────────────────────── */}
       {/* tablet: row2 full-width | desktop: col2 */}
-      <div className="rounded-lg shadow-sm border border-[var(--color-border)] bg-[var(--color-bg-elevated)] flex min-h-0 flex-col gap-3 h-full
+      <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] flex min-h-0 flex-col gap-3 h-full
         max-[780px]:col-span-2
         max-[480px]:col-span-full max-[480px]:overflow-hidden
         lg:col-span-1 lg:order-2">
@@ -869,7 +946,7 @@ function LeaveDashboardRow({
 
       {/* ── Column 3: Line Chart (leave per month per type) ──────────────── */}
       {/* tablet: row3 left half | desktop: col3 */}
-      <div className="rounded-lg w-full p-4 px-5 shadow-sm border border-[var(--color-border)] bg-[var(--color-bg-elevated)] flex flex-col h-full
+      <div className="rounded-lg w-full p-4 px-5 border border-[var(--color-border)] bg-[var(--color-bg-elevated)] flex flex-col h-full
         max-[780px]:col-start-1 max-[780px]:col-end-2
         max-[480px]:hidden
         lg:order-3">
@@ -931,7 +1008,7 @@ function LeaveDashboardRow({
 
       {/* ── Column 4: Mini Calendar ───────────────────────────────────────── */}
       {/* tablet: row3 right half | desktop: col4 */}
-      <div className="w-full self-start rounded-lg shadow-sm border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4 flex flex-col gap-0 h-full
+      <div className="w-full self-start rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4 flex flex-col gap-0 h-full
         max-[780px]:col-start-2 max-[780px]:col-end-3
         max-[480px]:col-span-full
         lg:order-4">
@@ -956,7 +1033,7 @@ function InfoRow({
   return (
     <div className="flex flex-col gap-0.5">
       <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">{label}</span>
-      <span className="text-sm text-[var(--color-text-primary)] flex items-center gap-1">
+      <span className="text-xs text-[var(--color-text-primary)] flex items-center gap-1">
         {icon}
         {value ?? '—'}
       </span>
@@ -1089,6 +1166,10 @@ function ApplyLeaveModal({ onClose, onCreated, balances }: ApplyLeaveModalProps)
   const [perDateHours, setPerDateHours] = useState<Record<string, number>>({});
   const [holidays, setHolidays] = useState<Set<string>>(new Set());
   const [sundayExemptions, setSundayExemptions] = useState<Set<string>>(new Set());
+  const [configuredWorkdays, setConfiguredWorkdays] = useState<Set<number>>(new Set([0, 1, 2, 3, 4, 5]));
+  const [weekdayDurations, setWeekdayDurations] = useState<Record<string, number>>(buildFallbackWeekdayDurations(new Set([0, 1, 2, 3, 4, 5]), DEFAULT_HOURS_PER_DAY));
+  const [hoursPerDay, setHoursPerDay] = useState(DEFAULT_HOURS_PER_DAY);
+  const [halfDayHours, setHalfDayHours] = useState(DEFAULT_HOURS_PER_DAY / 2);
   const [holidaysLoading, setHolidaysLoading] = useState(false);
   const [remarks, setRemarks] = useState('');
   const [saving, setSaving] = useState(false);
@@ -1129,18 +1210,26 @@ function ApplyLeaveModal({ onClose, onCreated, balances }: ApplyLeaveModalProps)
   // Working dates = not a non-exempt Sunday and not a holiday
   const workingDates = useMemo<string[]>(() => {
     return activeDates.filter(iso => {
-      const d = new Date(iso + 'T00:00:00');
-      if (d.getDay() === 0 && !sundayExemptions.has(iso)) return false;
-      if (holidays.has(iso)) return false;
-      return true;
+      return isConfiguredWorkingDate(iso, holidays, sundayExemptions, configuredWorkdays);
     });
-  }, [activeDates, holidays, sundayExemptions]);
+  }, [activeDates, holidays, sundayExemptions, configuredWorkdays]);
 
   const workingDayCount = workingDates.length;
   const totalHours = useMemo(() => {
     if (!workingDates.length) return 0;
-    return workingDates.reduce((sum, iso) => sum + (perDateHours[iso] ?? 8), 0);
-  }, [workingDates, perDateHours]);
+    return workingDates.reduce((sum, iso) => {
+      const dayHours = getConfiguredDayHours(iso, weekdayDurations, hoursPerDay);
+      return sum + (perDateHours[iso] ?? dayHours);
+    }, 0);
+  }, [workingDates, perDateHours, weekdayDurations, hoursPerDay]);
+  const totalDays = useMemo(() => {
+    if (!workingDates.length) return 0;
+    return workingDates.reduce((sum, iso) => {
+      const dayHours = getConfiguredDayHours(iso, weekdayDurations, hoursPerDay);
+      const selected = perDateHours[iso] ?? dayHours;
+      return dayHours > 0 ? sum + (selected / dayHours) : sum;
+    }, 0);
+  }, [workingDates, perDateHours, weekdayDurations, hoursPerDay]);
 
   // Per-period balance split: groups working dates into the balance period they fall under
   const balanceSplits = useMemo(() => {
@@ -1152,24 +1241,27 @@ function ApplyLeaveModal({ onClose, onCreated, balances }: ApplyLeaveModalProps)
       const match = typeBalances.find(b => iso >= b.period_start && iso <= b.period_end);
       if (!match) return;
       const prev = map.get(match.id);
+      const dayHours = getConfiguredDayHours(iso, weekdayDurations, hoursPerDay);
       if (prev) {
-        prev.hours += perDateHours[iso] ?? 8;
+        prev.hours += perDateHours[iso] ?? dayHours;
       } else {
-        map.set(match.id, { balance: match, hours: perDateHours[iso] ?? 8 });
+        map.set(match.id, { balance: match, hours: perDateHours[iso] ?? dayHours });
       }
     });
     return Array.from(map.values()).map(({ balance, hours }) => {
-      const days = hours / 8;
-      const adjustedBalance = Number(balance.remaining_leave) - Number(balance.pending_leave ?? '0');
+      const adjustedBalanceHours = toNumber(balance.remaining_leave_hours) - toNumber(balance.pending_leave_hours);
+      const adjustedBalanceDays = hoursPerDay > 0 ? adjustedBalanceHours / hoursPerDay : 0;
+      const days = hoursPerDay > 0 ? hours / hoursPerDay : 0;
       return {
         balance,
         hours,
         days,
-        adjustedBalance,
-        isInsufficient: !!(selectedType?.deductible && days > adjustedBalance),
+        adjustedBalanceHours,
+        adjustedBalanceDays,
+        isInsufficient: !!(selectedType?.deductible && hours > adjustedBalanceHours),
       };
     });
-  }, [liveBalances, leaveTypeId, selectedType, workingDates, perDateHours]);
+  }, [liveBalances, leaveTypeId, selectedType, workingDates, perDateHours, weekdayDurations, hoursPerDay]);
 
   const anyBalanceInsufficient = balanceSplits.some(s => s.isInsufficient);
 
@@ -1197,10 +1289,21 @@ function ApplyLeaveModal({ onClose, onCreated, balances }: ApplyLeaveModalProps)
       .then(r => { if (!r.ok) throw new Error(`${r.status}`); return r.json(); })
       .then(setLeaveTypes)
       .catch(() => {});
-    fetch('/api/leave/requests?page=1', { credentials: 'include' })
-      .then(r => { if (!r.ok) throw new Error(`${r.status}`); return r.json(); })
-      .then((data: PagedResponse) => setExistingRequests(data.results ?? []))
-      .catch(() => {});
+    (async () => {
+      try {
+        const all: LeaveRequest[] = [];
+        let page = 1;
+        while (true) {
+          const r = await fetch(`/api/leave/requests?page=${page}`, { credentials: 'include' });
+          if (!r.ok) break;
+          const data: PagedResponse = await r.json();
+          all.push(...(data.results ?? []));
+          if (page >= data.total_pages) break;
+          page += 1;
+        }
+        setExistingRequests(all);
+      } catch { /* ignore */ }
+    })();
   }, []);
 
   useEffect(() => {
@@ -1223,6 +1326,10 @@ function ApplyLeaveModal({ onClose, onCreated, balances }: ApplyLeaveModalProps)
     if (!dateStart || !dateEnd) {
       setHolidays(new Set());
       setSundayExemptions(new Set());
+      setConfiguredWorkdays(new Set([0, 1, 2, 3, 4, 5]));
+      setWeekdayDurations(buildFallbackWeekdayDurations(new Set([0, 1, 2, 3, 4, 5]), DEFAULT_HOURS_PER_DAY));
+      setHoursPerDay(DEFAULT_HOURS_PER_DAY);
+      setHalfDayHours(DEFAULT_HOURS_PER_DAY / 2);
       return;
     }
     setHolidaysLoading(true);
@@ -1232,12 +1339,26 @@ function ApplyLeaveModal({ onClose, onCreated, balances }: ApplyLeaveModalProps)
     )
       .then(r => {
         if (!r.ok) return null;
-        return r.json() as Promise<{ holidays: { date: string }[]; sunday_exemptions: string[] }>;
+        return r.json() as Promise<LeaveHolidayRangeResponse>;
       })
       .then(data => {
         if (!data) return;
         setHolidays(new Set((data.holidays ?? []).map((h: { date: string }) => h.date)));
         setSundayExemptions(new Set(data.sunday_exemptions ?? []));
+        const nextWorkdays = new Set(data.workdays ?? [0, 1, 2, 3, 4, 5]);
+        setConfiguredWorkdays(nextWorkdays);
+        const configuredHours = toNumber(data.hours_per_day, DEFAULT_HOURS_PER_DAY);
+        const configuredHalf = toNumber(data.half_day_hours, configuredHours / 2);
+        const responseDurations = data.weekday_durations ?? {};
+        const nextDurations = buildFallbackWeekdayDurations(nextWorkdays, configuredHours);
+        for (let day = 0; day <= 6; day += 1) {
+          const raw = responseDurations[String(day)];
+          if (raw === undefined) continue;
+          nextDurations[String(day)] = toNumber(raw, nextDurations[String(day)]);
+        }
+        setWeekdayDurations(nextDurations);
+        setHoursPerDay(configuredHours);
+        setHalfDayHours(configuredHalf);
       })
       .catch(() => {})
       .finally(() => setHolidaysLoading(false));
@@ -1285,7 +1406,10 @@ function ApplyLeaveModal({ onClose, onCreated, balances }: ApplyLeaveModalProps)
           subreason: subreasonId === 'other' ? remarks.trim() : Number(subreasonId),
           date_start: localDateStr(dateStart),
           date_end: localDateStr(dateEnd),
-          hours: totalHours,
+          per_date_hours: workingDates.reduce<Record<string, number>>((acc, iso) => {
+            acc[iso] = perDateHours[iso] ?? getConfiguredDayHours(iso, weekdayDurations, hoursPerDay);
+            return acc;
+          }, {}),
           remarks: remarks.trim(),
         }),
       });
@@ -1293,6 +1417,7 @@ function ApplyLeaveModal({ onClose, onCreated, balances }: ApplyLeaveModalProps)
       if (res.ok) {
         await new Promise(resolve => setTimeout(resolve, 2000));
         toast.success(`Leave request ${(data as LeaveRequest).control_number} filed successfully.`, { title: 'Leave Filed' });
+        window.dispatchEvent(new CustomEvent('leave-badge-refresh'));
         onCreated(data as LeaveRequest);
         onClose();
         return;
@@ -1388,7 +1513,7 @@ function ApplyLeaveModal({ onClose, onCreated, balances }: ApplyLeaveModalProps)
 
               {/* Leave Type */}
               <div className="space-y-1.5">
-                <label className="text-[10px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wide">
+                <label className="text-[11px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wide">
                   Leave Type { !leaveTypeId && <span className="text-red-500 normal-case tracking-normal">*</span> }
                 </label>
                 <Select value={leaveTypeId} onValueChange={setLeaveTypeId}>
@@ -1406,7 +1531,7 @@ function ApplyLeaveModal({ onClose, onCreated, balances }: ApplyLeaveModalProps)
 
               {/* Primary Reason */}
               <div className="space-y-1.5">
-                <label className="text-[10px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wide">
+                <label className="text-[11px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wide">
                   Reason Category { !reasonId && <span className="text-red-500 normal-case tracking-normal">*</span> }
                 </label>
                 <Select
@@ -1436,7 +1561,7 @@ function ApplyLeaveModal({ onClose, onCreated, balances }: ApplyLeaveModalProps)
 
               {/* Sub Reason */}
               <div className="space-y-1.5">
-                <label className="text-[10px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wide">
+                <label className="text-[11px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wide">
                   Reason{' '}
                   {!subreasonId && (
                     <span className="text-red-500 normal-case tracking-normal">*</span>
@@ -1507,15 +1632,15 @@ function ApplyLeaveModal({ onClose, onCreated, balances }: ApplyLeaveModalProps)
               className="w-90 shrink-0 flex flex-col gap-4 p-5 overflow-y-auto [scrollbar-width:thin] m-3 border border-[var(--information-border-color)] rounded-xl bg-[var(--information-bg-color)] max-[480px]:w-full max-[480px]:m-0 max-[480px]:rounded-none max-[480px]:rounded-b-2xl max-[480px]:p-4"
             >
 
-              {/* Row 1: Working Days / Total Hours — always mounted, dims while loading */}
+              {/* Row 1: Total Days / Total Hours — always mounted, dims while loading */}
               <div className="border-b border-[#2845D6]/20 pb-4">
                 <div className={cn('grid grid-cols-2 gap-4 transition-opacity duration-300', holidaysLoading && 'opacity-30')}>
                   <div className="flex flex-col items-center gap-1">
                     <AnimatedNumber
-                      value={workingDayCount}
+                      value={Number(totalDays.toFixed(2))}
                       className="mt-1 text-4xl font-bold leading-none tabular-nums text-[var(--color-text-primary)]"
                     />
-                    <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Working Days</span>
+                    <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Total Days</span>
                   </div>
                   <div className="flex flex-col items-center gap-1">
                     <div className="mt-1 flex items-baseline gap-1">
@@ -1540,9 +1665,7 @@ function ApplyLeaveModal({ onClose, onCreated, balances }: ApplyLeaveModalProps)
                     <div className="h-5 animate-pulse rounded bg-[var(--color-bg-elevated)] opacity-60" />
                   </div>
                 ) : (
-                  ([localDateStr(dateStart!), localDateStr(dateEnd!)] as string[])
-                    .filter((iso, index, arr) => index === 0 || iso !== arr[0])
-                    .map((iso) => {
+                  activeDates.map((iso) => {
                       const dateObj = new Date(iso + 'T00:00:00');
                       const label = dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
                       const isWorking = workingDates.includes(iso);
@@ -1573,9 +1696,7 @@ function ApplyLeaveModal({ onClose, onCreated, balances }: ApplyLeaveModalProps)
                             className="flex items-center justify-between px-3 py-1.5"
                           >
                             <span className="text-xs font-medium text-[var(--color-text-muted)]">{label}</span>
-                            <span className="rounded px-1.5 py-0.5 text-[10px] font-medium border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-text-muted)]">
-                              Non working
-                            </span>
+                            <StatusPill className='text-[9px]' status='disapproved' label='Non working' />
                           </motion.div>
                         );
                       }
@@ -1588,18 +1709,25 @@ function ApplyLeaveModal({ onClose, onCreated, balances }: ApplyLeaveModalProps)
                           className="flex items-center justify-between"
                         >
                           <span className="text-xs font-medium text-[var(--color-text-primary)]">{label}</span>
-                          <Select value={String(perDateHours[iso] ?? 8)} onValueChange={value => setPerDateHours(prev => ({ ...prev, [iso]: Number(value) }))}>
+                          {(() => {
+                            const dayHours = getConfiguredDayHours(iso, weekdayDurations, hoursPerDay);
+                            const halfDay = Number((dayHours / 2).toFixed(1));
+                            const durationOptions = buildDurationOptionsForDay(dayHours);
+                            return (
+                              <Select value={String(perDateHours[iso] ?? dayHours)} onValueChange={value => setPerDateHours(prev => ({ ...prev, [iso]: Number(value) }))}>
                             <SelectTrigger className="w-auto min-w-[3rem] cursor-pointer rounded-md border-none bg-transparent px-2 py-1 text-[13px] text-[var(--color-accent)] outline-none">
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
-                              {[1, 2, 3, 4, 5, 6, 7, 8].map(h => (
+                              {durationOptions.map(h => (
                                 <SelectItem key={h} value={String(h)}>
-                                  {h === 4 ? 'Half day' : `${h}h`}
+                                  {Math.abs(h - halfDay) < 0.001 ? `Half Day (${h} hrs)` : `${h} hour${h === 1 ? '' : 's'}`}
                                 </SelectItem>
                               ))}
                             </SelectContent>
                           </Select>
+                            );
+                          })()}
                         </motion.div>
                       );
                     })
@@ -1627,10 +1755,10 @@ function ApplyLeaveModal({ onClose, onCreated, balances }: ApplyLeaveModalProps)
                           </div>
                           <div className="flex items-center">
                             <span className={cn(
-                              'text-lg font-bold leading-none tabular-nums',
-                              (split.isInsufficient || (selectedType?.deductible && split.adjustedBalance < 0)) ? 'text-red-500' : 'text-[var(--color-text-primary)]',
+                              'text-sm font-bold leading-none tabular-nums',
+                              (split.isInsufficient || (selectedType?.deductible && split.adjustedBalanceHours < 0)) ? 'text-red-500' : 'text-[var(--color-text-primary)]',
                             )}>
-                              {Math.max(split.adjustedBalance, 0).toFixed(1)}
+                              {Math.max(split.adjustedBalanceDays, 0).toFixed(2)} days
                             </span>
                             {/* <span className="text-[10px] text-[var(--color-text-muted)]">days left</span> */}
                           </div>
@@ -1661,14 +1789,14 @@ function ApplyLeaveModal({ onClose, onCreated, balances }: ApplyLeaveModalProps)
                               {fmtPeriod(split.balance.period_start, split.balance.period_end)}
                             </span>
                             <span className="text-[11px] font-semibold tabular-nums text-[var(--color-text-primary)]">
-                              {split.days.toFixed(1)}
+                                {formatDaysHours(split.days, split.hours)}
                             </span>
                           </div>
                         ))}
                         <div className="flex items-center justify-between mt-1 pt-1 border-t border-[var(--color-border)]/50">
                           <span className="text-xs text-[var(--color-text-muted)]">Total</span>
                           <span className="text-sm font-semibold tabular-nums text-[var(--color-text-primary)]">
-                            {(totalHours / 8).toFixed(1)}
+                              {formatDaysHours(totalDays, totalHours)}
                           </span>
                         </div>
                       </div>
@@ -1676,8 +1804,8 @@ function ApplyLeaveModal({ onClose, onCreated, balances }: ApplyLeaveModalProps)
                   ) : (
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-[var(--color-text-muted)]">Credits to be deducted</span>
-                      <span className="text-sm font-semibold tabular-nums text-[var(--color-text-primary)]">
-                        {(totalHours / 8).toFixed(1)}
+                      <span className="text-xs font-semibold tabular-nums text-[var(--color-text-primary)]">
+                        {formatDaysHours(totalDays, totalHours)}
                       </span>
                     </div>
                   )}
@@ -1692,8 +1820,9 @@ function ApplyLeaveModal({ onClose, onCreated, balances }: ApplyLeaveModalProps)
                       <span className="text-xs text-[var(--color-text-muted)]">Remaining balance</span>
                       <div className="flex flex-col gap-0.5 mt-0.5">
                         {balanceSplits.map(split => {
-                          const rawRemaining = split.adjustedBalance - split.days;
-                          const remaining = Math.max(rawRemaining, 0);
+                          const rawRemainingHours = split.adjustedBalanceHours - split.hours;
+                          const remainingHours = Math.max(rawRemainingHours, 0);
+                          const remainingDays = hoursPerDay > 0 ? remainingHours / hoursPerDay : 0;
                           return (
                             <div key={split.balance.id} className="flex items-center justify-between pl-1">
                               <span className="text-[11px] text-[var(--color-text-muted)]">
@@ -1701,9 +1830,9 @@ function ApplyLeaveModal({ onClose, onCreated, balances }: ApplyLeaveModalProps)
                               </span>
                               <span className={cn(
                                 'text-[11px] font-semibold tabular-nums',
-                                rawRemaining < 0 ? 'text-red-500' : 'text-[var(--color-text-primary)]',
+                                rawRemainingHours < 0 ? 'text-red-500' : 'text-[var(--color-text-primary)]',
                               )}>
-                                {remaining.toFixed(1)}
+                                {formatDaysHours(remainingDays, remainingHours)}
                               </span>
                             </div>
                           );
@@ -1714,14 +1843,15 @@ function ApplyLeaveModal({ onClose, onCreated, balances }: ApplyLeaveModalProps)
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-[var(--color-text-muted)]">Remaining balance</span>
                       {(() => {
-                        const rawRemaining = balanceSplits[0].adjustedBalance - balanceSplits[0].days;
-                        const remaining = Math.max(rawRemaining, 0);
+                        const rawRemainingHours = balanceSplits[0].adjustedBalanceHours - balanceSplits[0].hours;
+                        const remainingHours = Math.max(rawRemainingHours, 0);
+                        const remainingDays = hoursPerDay > 0 ? remainingHours / hoursPerDay : 0;
                         return (
                           <span className={cn(
-                            'text-sm font-semibold tabular-nums',
-                            rawRemaining < 0 ? 'text-red-500' : 'text-[var(--color-text-primary)]',
+                            'text-xs font-semibold tabular-nums',
+                            rawRemainingHours < 0 ? 'text-red-500' : 'text-[var(--color-text-primary)]',
                           )}>
-                            {remaining.toFixed(1)}
+                            {formatDaysHours(remainingDays, remainingHours)}
                           </span>
                         );
                       })()}
@@ -1739,7 +1869,7 @@ function ApplyLeaveModal({ onClose, onCreated, balances }: ApplyLeaveModalProps)
               type="button"
               onClick={onClose}
               disabled={saving}
-              className="px-4 py-2 rounded-lg text-sm font-medium border border-[var(--color-border)]
+              className="px-4 py-2 rounded-lg text-xs font-normal border border-[var(--color-border)]
                 text-[var(--color-text-primary)] hover:bg-[var(--color-bg-card)]
                 transition-colors disabled:opacity-50"
             >
@@ -1749,11 +1879,11 @@ function ApplyLeaveModal({ onClose, onCreated, balances }: ApplyLeaveModalProps)
               type="submit"
               disabled={!isValid || saving}
               className="flex min-w-[130px] items-center justify-center gap-1.5 px-4 py-2 rounded-lg
-                bg-[#2845D6] text-white text-sm font-semibold hover:bg-[#1f38c0]
+                bg-[#2845D6] text-white text-xs font-normal hover:bg-[#1f38c0]
                 disabled:opacity-50 transition-colors"
             >
               {saving
-                ? <TextShimmer duration={1.2} className="text-sm font-semibold [--base-color:#a5b4fc] [--base-gradient-color:#ffffff]">
+                ? <TextShimmer duration={1.2} className="text-xs [--base-color:#a5b4fc] [--base-gradient-color:#ffffff]">
                     Submitting…
                   </TextShimmer>
                 : <><Check size={14} /><span>Submit Leave</span></>
@@ -1786,6 +1916,10 @@ function EditLeaveModal({ leaveId, onClose, onUpdated, balances }: EditLeaveModa
   const [perDateHours, setPerDateHours] = useState<Record<string, number>>({});
   const [holidays, setHolidays] = useState<Set<string>>(new Set());
   const [sundayExemptions, setSundayExemptions] = useState<Set<string>>(new Set());
+  const [configuredWorkdays, setConfiguredWorkdays] = useState<Set<number>>(new Set([0, 1, 2, 3, 4, 5]));
+  const [weekdayDurations, setWeekdayDurations] = useState<Record<string, number>>(buildFallbackWeekdayDurations(new Set([0, 1, 2, 3, 4, 5]), DEFAULT_HOURS_PER_DAY));
+  const [hoursPerDay, setHoursPerDay] = useState(DEFAULT_HOURS_PER_DAY);
+  const [halfDayHours, setHalfDayHours] = useState(DEFAULT_HOURS_PER_DAY / 2);
   const [holidaysLoading, setHolidaysLoading] = useState(false);
   const [remarks, setRemarks] = useState('');
   const [saving, setSaving] = useState(false);
@@ -1883,6 +2017,10 @@ function EditLeaveModal({ leaveId, onClose, onUpdated, balances }: EditLeaveModa
     if (!dateStart || !dateEnd) {
       setHolidays(new Set());
       setSundayExemptions(new Set());
+      setConfiguredWorkdays(new Set([0, 1, 2, 3, 4, 5]));
+      setWeekdayDurations(buildFallbackWeekdayDurations(new Set([0, 1, 2, 3, 4, 5]), DEFAULT_HOURS_PER_DAY));
+      setHoursPerDay(DEFAULT_HOURS_PER_DAY);
+      setHalfDayHours(DEFAULT_HOURS_PER_DAY / 2);
       return;
     }
     setHolidaysLoading(true);
@@ -1892,12 +2030,26 @@ function EditLeaveModal({ leaveId, onClose, onUpdated, balances }: EditLeaveModa
     )
       .then(r => {
         if (!r.ok) return null;
-        return r.json() as Promise<{ holidays: { date: string }[]; sunday_exemptions: string[] }>;
+        return r.json() as Promise<LeaveHolidayRangeResponse>;
       })
       .then(data => {
         if (!data) return;
         setHolidays(new Set((data.holidays ?? []).map((h: { date: string }) => h.date)));
         setSundayExemptions(new Set(data.sunday_exemptions ?? []));
+        const nextWorkdays = new Set(data.workdays ?? [0, 1, 2, 3, 4, 5]);
+        setConfiguredWorkdays(nextWorkdays);
+        const configuredHours = toNumber(data.hours_per_day, DEFAULT_HOURS_PER_DAY);
+        const configuredHalf = toNumber(data.half_day_hours, configuredHours / 2);
+        const responseDurations = data.weekday_durations ?? {};
+        const nextDurations = buildFallbackWeekdayDurations(nextWorkdays, configuredHours);
+        for (let day = 0; day <= 6; day += 1) {
+          const raw = responseDurations[String(day)];
+          if (raw === undefined) continue;
+          nextDurations[String(day)] = toNumber(raw, nextDurations[String(day)]);
+        }
+        setWeekdayDurations(nextDurations);
+        setHoursPerDay(configuredHours);
+        setHalfDayHours(configuredHalf);
       })
       .catch(() => {})
       .finally(() => setHolidaysLoading(false));
@@ -1930,18 +2082,26 @@ function EditLeaveModal({ leaveId, onClose, onUpdated, balances }: EditLeaveModa
 
   const workingDates = useMemo<string[]>(() => {
     return activeDates.filter(iso => {
-      const d = new Date(iso + 'T00:00:00');
-      if (d.getDay() === 0 && !sundayExemptions.has(iso)) return false;
-      if (holidays.has(iso)) return false;
-      return true;
+      return isConfiguredWorkingDate(iso, holidays, sundayExemptions, configuredWorkdays);
     });
-  }, [activeDates, holidays, sundayExemptions]);
+  }, [activeDates, holidays, sundayExemptions, configuredWorkdays]);
 
   const workingDayCount = workingDates.length;
   const totalHours = useMemo(() => {
     if (!workingDates.length) return 0;
-    return workingDates.reduce((sum, iso) => sum + (perDateHours[iso] ?? 8), 0);
-  }, [workingDates, perDateHours]);
+    return workingDates.reduce((sum, iso) => {
+      const dayHours = getConfiguredDayHours(iso, weekdayDurations, hoursPerDay);
+      return sum + (perDateHours[iso] ?? dayHours);
+    }, 0);
+  }, [workingDates, perDateHours, weekdayDurations, hoursPerDay]);
+  const totalDays = useMemo(() => {
+    if (!workingDates.length) return 0;
+    return workingDates.reduce((sum, iso) => {
+      const dayHours = getConfiguredDayHours(iso, weekdayDurations, hoursPerDay);
+      const selected = perDateHours[iso] ?? dayHours;
+      return dayHours > 0 ? sum + (selected / dayHours) : sum;
+    }, 0);
+  }, [workingDates, perDateHours, weekdayDurations, hoursPerDay]);
 
   const balanceSplits = useMemo(() => {
     if (!leaveTypeId || !selectedType?.has_balance) return [];
@@ -1952,24 +2112,27 @@ function EditLeaveModal({ leaveId, onClose, onUpdated, balances }: EditLeaveModa
       const match = typeBalances.find(b => iso >= b.period_start && iso <= b.period_end);
       if (!match) return;
       const prev = map.get(match.id);
+      const dayHours = getConfiguredDayHours(iso, weekdayDurations, hoursPerDay);
       if (prev) {
-        prev.hours += perDateHours[iso] ?? 8;
+        prev.hours += perDateHours[iso] ?? dayHours;
       } else {
-        map.set(match.id, { balance: match, hours: perDateHours[iso] ?? 8 });
+        map.set(match.id, { balance: match, hours: perDateHours[iso] ?? dayHours });
       }
     });
     return Array.from(map.values()).map(({ balance, hours }) => {
-      const days = hours / 8;
-      const adjustedBalance = Number(balance.remaining_leave) - Number(balance.pending_leave ?? '0');
+      const adjustedBalanceHours = toNumber(balance.remaining_leave_hours) - toNumber(balance.pending_leave_hours);
+      const adjustedBalanceDays = hoursPerDay > 0 ? adjustedBalanceHours / hoursPerDay : 0;
+      const days = hoursPerDay > 0 ? hours / hoursPerDay : 0;
       return {
         balance,
         hours,
         days,
-        adjustedBalance,
-        isInsufficient: !!(selectedType?.deductible && days > adjustedBalance),
+        adjustedBalanceHours,
+        adjustedBalanceDays,
+        isInsufficient: !!(selectedType?.deductible && hours > adjustedBalanceHours),
       };
     });
-  }, [liveBalances, leaveTypeId, selectedType, workingDates, perDateHours]);
+  }, [liveBalances, leaveTypeId, selectedType, workingDates, perDateHours, weekdayDurations, hoursPerDay]);
 
   const anyBalanceInsufficient = balanceSplits.some(s => s.isInsufficient);
 
@@ -2029,7 +2192,11 @@ function EditLeaveModal({ leaveId, onClose, onUpdated, balances }: EditLeaveModa
           subreason: subreasonId === 'other' ? remarks.trim() : Number(subreasonId),
           date_start: localDateStr(dateStart),
           date_end: localDateStr(dateEnd),
-          hours: totalHours,
+          per_date_hours: workingDates.reduce<Record<string, number>>((acc, iso) => {
+            const dayHours = getConfiguredDayHours(iso, weekdayDurations, hoursPerDay);
+            acc[iso] = perDateHours[iso] ?? dayHours;
+            return acc;
+          }, {}),
           remarks: remarks.trim(),
         }),
       });
@@ -2037,6 +2204,7 @@ function EditLeaveModal({ leaveId, onClose, onUpdated, balances }: EditLeaveModa
       if (res.ok) {
         await new Promise(resolve => setTimeout(resolve, 1000));
         toast.success('Leave request updated successfully.', { title: 'Updated' });
+        window.dispatchEvent(new CustomEvent('leave-badge-refresh'));
         onUpdated(data as LeaveRequest);
         onClose();
         return;
@@ -2155,7 +2323,7 @@ function EditLeaveModal({ leaveId, onClose, onUpdated, balances }: EditLeaveModa
 
                 {/* Leave Type */}
                 <div className="space-y-1.5">
-                  <label className="text-[10px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wide">
+                  <label className="text-[11px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wide">
                     Leave Type {!leaveTypeId && <span className="text-red-500 normal-case tracking-normal">*</span>}
                   </label>
                   <Select value={leaveTypeId} onValueChange={handleLeaveTypeChange}>
@@ -2262,15 +2430,15 @@ function EditLeaveModal({ leaveId, onClose, onUpdated, balances }: EditLeaveModa
                 className="w-90 shrink-0 flex flex-col gap-4 p-5 overflow-y-auto [scrollbar-width:thin] m-3 border border-[var(--information-border-color)] rounded-xl bg-[var(--information-bg-color)] max-[480px]:w-full max-[480px]:m-0 max-[480px]:rounded-none max-[480px]:rounded-b-2xl max-[480px]:p-4"
               >
 
-                {/* Row 1: Working Days / Total Hours */}
+                {/* Row 1: Total Days / Total Hours */}
                 <div className="border-b border-[#2845D6]/20 pb-4">
                   <div className={cn('grid grid-cols-2 gap-4 transition-opacity duration-300', holidaysLoading && 'opacity-30')}>
                     <div className="flex flex-col items-center gap-1">
                       <AnimatedNumber
-                        value={workingDayCount}
+                        value={Number(totalDays.toFixed(2))}
                         className="mt-1 text-4xl font-bold leading-none tabular-nums text-[var(--color-text-primary)]"
                       />
-                      <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Working Days</span>
+                      <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Total Days</span>
                     </div>
                     <div className="flex flex-col items-center gap-1">
                       <div className="mt-1 flex items-baseline gap-1">
@@ -2294,16 +2462,17 @@ function EditLeaveModal({ leaveId, onClose, onUpdated, balances }: EditLeaveModa
                       <div className="h-5 animate-pulse rounded bg-[var(--color-bg-elevated)] opacity-60" />
                     </div>
                   ) : (
-                    ([localDateStr(dateStart!), localDateStr(dateEnd!)] as string[])
-                      .filter((iso, index, arr) => index === 0 || iso !== arr[0])
-                      .map(iso => {
+                      activeDates.map(iso => {
                         const dateObj = new Date(iso + 'T00:00:00');
                         const label = dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
                         const isWorking = workingDates.includes(iso);
 
                         if (isWorking && overlapDates.has(iso)) {
                           return (
-                            <motion.div layout transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }} key={iso}
+                            <motion.div
+                              layout
+                              transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
+                              key={iso}
                               className="flex items-start gap-2 rounded-lg border border-red-300 bg-red-50 dark:bg-red-900/10 dark:border-red-700/40 px-3 py-2"
                             >
                               <AlertTriangle size={13} className="mt-0.5 shrink-0 text-red-500" />
@@ -2317,34 +2486,45 @@ function EditLeaveModal({ leaveId, onClose, onUpdated, balances }: EditLeaveModa
 
                         if (!isWorking) {
                           return (
-                            <motion.div layout transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }} key={iso}
+                            <motion.div
+                              layout
+                              transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
+                              key={iso}
                               className="flex items-center justify-between px-3 py-1.5"
                             >
                               <span className="text-xs font-medium text-[var(--color-text-muted)]">{label}</span>
-                              <span className="rounded px-1.5 py-0.5 text-[10px] font-medium border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-text-muted)]">
-                                Non working
-                              </span>
+                              <StatusPill className='text-[9px]' status='disapproved' label='Non working' />
                             </motion.div>
                           );
                         }
 
                         return (
-                          <motion.div layout transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }} key={iso}
+                          <motion.div
+                            layout
+                            transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
+                            key={iso}
                             className="flex items-center justify-between"
                           >
                             <span className="text-xs font-medium text-[var(--color-text-primary)]">{label}</span>
-                            <Select value={String(perDateHours[iso] ?? 8)} onValueChange={value => setPerDateHours(prev => ({ ...prev, [iso]: Number(value) }))}>
+                            {(() => {
+                              const dayHours = getConfiguredDayHours(iso, weekdayDurations, hoursPerDay);
+                              const halfDay = Number((dayHours / 2).toFixed(1));
+                              const durationOptions = buildDurationOptionsForDay(dayHours);
+                              return (
+                                <Select value={String(perDateHours[iso] ?? dayHours)} onValueChange={value => setPerDateHours(prev => ({ ...prev, [iso]: Number(value) }))}>
                               <SelectTrigger className="w-auto min-w-[3rem] cursor-pointer rounded-md border-none bg-transparent px-2 py-1 text-[13px] text-[var(--color-accent)] outline-none">
                                 <SelectValue />
                               </SelectTrigger>
                               <SelectContent className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
-                                {[1, 2, 3, 4, 5, 6, 7, 8].map(h => (
+                                {durationOptions.map(h => (
                                   <SelectItem key={h} value={String(h)}>
-                                    {h === 4 ? 'Half day' : `${h}h`}
+                                    {Math.abs(h - halfDay) < 0.001 ? `Half Day (${h} hrs)` : `${h} hour${h === 1 ? '' : 's'}`}
                                   </SelectItem>
                                 ))}
                               </SelectContent>
                             </Select>
+                              );
+                            })()}
                           </motion.div>
                         );
                       })
@@ -2367,9 +2547,9 @@ function EditLeaveModal({ leaveId, onClose, onUpdated, balances }: EditLeaveModa
                             <div className="flex items-center">
                               <span className={cn(
                                 'text-lg font-bold leading-none tabular-nums',
-                                (split.isInsufficient || (selectedType?.deductible && split.adjustedBalance < 0)) ? 'text-red-500' : 'text-[var(--color-text-primary)]',
+                                (split.isInsufficient || (selectedType?.deductible && split.adjustedBalanceHours < 0)) ? 'text-red-500' : 'text-[var(--color-text-primary)]',
                               )}>
-                                {Math.max(split.adjustedBalance, 0).toFixed(1)}
+                                {Math.max(split.adjustedBalanceDays, 0).toFixed(2)} days
                               </span>
                             </div>
                           </motion.div>
@@ -2399,14 +2579,14 @@ function EditLeaveModal({ leaveId, onClose, onUpdated, balances }: EditLeaveModa
                                 {fmtPeriod(split.balance.period_start, split.balance.period_end)}
                               </span>
                               <span className="text-[11px] font-semibold tabular-nums text-[var(--color-text-primary)]">
-                                {split.days.toFixed(1)}
+                                {formatDaysHours(split.days, split.hours)}
                               </span>
                             </div>
                           ))}
                           <div className="flex items-center justify-between mt-1 pt-1 border-t border-[var(--color-border)]/50">
                             <span className="text-xs text-[var(--color-text-muted)]">Total</span>
                             <span className="text-sm font-semibold tabular-nums text-[var(--color-text-primary)]">
-                              {(totalHours / 8).toFixed(1)}
+                              {formatDaysHours(totalDays, totalHours)}
                             </span>
                           </div>
                         </div>
@@ -2415,7 +2595,7 @@ function EditLeaveModal({ leaveId, onClose, onUpdated, balances }: EditLeaveModa
                       <div className="flex items-center justify-between">
                         <span className="text-xs text-[var(--color-text-muted)]">Credits to be deducted</span>
                         <span className="text-sm font-semibold tabular-nums text-[var(--color-text-primary)]">
-                          {(totalHours / 8).toFixed(1)}
+                          {formatDaysHours(totalDays, totalHours)}
                         </span>
                       </div>
                     )}
@@ -2430,15 +2610,16 @@ function EditLeaveModal({ leaveId, onClose, onUpdated, balances }: EditLeaveModa
                         <span className="text-xs text-[var(--color-text-muted)]">Remaining balance</span>
                         <div className="flex flex-col gap-0.5 mt-0.5">
                           {balanceSplits.map(split => {
-                            const rawRemaining = split.adjustedBalance - split.days;
-                            const remaining = Math.max(rawRemaining, 0);
+                            const rawRemainingHours = split.adjustedBalanceHours - split.hours;
+                            const remainingHours = Math.max(rawRemainingHours, 0);
+                            const remainingDays = hoursPerDay > 0 ? remainingHours / hoursPerDay : 0;
                             return (
                               <div key={split.balance.id} className="flex items-center justify-between pl-1">
                                 <span className="text-[11px] text-[var(--color-text-muted)]">
                                   {fmtPeriod(split.balance.period_start, split.balance.period_end)}
                                 </span>
-                                <span className={cn('text-[11px] font-semibold tabular-nums', rawRemaining < 0 ? 'text-red-500' : 'text-[var(--color-text-primary)]')}>
-                                  {remaining.toFixed(1)}
+                                <span className={cn('text-[11px] font-semibold tabular-nums', rawRemainingHours < 0 ? 'text-red-500' : 'text-[var(--color-text-primary)]')}>
+                                  {formatDaysHours(remainingDays, remainingHours)}
                                 </span>
                               </div>
                             );
@@ -2449,11 +2630,12 @@ function EditLeaveModal({ leaveId, onClose, onUpdated, balances }: EditLeaveModa
                       <div className="flex items-center justify-between">
                         <span className="text-xs text-[var(--color-text-muted)]">Remaining balance</span>
                         {(() => {
-                          const rawRemaining = balanceSplits[0].adjustedBalance - balanceSplits[0].days;
-                          const remaining = Math.max(rawRemaining, 0);
+                          const rawRemainingHours = balanceSplits[0].adjustedBalanceHours - balanceSplits[0].hours;
+                          const remainingHours = Math.max(rawRemainingHours, 0);
+                          const remainingDays = hoursPerDay > 0 ? remainingHours / hoursPerDay : 0;
                           return (
-                            <span className={cn('text-sm font-semibold tabular-nums', rawRemaining < 0 ? 'text-red-500' : 'text-[var(--color-text-primary)]')}>
-                              {remaining.toFixed(1)}
+                            <span className={cn('text-sm font-semibold tabular-nums', rawRemainingHours < 0 ? 'text-red-500' : 'text-[var(--color-text-primary)]')}>
+                              {formatDaysHours(remainingDays, remainingHours)}
                             </span>
                           );
                         })()}
@@ -2471,7 +2653,7 @@ function EditLeaveModal({ leaveId, onClose, onUpdated, balances }: EditLeaveModa
                 type="button"
                 onClick={onClose}
                 disabled={saving}
-                className="px-4 py-2 rounded-lg text-sm font-medium border border-[var(--color-border)]
+                className="px-4 py-2 rounded-lg text-xs font-normal border border-[var(--color-border)]
                   text-[var(--color-text-primary)] hover:bg-[var(--color-bg-card)]
                   transition-colors disabled:opacity-50"
               >
@@ -2481,11 +2663,11 @@ function EditLeaveModal({ leaveId, onClose, onUpdated, balances }: EditLeaveModa
                 type="submit"
                 disabled={!isValid || saving}
                 className="flex min-w-[140px] items-center justify-center gap-1.5 px-4 py-2 rounded-lg
-                  bg-[#2845D6] text-white text-sm font-semibold hover:bg-[#1f38c0]
+                  bg-[#2845D6] text-white text-xs font-normal hover:bg-[#1f38c0]
                   disabled:opacity-50 transition-colors"
               >
                 {saving
-                  ? <TextShimmer duration={1.2} className="text-sm font-semibold [--base-color:#a5b4fc] [--base-gradient-color:#ffffff]">
+                  ? <TextShimmer duration={1.2} className="text-xs font-normal [--base-color:#a5b4fc] [--base-gradient-color:#ffffff]">
                       Saving…
                     </TextShimmer>
                   : <><Check size={14} /><span>Save Changes</span></>
@@ -2546,7 +2728,17 @@ function LeaveDetailModal({
     setLoadingDetail(true);
     fetch(`/api/leave/requests/${leaveId}`, { credentials: 'include' })
       .then(r => { if (!r.ok) throw new Error(`${r.status}`); return r.json(); })
-      .then(d => setDetail(d as LeaveDetail))
+      .then(d => {
+        const parsed = d as LeaveDetail;
+        setDetail(parsed);
+        void fetch(`/api/leave/requests/${leaveId}/mark-seen`, {
+          method: 'PATCH',
+          credentials: 'include',
+          headers: { 'X-CSRFToken': getCsrfToken() },
+        }).finally(() => {
+          window.dispatchEvent(new CustomEvent('leave-badge-refresh'));
+        });
+      })
       .catch(() => toast.error('Failed to load leave details.', { title: 'Error' }))
       .finally(() => setLoadingDetail(false));
   }, [leaveId]);
@@ -2563,6 +2755,7 @@ function LeaveDetailModal({
       const data = await res.json();
       if (res.ok) {
         toast.success('Leave request cancelled.', { title: 'Cancelled' });
+        window.dispatchEvent(new CustomEvent('leave-badge-refresh'));
         onCancelled?.(detail.id);
         onClose();
       } else {
@@ -2609,6 +2802,7 @@ function LeaveDetailModal({
       if (res.ok) {
         const label = selectedAction === 'approved' ? 'Approved' : 'Disapproved';
         toast.success(`Leave request ${label.toLowerCase()} successfully.`, { title: label });
+        window.dispatchEvent(new CustomEvent('leave-badge-refresh'));
         handleActed(data as LeaveDetail);
         setRemarks('');
         setActionDone(true);
@@ -2786,7 +2980,10 @@ function LeaveDetailModal({
                   <InfoRow label="Line" value={detail.employee_line || 'N/A'} />
                   <InfoRow label="Leave Type" value={detail.leave_type_name} />
                   <InfoRow label="Duration" value={fmtDurationRange(detail.date_start, detail.date_end)} />
-                  <InfoRow label="Time & Days" value={formatTimeAndDays(detail.days_count, detail.hours)} />
+                  <InfoRow
+                    label="Time & Days"
+                    value={formatTimeAndDays(toNumber(detail.total_days, detail.days_count), detail.total_hours ?? detail.hours)}
+                  />
                   <div className="col-span-2">
                     <InfoRow
                       label="Reason"
@@ -2864,11 +3061,11 @@ function LeaveDetailModal({
                   type="button"
                   onClick={() => handleAction('approved')}
                   disabled={actionSaving}
-                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-normal
                     text-white bg-[var(--btn-success-bg)] hover:opacity-90 transition-opacity disabled:opacity-50"
                 >
                   {actionSaving && pendingAction === 'approved'
-                    ? <TextShimmer duration={1.2} className="text-sm font-semibold [--base-color:#a5f3c0] [--base-gradient-color:#ffffff]">{shimmerLabel ?? 'Approving…'}</TextShimmer>
+                    ? <TextShimmer duration={1.2} className="text-xs font-normal [--base-color:#a5f3c0] [--base-gradient-color:#ffffff]">{shimmerLabel ?? 'Approving…'}</TextShimmer>
                     : <><CheckCircle2 size={14} /><span>Approve</span></>
                   }
                 </button>
@@ -2876,11 +3073,11 @@ function LeaveDetailModal({
                   type="button"
                   onClick={() => handleAction('disapproved')}
                   disabled={actionSaving}
-                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-normal
                     text-white bg-[var(--btn-danger-bg)] hover:opacity-90 transition-opacity disabled:opacity-50"
                 >
                   {actionSaving && pendingAction === 'disapproved'
-                    ? <TextShimmer duration={1.2} className="text-sm font-semibold [--base-color:#fca5a5] [--base-gradient-color:#ffffff]">{shimmerLabel ?? 'Disapproving…'}</TextShimmer>
+                    ? <TextShimmer duration={1.2} className="text-xs font-normal [--base-color:#fca5a5] [--base-gradient-color:#ffffff]">{shimmerLabel ?? 'Disapproving…'}</TextShimmer>
                     : <><XCircle size={14} /><span>Disapprove</span></>
                   }
                 </button>
@@ -2939,7 +3136,7 @@ function LeaveDetailModal({
                       <button
                         type="button"
                         onClick={() => setShowCancelConfirm(true)}
-                        className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium
+                        className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-normal
                           text-white bg-[var(--btn-danger-bg)] hover:opacity-90 transition-opacity"
                       >
                         <Ban size={14} />
@@ -2950,7 +3147,7 @@ function LeaveDetailModal({
                   <button
                     type="button"
                     onClick={onClose}
-                    className="px-4 py-2 rounded-lg text-sm font-medium border border-[var(--color-border)]
+                    className="px-4 py-2 rounded-lg text-xs font-normal border border-[var(--color-border)]
                       text-[var(--color-text-primary)] hover:bg-[var(--color-bg-card)] transition-colors"
                   >
                     Close
@@ -3111,6 +3308,7 @@ function MyRequestsTab({ user, balances, refreshKey, onApply, onViewDetail, onEd
       const data = await res.json();
       if (res.ok) {
         toast.success('Leave request cancelled.', { title: 'Cancelled' });
+        window.dispatchEvent(new CustomEvent('leave-badge-refresh'));
         setConfirmCancelId(null);
         fetchRequests(page, search, statusFilter, sortField, sortDir, leaveTypeFilter);
       } else {
@@ -3150,7 +3348,7 @@ function MyRequestsTab({ user, balances, refreshKey, onApply, onViewDetail, onEd
       label: 'Control No.',
       sortField: 'control_number',
       render: row => (
-        <span className="text-xs font-semibold text-primary">{row.control_number}</span>
+        <span className="text-xs text-[var(--color-text-primary)]">{row.control_number}</span>
       ),
     },
     {
@@ -3159,7 +3357,7 @@ function MyRequestsTab({ user, balances, refreshKey, onApply, onViewDetail, onEd
       sortField: 'leave_type',
       filterContent: leaveTypeFilterContent,
       filterActive: leaveTypeFilter.length > 0,
-      render: row => <span className="text-xs">{row.leave_type_name}</span>,
+      render: row => <span className="text-xs text-[var(--color-text-primary)]">{row.leave_type_name}</span>,
     },
     {
       key: 'reason',
@@ -3168,7 +3366,7 @@ function MyRequestsTab({ user, balances, refreshKey, onApply, onViewDetail, onEd
       thClassName: 'max-[780px]:hidden',
       tdClassName: 'max-[780px]:hidden',
       render: row => (
-        <span className="text-xs">
+        <span className="text-xs text-[var(--color-text-primary)]">
           {row.reason_title}{row.subreason_title ? ` - ${row.subreason_title}` : ''}
         </span>
       ),
@@ -3179,7 +3377,7 @@ function MyRequestsTab({ user, balances, refreshKey, onApply, onViewDetail, onEd
       sortField: 'days_count',
       thClassName: 'max-[780px]:hidden',
       tdClassName: 'max-[780px]:hidden',
-      render: row => <span className="text-xs">{fmtDurationRange(row.date_start, row.date_end)}</span>,
+      render: row => <span className="text-xs text-[var(--color-text-primary)]">{fmtDurationRange(row.date_start, row.date_end)}</span>,
     },
     {
       key: 'date_prepared',
@@ -3187,7 +3385,7 @@ function MyRequestsTab({ user, balances, refreshKey, onApply, onViewDetail, onEd
       sortField: 'date_prepared',
       thClassName: 'max-[780px]:hidden',
       tdClassName: 'max-[780px]:hidden',
-      render: row => <span className="text-xs text-muted-foreground">{row.date_prepared_display}</span>,
+      render: row => <span className="text-xs text-[var(--color-text-primary)]">{row.date_prepared_display}</span>,
     },
     {
       key: 'status',
@@ -3248,7 +3446,7 @@ function MyRequestsTab({ user, balances, refreshKey, onApply, onViewDetail, onEd
         actions={showApplyButton ? (
           <button
             onClick={onApply}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#2845D6] text-white shadow-sm
+            className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#2845D6] font-normal text-white
                 text-xs hover:bg-[#1f38c0] transition-colors shrink-0"
           >
             <Plus className="size-4" />
@@ -3279,8 +3477,8 @@ function MyRequestsTab({ user, balances, refreshKey, onApply, onViewDetail, onEd
           <ConfirmationModal
             title="Cancel Leave Request"
             message="Are you sure you want to cancel this leave request? This action cannot be undone."
-            confirmLabel="Cancel Request"
-            cancelLabel="Go Back"
+            confirmLabel="Yes, Cancel Request"
+            cancelLabel="No, Keep It"
             onConfirm={() => handleCancelRequest(confirmCancelId)}
             onCancel={() => setConfirmCancelId(null)}
             confirming={cancellingId === confirmCancelId}
@@ -3705,11 +3903,11 @@ function ApprovalQueueTab({ user, refreshKey = 0, onViewDetail }: QueueProps) {
             type="button"
             onClick={() => setShowExportModal(true)}
             disabled={exporting}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#2845D6] text-white shadow-sm text-xs hover:bg-[#1f38c0] transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+            className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#2845D6] text-white font-normal text-xs hover:bg-[#1f38c0] transition-colors disabled:cursor-not-allowed disabled:opacity-50"
           >
-            <Download className="size-4" />
+            <Download className="size-3" />
             {exporting ? (
-              <TextShimmer duration={1.2} className="text-xs font-semibold [--base-color:#a5b4fc] [--base-gradient-color:#ffffff]">
+              <TextShimmer duration={1.2} className="text-xs font-normal [--base-color:#a5b4fc] [--base-gradient-color:#ffffff]">
                 Exporting…
               </TextShimmer>
             ) : (
@@ -3842,7 +4040,7 @@ function ExportModal({
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 rounded-lg border border-[var(--color-border)] text-xs font-medium text-[var(--color-text-primary)] hover:bg-[var(--color-bg-card)] transition-colors"
+            className="px-4 py-2 rounded-lg border border-[var(--color-border)] text-xs font-normal text-[var(--color-text-primary)] hover:bg-[var(--color-bg-card)] transition-colors"
           >
             Cancel
           </button>
@@ -3850,15 +4048,15 @@ function ExportModal({
             type="button"
             onClick={handleDownload}
             disabled={!canDownload}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#2845D6] text-white text-xs font-semibold hover:bg-[#1f38c0] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#2845D6] text-white text-xs font-normal hover:bg-[#1f38c0] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            <Download className="size-3.5" />
+            <Download className="size-3" />
             {exporting ? (
-              <TextShimmer duration={1.2} className="text-xs font-semibold [--base-color:#a5b4fc] [--base-gradient-color:#ffffff]">
+              <TextShimmer duration={1.2} className="text-xs font-normal [--base-color:#a5b4fc] [--base-gradient-color:#ffffff]">
                 Exporting…
               </TextShimmer>
             ) : (
-              'Export'
+              'Download'
             )}
           </button>
         </div>
@@ -3884,14 +4082,8 @@ export default function LeavePage() {
   const [detailIsApproverView, setDetailIsApproverView] = useState(false);
   const [editId, setEditId] = useState<number | null>(null);
   const [editOpen, setEditOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState(() =>
-    searchParams.get('tab') === 'approval-queue' ? 'approval-queue' : 'my-requests'
-  );
-
   const tabParam = searchParams.get('tab');
-  useEffect(() => {
-    setActiveTab(tabParam === 'approval-queue' ? 'approval-queue' : 'my-requests');
-  }, [tabParam]);
+  const activeTab = tabParam === 'approval-queue' ? 'approval-queue' : 'my-requests';
 
   useEffect(() => {
     const timer = setTimeout(() => setAuthPhase('checking'), 350);
@@ -3957,8 +4149,8 @@ export default function LeavePage() {
       {/* Page header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold">{pageHeaderTitle}</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
+          <h1 className="text-lg font-bold">{pageHeaderTitle}</h1>
+          <p className="text-xs text-[var(--color-text-muted)]">
             {pageHeaderDescription}
           </p>
         </div>

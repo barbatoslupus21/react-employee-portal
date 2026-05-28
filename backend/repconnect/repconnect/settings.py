@@ -18,7 +18,7 @@ ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1', cast=Csv(
 # Upload limits
 DATA_UPLOAD_MAX_MEMORY_SIZE = 54_525_952  # 52 MB — allows video uploads
 FILE_UPLOAD_MAX_MEMORY_SIZE = 5_242_880   # 5 MB
-DATA_UPLOAD_MAX_NUMBER_FIELDS = 100
+DATA_UPLOAD_MAX_NUMBER_FIELDS = 5000
 
 # ── Applications ───────────────────────────────────────────────────────────────
 INSTALLED_APPS = [
@@ -47,6 +47,8 @@ INSTALLED_APPS = [
     'training',
     'employee_evaluation',
     'announcement',
+    'mis_ticket',
+    'feedback',
 ]
 
 MIDDLEWARE = [
@@ -142,10 +144,17 @@ REST_FRAMEWORK = {
         'rest_framework.throttling.UserRateThrottle',
     ],
     'DEFAULT_THROTTLE_RATES': {
-        'anon': '100/hour',
-        'user': '500/hour',
+        'anon': '500/hour',
+        'user': '2000/hour',
+        'mis_chat': '20/min',
     },
 }
+
+# ── MIS Ticket — n8n webhook URL (never hardcode; set in environment) ──────────
+N8N_WEBHOOK_URL = config(
+    'N8N_WEBHOOK_URL',
+    default='http://192.168.10.244:5678/webhook/d726b12d-7241-4cbd-9624-66bd3ffeaa7d',
+)
 
 # ── Simple JWT ─────────────────────────────────────────────────────────────────
 SIMPLE_JWT = {

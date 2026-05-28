@@ -23,6 +23,7 @@ from .views import (
     UserFinanceLoanSettingsView,
     UserFinancePayslipSendEmailView,
     UserFinanceRecordsView,
+    UserFinanceUnseenCountView,
 )
 
 urlpatterns = [
@@ -49,6 +50,7 @@ urlpatterns = [
 
     # ── User-facing endpoints ───────────────────────────────────────────────
     path('my/records',                               UserFinanceRecordsView.as_view(),           name='finance-my-records'),
+    path('my/unseen-count',                          UserFinanceUnseenCountView.as_view(),       name='finance-my-unseen-count'),
     path('my/loans/<int:pk>/deductions',             UserFinanceLoanDeductionsView.as_view(),    name='finance-my-loan-deductions'),
     path('my/payslips/<int:pk>/send-email',          UserFinancePayslipSendEmailView.as_view(),  name='finance-my-payslip-send-email'),
     path('my/loan-settings',                         UserFinanceLoanSettingsView.as_view(),      name='finance-my-loan-settings'),

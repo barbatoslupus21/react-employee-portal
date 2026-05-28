@@ -69,3 +69,29 @@ class CalendarEvent(models.Model):
 
     def __str__(self):
         return f"{self.title} on {self.date}"
+
+
+class EventParticipantSeen(models.Model):
+    """Tracks whether a user has already viewed a calendar event."""
+
+    event = models.ForeignKey(
+        CalendarEvent,
+        on_delete=models.CASCADE,
+        related_name='participant_seen_records',
+    )
+    user = models.ForeignKey(
+        loginCredentials,
+        on_delete=models.CASCADE,
+        related_name='calendar_event_seen_records',
+    )
+    seen = models.BooleanField(default=False, db_index=True)
+    seen_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('event', 'user')
+        ordering = ['-updated_at']
+
+    def __str__(self):
+        return f"event={self.event_id} user={self.user_id} seen={self.seen}"

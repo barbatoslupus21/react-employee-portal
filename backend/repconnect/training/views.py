@@ -74,6 +74,148 @@ def _eligible_recipients():
     return User.objects.filter(is_active=True, admin=False, hr=False, accounting=False)
 
 
+class AdminTrainingEvaluationRoutingRuleListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        denied = _require_admin_or_hr(request)
+        if denied:
+            return denied
+
+        from training.models import EvaluationRoutingRule
+
+        rules = (
+            EvaluationRoutingRule.objects
+            .filter(module=EvaluationRoutingRule.MODULE_TRAINING_EVALUATION)
+            .prefetch_related('positions', 'departments', 'steps__target_positions')
+            .order_by('description')
+        )
+
+        return Response([
+            {
+                'id': rule.id,
+                'description': rule.description,
+                'is_active': rule.is_active,
+                'positions': [position.name for position in rule.positions.all()],
+                'departments': [department.name for department in rule.departments.all()],
+                'steps': [
+                    {
+                        'position_ids': [p.id for p in step.target_positions.all()],
+                    }
+                    for step in rule.steps.all()
+                ],
+            }
+            for rule in rules
+        ])
+
+    def post(self, request):
+        denied = _require_admin_or_hr(request)
+        if denied:
+            return denied
+
+        from generalsettings.models import Department, Position
+        from training.models import EvaluationRoutingRule, EvaluationRoutingRuleStep
+
+        payload = request.data
+        module = payload.get('module') or EvaluationRoutingRule.MODULE_TRAINING_EVALUATION
+        if module != EvaluationRoutingRule.MODULE_TRAINING_EVALUATION:
+            return Response({'detail': 'Invalid module.'}, status=http_status.HTTP_400_BAD_REQUEST)
+
+        description = str(payload.get('description', '')).strip()
+        position_ids = [int(x) for x in payload.get('position_ids', []) if isinstance(x, (int, str)) and str(x).isdigit()]
+        department_ids = [int(x) for x in payload.get('department_ids', []) if isinstance(x, (int, str)) and str(x).isdigit()]
+        steps = payload.get('steps', []) or []
+
+        with transaction.atomic():
+            rule = EvaluationRoutingRule.objects.create(
+                description=description,
+                module=module,
+                is_active=True,
+            )
+            rule.positions.set(Position.objects.filter(id__in=position_ids))
+            rule.departments.set(Department.objects.filter(id__in=department_ids))
+
+            if not steps:
+                steps = [{'position_ids': []}]
+
+            for index, step_data in enumerate(steps, start=1):
+                step = EvaluationRoutingRuleStep.objects.create(
+                    rule=rule,
+                    step_order=index,
+                )
+                position_ids_for_step = [
+                    int(x) for x in step_data.get('position_ids', [])
+                    if isinstance(x, (int, str)) and str(x).isdigit()
+                ]
+                step.target_positions.set(Position.objects.filter(id__in=position_ids_for_step))
+
+            return Response({'id': rule.id}, status=http_status.HTTP_201_CREATED)
+
+
+class AdminTrainingEvaluationRoutingRuleDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, pk):
+        denied = _require_admin_or_hr(request)
+        if denied:
+            return denied
+
+        from training.models import EvaluationRoutingRule
+
+        try:
+            rule = EvaluationRoutingRule.objects.get(
+                pk=pk, module=EvaluationRoutingRule.MODULE_TRAINING_EVALUATION
+            )
+        except EvaluationRoutingRule.DoesNotExist:
+            return Response({'detail': 'Not found.'}, status=http_status.HTTP_404_NOT_FOUND)
+
+        rule.delete()
+        return Response(status=http_status.HTTP_204_NO_CONTENT)
+
+    def put(self, request, pk):
+        denied = _require_admin_or_hr(request)
+        if denied:
+            return denied
+
+        from generalsettings.models import Department, Position
+        from training.models import EvaluationRoutingRule, EvaluationRoutingRuleStep
+
+        try:
+            rule = EvaluationRoutingRule.objects.get(
+                pk=pk, module=EvaluationRoutingRule.MODULE_TRAINING_EVALUATION
+            )
+        except EvaluationRoutingRule.DoesNotExist:
+            return Response({'detail': 'Not found.'}, status=http_status.HTTP_404_NOT_FOUND)
+
+        payload = request.data
+        description = str(payload.get('description', '')).strip()
+        position_ids = [int(x) for x in payload.get('position_ids', []) if isinstance(x, (int, str)) and str(x).isdigit()]
+        department_ids = [int(x) for x in payload.get('department_ids', []) if isinstance(x, (int, str)) and str(x).isdigit()]
+        steps = payload.get('steps', []) or []
+
+        with transaction.atomic():
+            rule.description = description
+            rule.positions.set(Position.objects.filter(id__in=position_ids))
+            rule.departments.set(Department.objects.filter(id__in=department_ids))
+            rule.save()
+
+            rule.steps.all().delete()
+            if not steps:
+                steps = [{'position_ids': []}]
+            for index, step_data in enumerate(steps, start=1):
+                step = EvaluationRoutingRuleStep.objects.create(
+                    rule=rule,
+                    step_order=index,
+                )
+                position_ids_for_step = [
+                    int(x) for x in step_data.get('position_ids', [])
+                    if isinstance(x, (int, str)) and str(x).isdigit()
+                ]
+                step.target_positions.set(Position.objects.filter(id__in=position_ids_for_step))
+
+            return Response({'id': rule.id})
+
+
 def _get_training_status(training_date: date) -> str:
     today = date.today()
     if training_date > today:

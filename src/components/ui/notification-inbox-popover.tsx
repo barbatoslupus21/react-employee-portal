@@ -32,13 +32,21 @@ interface ApiNotification {
 /** Map a notification's module slug to its dashboard route. */
 function getModuleRoute(module: string): string {
   const MAP: Record<string, string> = {
-    'certification': '/dashboard/certification',
-    'pr-form':       '/dashboard/pr-form',
-    'calendar':      '/dashboard/calendar',
-    'hr':            '/dashboard/hr',
-    'clinic':        '/dashboard/clinic',
-    'news':          '/dashboard/news',
-    'accounting':    '/dashboard/accounting',
+    'certification':      '/dashboard/certification',
+    'pr-form':            '/dashboard/pr-form',
+    'calendar':           '/dashboard/calendar',
+    'finance':            '/dashboard/finance',
+    'training':           '/dashboard/assessments/training-evaluation',
+    'employee_evaluation':'/dashboard/assessments/employee-evaluation',
+    'leave':              '/dashboard/leave',
+    'survey':             '/dashboard/assessments/survey',
+    'announcements':      '/dashboard/announcements',
+    'mis-ticket':         '/dashboard/mis-ticket',
+    'certificates':       '/dashboard/certification',
+    'news':               '/dashboard/news',
+    'accounting':         '/dashboard/finance',
+    'clinic':             '/dashboard/clinic',
+    'hr':                 '/dashboard/hr',
   };
   return MAP[module] ?? '/dashboard';
 }
@@ -160,10 +168,15 @@ export function NotificationInboxPopover() {
       >
         {/* Header */}
         <div className="flex items-center justify-between border-b border-[var(--color-border)] px-3 py-2.5">
-          <span className="text-sm font-semibold text-[var(--color-text-primary)]">
-            Notifications
-          </span>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 justify-between w-full">
+            <AnimatedTabs
+              className="dark:bg-[var(--color-bg)]"
+              itemClassName="text-[10px]"
+              tabs={notifTabs}
+              defaultTab="all"
+              onChange={setTab}
+            />
+            
             {unreadCount > 0 && (
               <button
                 onClick={handleMarkAllRead}
@@ -172,11 +185,7 @@ export function NotificationInboxPopover() {
                 Mark all read
               </button>
             )}
-            <AnimatedTabs
-              tabs={notifTabs}
-              defaultTab="all"
-              onChange={setTab}
-            />
+            
           </div>
         </div>
 
@@ -198,11 +207,11 @@ export function NotificationInboxPopover() {
                     hover:bg-[var(--color-bg-card)]"
                 >
                   <div className="mt-0.5 shrink-0 text-[var(--color-text-muted)]">
-                    <Icon size={16} />
+                    {/* <Icon size={16} /> */}
                   </div>
                   <div className="flex-1 min-w-0 space-y-0.5">
                     <p
-                      className={`text-sm leading-snug ${
+                      className={`text-xs leading-snug ${
                         !n.is_read
                           ? "font-semibold text-[var(--color-text-primary)]"
                           : "text-[var(--color-text-secondary)]"
@@ -210,10 +219,10 @@ export function NotificationInboxPopover() {
                     >
                       {n.title}
                     </p>
-                    <p className="text-xs text-[var(--color-text-muted)] line-clamp-2">
+                    <p className="text-[12px] text-[var(--color-text-muted)]">
                       {n.message}
                     </p>
-                    <p className="text-[11px] text-[var(--color-text-muted)]">
+                    <p className="text-[10px] text-[var(--color-text-muted)]">
                       {fmtRelative(n.created_at)}
                     </p>
                   </div>

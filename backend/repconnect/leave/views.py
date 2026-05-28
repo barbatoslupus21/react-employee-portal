@@ -14,14 +14,18 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from io import BytesIO
 
+from django.db import IntegrityError, transaction
 from django.db import transaction
-from django.db.models import Case, IntegerField, OuterRef, Prefetch, Q, Subquery, Sum, Value, When
+from django.db.models import Case, DecimalField, ExpressionWrapper, F, IntegerField, OuterRef, Prefetch, Q, Subquery, Sum, Value, When
+from django.db.models.functions import Greatest
+from django.http import HttpResponse
 from django.utils import timezone
 from rest_framework import status as http_status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from generalsettings.workdays import get_configured_hours_per_day, get_configured_weekday_durations, get_configured_workdays
 from systemCalendar.models import CalendarEvent
 
 from .models import (
@@ -46,10 +50,29 @@ from .serializers import (
     LeaveSubreasonAdminSerializer,
     LeaveTypeAdminSerializer,
     LeaveTypeSerializer,
+    LeaveBalanceAdminUpdateSerializer,
 )
 
 logger = logging.getLogger(__name__)
 PAGE_SIZE = 10
+
+
+BALANCE_ORDERING_MAP = {
+    'employee_name': ['employee__lastname', 'employee__firstname', '-id'],
+    '-employee_name': ['-employee__lastname', '-employee__firstname', '-id'],
+    'department': ['employee__workinformation__department__name', '-id'],
+    '-department': ['-employee__workinformation__department__name', '-id'],
+    'leave_type': ['leave_type__name', '-id'],
+    '-leave_type': ['-leave_type__name', '-id'],
+    'period': ['period_start', 'period_end', '-id'],
+    '-period': ['-period_start', '-period_end', '-id'],
+    'balance': ['entitled_leave', '-id'],
+    '-balance': ['-entitled_leave', '-id'],
+    'used': ['used_leave', '-id'],
+    '-used': ['-used_leave', '-id'],
+    'remaining': ['remaining_hours', '-id'],
+    '-remaining': ['-remaining_hours', '-id'],
+}
 
 
 # ── Permission helpers ─────────────────────────────────────────────────────────
@@ -64,6 +87,151 @@ def _require_admin(request):
     if not getattr(request.user, 'admin', False):
         return Response({'detail': 'Permission denied.'}, status=http_status.HTTP_403_FORBIDDEN)
     return None
+
+
+class LeaveRoutingRuleListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        denied = _require_admin_or_hr(request)
+        if denied:
+            return denied
+
+        from .models import LeaveRoutingRule
+
+        rules = (
+            LeaveRoutingRule.objects
+            .prefetch_related('positions', 'departments', 'steps__target_positions')
+            .order_by('description')
+        )
+
+        return Response([
+            {
+                'id': rule.id,
+                'description': rule.description,
+                'is_active': rule.is_active,
+                'positions': [position.name for position in rule.positions.all()],
+                'departments': [department.name for department in rule.departments.all()],
+                'steps': [
+                    {
+                        'step_order': step.step_order,
+                        'position_ids': list(step.target_positions.values_list('id', flat=True)),
+                    }
+                    for step in rule.steps.all()
+                ],
+            }
+            for rule in rules
+        ])
+
+    def post(self, request):
+        denied = _require_admin(request)
+        if denied:
+            return denied
+
+        from .models import LeaveRoutingRule, LeaveRoutingStep
+        from generalsettings.models import Position, Department
+
+        description = (request.data.get('description') or '').strip()
+        if not description:
+            return Response({'detail': 'description is required.'}, status=http_status.HTTP_400_BAD_REQUEST)
+
+        position_ids = request.data.get('position_ids') or []
+        department_ids = request.data.get('department_ids') or []
+        steps_data = request.data.get('steps') or []
+
+        with transaction.atomic():
+            rule = LeaveRoutingRule.objects.create(description=description, is_active=True)
+            rule.positions.set(Position.objects.filter(id__in=position_ids))
+            rule.departments.set(Department.objects.filter(id__in=department_ids))
+            for i, step in enumerate(steps_data, 1):
+                step_obj = LeaveRoutingStep.objects.create(rule=rule, step_order=i)
+                step_position_ids = step.get('position_ids') or []
+                if step_position_ids:
+                    step_obj.target_positions.set(Position.objects.filter(id__in=step_position_ids))
+
+        rule.refresh_from_db()
+        return Response(
+            {
+                'id': rule.id,
+                'description': rule.description,
+                'is_active': rule.is_active,
+                'positions': [p.name for p in rule.positions.all()],
+                'departments': [d.name for d in rule.departments.all()],
+                'steps': [
+                    {
+                        'step_order': s.step_order,
+                        'position_ids': list(s.target_positions.values_list('id', flat=True)),
+                    }
+                    for s in rule.steps.all()
+                ],
+            },
+            status=http_status.HTTP_201_CREATED,
+        )
+
+    def put(self, request, pk):
+        denied = _require_admin(request)
+        if denied:
+            return denied
+
+        from .models import LeaveRoutingRule, LeaveRoutingStep
+        from generalsettings.models import Position, Department
+
+        try:
+            rule = LeaveRoutingRule.objects.get(pk=pk)
+        except LeaveRoutingRule.DoesNotExist:
+            return Response({'detail': 'Not found.'}, status=http_status.HTTP_404_NOT_FOUND)
+
+        description = (request.data.get('description') or '').strip()
+        if not description:
+            return Response({'detail': 'description is required.'}, status=http_status.HTTP_400_BAD_REQUEST)
+
+        position_ids = request.data.get('position_ids') or []
+        department_ids = request.data.get('department_ids') or []
+        steps_data = request.data.get('steps') or []
+
+        with transaction.atomic():
+            rule.description = description
+            rule.save(update_fields=['description', 'updated_at'])
+            rule.positions.set(Position.objects.filter(id__in=position_ids))
+            rule.departments.set(Department.objects.filter(id__in=department_ids))
+            rule.steps.all().delete()
+            for i, step in enumerate(steps_data, 1):
+                step_obj = LeaveRoutingStep.objects.create(rule=rule, step_order=i)
+                step_position_ids = step.get('position_ids') or []
+                if step_position_ids:
+                    step_obj.target_positions.set(Position.objects.filter(id__in=step_position_ids))
+
+        return Response(
+            {
+                'id': rule.id,
+                'description': rule.description,
+                'is_active': rule.is_active,
+                'positions': [p.name for p in rule.positions.all()],
+                'departments': [d.name for d in rule.departments.all()],
+                'steps': [
+                    {
+                        'step_order': s.step_order,
+                        'position_ids': list(s.target_positions.values_list('id', flat=True)),
+                    }
+                    for s in rule.steps.all()
+                ],
+            }
+        )
+
+    def delete(self, request, pk):
+        denied = _require_admin(request)
+        if denied:
+            return denied
+
+        from .models import LeaveRoutingRule
+
+        try:
+            rule = LeaveRoutingRule.objects.get(pk=pk)
+        except LeaveRoutingRule.DoesNotExist:
+            return Response({'detail': 'Not found.'}, status=http_status.HTTP_404_NOT_FOUND)
+
+        rule.delete()
+        return Response(status=http_status.HTTP_204_NO_CONTENT)
 
 
 # ── Holiday Range View ─────────────────────────────────────────────────────────
@@ -115,6 +283,10 @@ class HolidayRangeView(APIView):
             .values_list('date', flat=True)
         )
 
+        hours_per_day = get_configured_hours_per_day()
+        half_day_hours = (hours_per_day / Decimal('2')).quantize(Decimal('0.1'))
+        weekday_durations = get_configured_weekday_durations()
+
         return Response({
             'holidays': [
                 {
@@ -125,12 +297,58 @@ class HolidayRangeView(APIView):
                 for h in holidays
             ],
             'sunday_exemptions': [d.isoformat() for d in sunday_exemptions],
+            'workdays': get_configured_workdays(),
+            'hours_per_day': str(hours_per_day),
+            'half_day_hours': str(half_day_hours),
+            'weekday_durations': {str(day): str(hours) for day, hours in weekday_durations.items()},
         })
 
 
 # ── Email helpers ──────────────────────────────────────────────────────────────
 
-def _build_leave_email(lr, final_status: str):
+def _format_days_hours(hours: Decimal, hours_per_day: Decimal) -> str:
+    days = (hours / hours_per_day).quantize(Decimal('0.01'))
+    hours_text = hours.quantize(Decimal('0.1'))
+    return f'{days} days ({hours_text} hours)'
+
+
+def _build_leave_balance_notice(lr, deducted_hours: Decimal, remaining_after: Decimal) -> str | None:
+    if deducted_hours <= Decimal('0') and remaining_after == Decimal('0'):
+        # Balance was already zero and no deduction occurred.
+        total_hours = Decimal(str(getattr(lr, 'total_hours', lr.hours)))
+        if total_hours <= Decimal('0'):
+            return None
+        hours_per_day = get_configured_hours_per_day()
+        covered_text = _format_days_hours(Decimal('0'), hours_per_day)
+        excess_text = _format_days_hours(total_hours, hours_per_day)
+        return (
+            f'Please note that your {lr.leave_type.name} balance was only sufficient to cover {covered_text} of this leave request. '
+            f'A deduction of {covered_text} has been applied and your remaining balance is now 0 days (0 hours). '
+            f'The remaining {excess_text} of this leave were approved without a corresponding balance deduction.'
+        )
+
+    total_hours = Decimal(str(getattr(lr, 'total_hours', lr.hours)))
+    hours_per_day = get_configured_hours_per_day()
+
+    if deducted_hours == total_hours and remaining_after == Decimal('0'):
+        return (
+            f'Please note that this leave approval has fully consumed your remaining {lr.leave_type.name} balance. '
+            f'Your current balance is now 0 days (0 hours).'
+        )
+
+    if deducted_hours < total_hours:
+        covered_text = _format_days_hours(deducted_hours, hours_per_day)
+        remaining_text = _format_days_hours(total_hours - deducted_hours, hours_per_day)
+        return (
+            f'Please note that your {lr.leave_type.name} balance was only sufficient to cover {covered_text} of this leave request. '
+            f'A deduction of {covered_text} has been applied and your remaining balance is now 0 days (0 hours). '
+            f'The remaining {remaining_text} of this leave were approved without a corresponding balance deduction.'
+        )
+
+    return None
+
+
+def _build_leave_email(lr, final_status: str, balance_notice: str | None = None):
     """Return (subject, body) tailored to final_status."""
     employee = lr.employee
     first_name = employee.firstname or employee.idnumber
@@ -146,8 +364,11 @@ def _build_leave_email(lr, final_status: str):
             f'(Control No: {control_no}) has been successfully approved.\n\n'
             f'Your requested leave schedule from {date_from} to {date_to} has been confirmed. '
             f'Please ensure proper coordination with your team prior to your leave dates.\n\n'
-            f'If applicable, your leave balance has been updated accordingly.\n\n'
-            f'Thank you.'
+        )
+        if balance_notice:
+            body += f'{balance_notice}\n\n'
+        body += (
+            f'Thank you.\n\n'
             f'RepConnect'
         )
     else:
@@ -159,13 +380,13 @@ def _build_leave_email(lr, final_status: str):
             f'You may review the request details and routing history in the system '
             f'for further information. If needed, you may coordinate with your approver '
             f'for clarification.\n\n'
-            f'Thank you.'
+            f'Thank you.\n\n'
             f'RepConnect'
         )
     return subject, body
 
 
-def _send_leave_email_task(leave_request_pk: int, final_status: str) -> None:
+def _send_leave_email_task(leave_request_pk: int, final_status: str, balance_notice: str | None = None) -> None:
     """Send final-status email to the employee. Called inside on_commit — non-blocking."""
     try:
         from generalsettings.models import EmailConfiguration
@@ -184,7 +405,7 @@ def _send_leave_email_task(leave_request_pk: int, final_status: str) -> None:
         logger.warning('leave: Employee %s has no email address.', lr.employee.idnumber)
         return
 
-    subject, body = _build_leave_email(lr, final_status)
+    subject, body = _build_leave_email(lr, final_status, balance_notice)
 
     msg = MIMEMultipart()
     from_addr = (
@@ -316,8 +537,11 @@ def _notify_leave_cancelled(leave_request_pk: int) -> None:
 
 # ── Balance helpers ────────────────────────────────────────────────────────────
 
-def _deduct_leave_balance(leave_request) -> None:
-    """Deduct days_count from the matching LeaveBalance. Never goes below 0."""
+def _deduct_leave_balance(leave_request) -> tuple[Decimal, Decimal] | None:
+    """Deduct filed hours from the matching LeaveBalance. Never goes below 0.
+
+    Returns a tuple of (deducted_hours, remaining_balance_after_deduction), or None
+    if no balance record is found."""
     balance = (
         LeaveBalance.objects.select_for_update()
         .filter(
@@ -335,18 +559,20 @@ def _deduct_leave_balance(leave_request) -> None:
             leave_request.leave_type_id,
             leave_request.date_start,
         )
-        return
+        return None
 
-    days = Decimal(str(leave_request.days_count))
+    deduct_hours = Decimal(str(getattr(leave_request, 'total_hours', leave_request.hours)))
     remaining = max(balance.entitled_leave - balance.used_leave, Decimal('0'))
-    deduct = min(days, remaining)
+    deduct = min(deduct_hours, remaining)
     if deduct > 0:
         balance.used_leave = balance.used_leave + deduct
         balance.save(update_fields=['used_leave'])
 
+    return deduct, max(remaining - deduct, Decimal('0'))
+
 
 def _restore_leave_balance(leave_request) -> None:
-    """Restore previously deducted days back to LeaveBalance."""
+    """Restore previously deducted hours back to LeaveBalance."""
     balance = (
         LeaveBalance.objects.select_for_update()
         .filter(
@@ -360,8 +586,8 @@ def _restore_leave_balance(leave_request) -> None:
     if not balance:
         return
 
-    days = Decimal(str(leave_request.days_count))
-    balance.used_leave = max(balance.used_leave - days, Decimal('0'))
+    restore_hours = Decimal(str(getattr(leave_request, 'total_hours', leave_request.hours)))
+    balance.used_leave = max(balance.used_leave - restore_hours, Decimal('0'))
     balance.save(update_fields=['used_leave'])
 
 
@@ -371,14 +597,26 @@ def _finalize_leave(leave_request) -> None:
     """
     Called when the last approval step is completed.
 
-    Determines final status (respecting manager_disapproved flag),
-    deducts balance if applicable, and fires email + in-app notifications.
+    Guard: if the overall leave request status is already 'disapproved' (set by
+    a manager, clinic, or IAD step earlier in the chain), or the manager_disapproved
+    flag is set, the final status must remain 'disapproved' regardless of the
+    current routing step action — even if HR records their step as 'approved'.
+    No balance deduction is applied and the disapproval email is sent.
+
     Must be called inside a transaction.atomic() block.
     """
     lr = LeaveRequest.objects.select_for_update().get(pk=leave_request.pk)
-    # Any step (manager, clinic, iad, or hr) having 'disapproved' status ends the chain
+
+    # Primary guard: check the overall request status first (covers manager/hr
+    # disapproval paths where status is set immediately in the view).
+    # Fallback: scan steps for clinic/IAD disapprovals that don't set lr.status directly.
     any_step_disapproved = lr.approval_steps.filter(status='disapproved').exists()
-    final_status = 'disapproved' if (lr.manager_disapproved or any_step_disapproved) else 'approved'
+    already_disapproved = (
+        lr.status == 'disapproved'
+        or lr.manager_disapproved
+        or any_step_disapproved
+    )
+    final_status = 'disapproved' if already_disapproved else 'approved'
 
     update_fields = ['updated_at']
 
@@ -386,16 +624,24 @@ def _finalize_leave(leave_request) -> None:
         lr.status = final_status
         update_fields.append('status')
 
+    if final_status in ('approved', 'disapproved'):
+        lr.seen = False
+        update_fields.append('seen')
+
+    balance_notice = None
     if final_status == 'approved':
         lr.hr_approved_at = timezone.now()
         update_fields.append('hr_approved_at')
         if lr.is_deductible and lr.leave_type.has_balance:
-            _deduct_leave_balance(lr)
+            result = _deduct_leave_balance(lr)
+            if result is not None:
+                deducted_hours, remaining_after = result
+                balance_notice = _build_leave_balance_notice(lr, deducted_hours, remaining_after)
 
     lr.save(update_fields=update_fields)
 
     lr_pk = lr.pk
-    transaction.on_commit(lambda: _send_leave_email_task(lr_pk, final_status))
+    transaction.on_commit(lambda: _send_leave_email_task(lr_pk, final_status, balance_notice))
     transaction.on_commit(lambda: _schedule_leave_notification(lr_pk, final_status))
 
 
@@ -549,12 +795,15 @@ class LeaveRequestListCreateView(APIView):
             subreason=d.get('subreason'),
             date_start=date_start,
             date_end=date_end,
+            total_hours=d['total_hours'],
+            total_days=d['total_days'],
             hours=d['hours'],
             days_count=d['days_count'],
             is_deductible=leave_type.deductible,
             status='pending',
             control_number=control_number,
             remarks=d.get('remarks', ''),
+            seen=True,
         )
 
         # Build routing — raises ValidationError if pre-flight fails (rolls back)
@@ -603,6 +852,88 @@ class LeaveRequestDetailView(APIView):
                 return Response({'detail': 'Not found.'}, status=http_status.HTTP_404_NOT_FOUND)
 
         return Response(LeaveRequestDetailSerializer(lr, context={'request': request}).data)
+
+
+def _annotated_with_active_step(qs):
+    active_step_rg = Subquery(
+        LeaveApprovalStep.objects
+        .filter(leave_request=OuterRef('pk'), status='pending')
+        .order_by('sequence')
+        .values('role_group')[:1]
+    )
+    active_step_approver = Subquery(
+        LeaveApprovalStep.objects
+        .filter(leave_request=OuterRef('pk'), status='pending')
+        .order_by('sequence')
+        .values('approver_id')[:1]
+    )
+    return qs.annotate(
+        _active_step_rg=active_step_rg,
+        _active_step_approver=active_step_approver,
+    )
+
+
+class LeaveMyUnseenCountView(APIView):
+    """GET /api/leave/requests/unseen-count"""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        unseen_count = LeaveRequest.objects.filter(
+            employee=request.user,
+            status__in=['approved', 'disapproved'],
+            seen=False,
+        ).count()
+        return Response({'unseen_count': unseen_count})
+
+
+class LeaveMyPendingApprovalCountView(APIView):
+    """GET /api/leave/approval/pending-count"""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        base_qs = _annotated_with_active_step(
+            LeaveRequest.objects.exclude(employee=user)
+        )
+
+        if getattr(user, 'admin', False) or getattr(user, 'hr', False):
+            count = base_qs.filter(_active_step_rg='hr').count()
+            return Response({'pending_count': count})
+
+        is_clinic = getattr(user, 'clinic', False)
+        is_iad = getattr(user, 'iad', False)
+
+        # Clinic/IAD badges must reflect only requests currently waiting on
+        # their respective active role-group step.
+        if is_clinic or is_iad:
+            filters = Q()
+            if is_clinic:
+                filters |= Q(_active_step_rg='clinic')
+            if is_iad:
+                filters |= Q(_active_step_rg='iad')
+        else:
+            filters = Q(_active_step_approver=user.pk)
+
+        count = base_qs.filter(filters).count()
+        return Response({'pending_count': count})
+
+
+class LeaveRequestMarkSeenView(APIView):
+    """PATCH /api/leave/requests/<pk>/mark-seen"""
+    permission_classes = [IsAuthenticated]
+
+    @transaction.atomic
+    def patch(self, request, pk):
+        try:
+            lr = LeaveRequest.objects.select_for_update().get(pk=pk, employee=request.user)
+        except LeaveRequest.DoesNotExist:
+            return Response({'detail': 'Not found.'}, status=http_status.HTTP_404_NOT_FOUND)
+
+        if not lr.seen:
+            lr.seen = True
+            lr.save(update_fields=['seen', 'updated_at'])
+
+        return Response({'seen': True})
 
 
 class LeaveRequestCancelView(APIView):
@@ -739,13 +1070,15 @@ class LeaveRequestEditView(APIView):
         lr.subreason = d.get('subreason')
         lr.date_start = d['date_start']
         lr.date_end = d['date_end']
+        lr.total_hours = d['total_hours']
+        lr.total_days = d['total_days']
         lr.hours = d['hours']
         lr.days_count = d['days_count']
         lr.is_deductible = leave_type.deductible
         lr.remarks = d.get('remarks', '')
         lr.save(update_fields=[
             'leave_type', 'reason', 'subreason', 'date_start', 'date_end',
-            'hours', 'days_count', 'is_deductible', 'remarks', 'updated_at',
+            'total_hours', 'total_days', 'hours', 'days_count', 'is_deductible', 'remarks', 'updated_at',
         ])
 
         return Response(
@@ -831,11 +1164,13 @@ class LeaveApprovalView(APIView):
             # Manager disapproval — flag and immediately set overall status
             lr.manager_disapproved = True
             lr.status = 'disapproved'
-            lr.save(update_fields=['manager_disapproved', 'status', 'updated_at'])
+            lr.seen = False
+            lr.save(update_fields=['manager_disapproved', 'status', 'seen', 'updated_at'])
         elif action == 'disapproved' and step.role_group == 'hr':
             # HR disapproval — immediately set overall status and skip all remaining steps
             lr.status = 'disapproved'
-            lr.save(update_fields=['status', 'updated_at'])
+            lr.seen = False
+            lr.save(update_fields=['status', 'seen', 'updated_at'])
             LeaveApprovalStep.objects.filter(
                 leave_request=lr, status='pending'
             ).update(status='skipped')
@@ -1239,6 +1574,274 @@ class AdminLeaveSubreasonView(APIView):
         return Response(status=http_status.HTTP_204_NO_CONTENT)
 
 
+class AdminLeaveBalanceListView(APIView):
+    """GET /api/leave/admin/balances — paginated leave balances across all employees."""
+    permission_classes = [IsAuthenticated]
+
+    @staticmethod
+    def _employee_name(emp) -> str:
+        last = (getattr(emp, 'lastname', '') or '').strip()
+        first = (getattr(emp, 'firstname', '') or '').strip()
+        if last and first:
+            return f'{last}, {first}'
+        return getattr(emp, 'idnumber', '') or ''
+
+    @staticmethod
+    def _employee_department(emp) -> str:
+        if not emp:
+            return ''
+        wi = emp.workinformation_set.select_related('department').order_by('-created_at').first()
+        return wi.department.name if wi and wi.department else ''
+
+    def get(self, request):
+        try:
+            err = _require_admin_or_hr(request)
+            if err:
+                return err
+
+            base_qs = (
+                LeaveBalance.objects
+                .select_related('employee', 'leave_type')
+                .prefetch_related('employee__workinformation_set__department')
+                .annotate(
+                    remaining_hours=Case(
+                        When(entitled_leave__gt=F('used_leave'), then=ExpressionWrapper(
+                            F('entitled_leave') - F('used_leave'),
+                            output_field=DecimalField(max_digits=8, decimal_places=1),
+                        )),
+                        default=Value(0),
+                        output_field=DecimalField(max_digits=8, decimal_places=1),
+                    )
+                )
+            )
+
+            search_q = request.query_params.get('search', '').strip()
+            if search_q:
+                base_qs = base_qs.filter(
+                    Q(employee__idnumber__icontains=search_q)
+                    | Q(employee__firstname__icontains=search_q)
+                    | Q(employee__lastname__icontains=search_q)
+                    | Q(leave_type__name__icontains=search_q)
+                    | Q(employee__workinformation__department__name__icontains=search_q)
+                )
+
+            leave_type_filter = request.query_params.get('leave_type', '').strip()
+            if leave_type_filter:
+                base_qs = base_qs.filter(leave_type_id=leave_type_filter)
+
+            department_filter = request.query_params.get('department', '').strip()
+            if department_filter:
+                base_qs = base_qs.filter(
+                    employee__workinformation__department__name=department_filter
+                )
+
+            ordering = request.query_params.get('ordering', '').strip()
+            base_qs = base_qs.order_by(*(BALANCE_ORDERING_MAP.get(ordering) or ['-created_at', '-id']))
+
+            try:
+                page = max(int(request.query_params.get('page', 1)), 1)
+            except ValueError:
+                page = 1
+
+            total = base_qs.count()
+            offset = (page - 1) * PAGE_SIZE
+            rows = base_qs[offset: offset + PAGE_SIZE]
+
+            hours_per_day = get_configured_hours_per_day()
+            results = []
+            for b in rows:
+                employee = getattr(b, 'employee', None)
+                leave_type = getattr(b, 'leave_type', None)
+                entitled_hours = Decimal(str(getattr(b, 'entitled_leave', 0))).quantize(Decimal('0.1'))
+                used_hours = Decimal(str(getattr(b, 'used_leave', 0))).quantize(Decimal('0.1'))
+                remaining_hours = Decimal(str(getattr(b, 'remaining_hours', 0))).quantize(Decimal('0.1'))
+
+                entitled_days = (entitled_hours / hours_per_day).quantize(Decimal('0.01'))
+                used_days = (used_hours / hours_per_day).quantize(Decimal('0.01'))
+                remaining_days = (remaining_hours / hours_per_day).quantize(Decimal('0.01'))
+
+                results.append({
+                    'id': b.id,
+                    'employee_name': self._employee_name(employee),
+                    'employee_id_number': getattr(employee, 'idnumber', ''),
+                    'department': self._employee_department(employee),
+                    'leave_type': getattr(leave_type, 'name', ''),
+                    'leave_type_id': getattr(b, 'leave_type_id', None),
+                    'period_start': b.period_start.isoformat(),
+                    'period_end': b.period_end.isoformat(),
+                    'balance_days': str(entitled_days),
+                    'balance_hours': str(entitled_hours),
+                    'used_days': str(used_days),
+                    'used_hours': str(used_hours),
+                    'remaining_days': str(remaining_days),
+                    'remaining_hours': str(remaining_hours),
+                })
+
+            return Response({
+                'count': total,
+                'total_pages': max(1, -(-total // PAGE_SIZE)),
+                'results': results,
+            })
+        except Exception:
+            logger.exception('Admin leave balances list failed')
+            return Response({'detail': 'Could not load leave balances.'}, status=http_status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class AdminLeaveBalanceDetailView(APIView):
+    """GET/PATCH/DELETE /api/leave/admin/balances/<pk> — edit or delete a balance record."""
+    permission_classes = [IsAuthenticated]
+
+    def _get_balance(self, pk: int):
+        return (
+            LeaveBalance.objects
+            .select_related('employee', 'leave_type')
+            .get(pk=pk)
+        )
+
+    def get(self, request, pk):
+        err = _require_admin_or_hr(request)
+        if err:
+            return err
+        try:
+            balance = self._get_balance(pk)
+        except LeaveBalance.DoesNotExist:
+            return Response({'detail': 'Not found.'}, status=http_status.HTTP_404_NOT_FOUND)
+        return Response({
+            'id': balance.id,
+            'employee_id': balance.employee_id,
+            'employee_name': AdminLeaveBalanceListView._employee_name(balance.employee),
+            'employee_id_number': getattr(balance.employee, 'idnumber', ''),
+            'department': AdminLeaveBalanceListView._employee_department(balance.employee),
+            'leave_type_id': balance.leave_type_id,
+            'leave_type': balance.leave_type.name if balance.leave_type else '',
+            'period_start': balance.period_start.isoformat(),
+            'period_end': balance.period_end.isoformat(),
+            'balance_days': str((Decimal(str(balance.entitled_leave)) / get_configured_hours_per_day()).quantize(Decimal('0.01'))),
+            'balance_hours': str(Decimal(str(balance.entitled_leave)).quantize(Decimal('0.1'))),
+        })
+
+    @transaction.atomic
+    def patch(self, request, pk):
+        err = _require_admin_or_hr(request)
+        if err:
+            return err
+        try:
+            balance = LeaveBalance.objects.select_for_update().select_related('employee', 'leave_type').get(pk=pk)
+        except LeaveBalance.DoesNotExist:
+            return Response({'detail': 'Not found.'}, status=http_status.HTTP_404_NOT_FOUND)
+
+        serializer = LeaveBalanceAdminUpdateSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=http_status.HTTP_400_BAD_REQUEST)
+
+        balance.leave_type_id = serializer.validated_data['leave_type_id']
+        balance.period_start = serializer.validated_data['period_start']
+        balance.period_end = serializer.validated_data['period_end']
+        balance.entitled_leave = serializer.validated_data['balance_hours'].quantize(Decimal('0.1'))
+        balance.used_leave = serializer.validated_data['used_hours'].quantize(Decimal('0.1'))
+        try:
+            balance.save()
+        except IntegrityError:
+            return Response({'detail': 'A balance record already exists for this employee, leave type, and period.'}, status=http_status.HTTP_400_BAD_REQUEST)
+
+        return Response(self.get(request, pk).data)
+
+    @transaction.atomic
+    def delete(self, request, pk):
+        err = _require_admin_or_hr(request)
+        if err:
+            return err
+        try:
+            balance = LeaveBalance.objects.select_for_update().get(pk=pk)
+        except LeaveBalance.DoesNotExist:
+            return Response({'detail': 'Not found.'}, status=http_status.HTTP_404_NOT_FOUND)
+        balance.delete()
+        return Response(status=http_status.HTTP_204_NO_CONTENT)
+
+
+class AdminLeaveBalanceTemplateView(APIView):
+    """GET /api/leave/admin/balance-template — downloadable Excel template for balance imports."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        err = _require_admin_or_hr(request)
+        if err:
+            return err
+
+        try:
+            import openpyxl
+            from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            assert ws is not None
+            ws.title = 'Leave Balances'
+
+            headers = [
+                'ID Number',
+                'Employee Name',
+                'Leave Type',
+                'Period Start',
+                'Period End',
+                'Balance (Days)',
+            ]
+            sample_row = ['10001', 'Surname, Firstname', 'Vacation Leave', '2026-01-01', '2026-12-31', '10']
+            header_fill = PatternFill(start_color='2845D6', end_color='2845D6', fill_type='solid')
+            header_font = Font(color='FFFFFF', bold=True)
+            border = Border(
+                left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin')
+            )
+
+            leave_type_names = list(LeaveType.objects.filter(is_active=True).order_by('name').values_list('name', flat=True))
+
+            for col_idx, value in enumerate(headers, start=1):
+                cell = ws.cell(row=1, column=col_idx, value=value)
+                cell.fill = header_fill
+                cell.font = header_font
+                cell.border = border
+                cell.alignment = Alignment(horizontal='center')
+
+            # Example data row — italic grey so users recognise it as a sample
+            example_type = leave_type_names[0] if leave_type_names else 'Vacation Leave'
+            sample_row[2] = example_type
+            for col_idx, value in enumerate(sample_row, start=1):
+                cell = ws.cell(row=2, column=col_idx, value=value)
+                cell.border = border
+                cell.font = Font(color='FF888888', italic=True)
+
+            widths = [16, 24, 20, 14, 14, 16]
+            for idx, width in enumerate(widths, start=1):
+                ws.column_dimensions[openpyxl.utils.get_column_letter(idx)].width = width
+
+            if leave_type_names:
+                from openpyxl.worksheet.datavalidation import DataValidation
+                formula = '"' + ','.join(leave_type_names) + '"'
+                dv = DataValidation(
+                    type='list',
+                    formula1=formula,
+                    sqref='C2:C5000',
+                    allow_blank=True,
+                    showDropDown=False,
+                )
+                dv.error       = 'Please select a valid leave type from the dropdown list.'
+                dv.errorTitle  = 'Invalid Leave Type'
+                dv.prompt      = 'Select a leave type from the list.'
+                dv.promptTitle = 'Leave Type'
+                ws.add_data_validation(dv)
+
+            buf = BytesIO()
+            wb.save(buf)
+            response = HttpResponse(
+                buf.getvalue(),
+                content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            )
+            response['Content-Disposition'] = 'attachment; filename="leave_balance_template.xlsx"'
+            return response
+        except Exception:
+            logger.exception('Failed to generate leave balance template')
+            return Response({'detail': 'Failed to generate template.'}, status=http_status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
 class AdminBulkBalanceUploadView(APIView):
     """POST /api/leave/admin/balance-upload/ — all-or-nothing bulk balance import."""
     permission_classes = [IsAuthenticated]
@@ -1271,19 +1874,27 @@ class AdminBulkBalanceUploadView(APIView):
             return Response({'detail': 'File is empty.'}, status=http_status.HTTP_400_BAD_REQUEST)
 
         headers = [str(h or '').strip() for h in rows[0]]
-        expected_headers = ['ID Number', 'Employee Name', 'Leave Type', 'Period Start', 'Period End', 'Entitled Leave']
+        expected_headers = [
+            'ID Number',
+            'Employee Name',
+            'Leave Type',
+            'Period Start',
+            'Period End',
+            'Balance (Days)',
+        ]
 
-        def col(name):
-            try:
-                return headers.index(name)
-            except ValueError:
-                return -1
+        def col(name, alternates=None):
+            alternates = alternates or []
+            for idx, header in enumerate(headers):
+                if header == name or header in alternates:
+                    return idx
+            return -1
 
         col_id = col('ID Number')
         col_lt = col('Leave Type')
         col_ps = col('Period Start')
         col_pe = col('Period End')
-        col_el = col('Entitled Leave')
+        col_el = col('Balance (Days)', alternates=['Entitled Leave (days)', 'Entitled Leave'])
 
         if any(c == -1 for c in [col_id, col_lt, col_ps, col_pe, col_el]):
             return Response(
@@ -1292,6 +1903,7 @@ class AdminBulkBalanceUploadView(APIView):
             )
 
         import datetime as dt
+        hours_per_day = get_configured_hours_per_day()
         errors = []
         valid_rows = []
 
@@ -1318,9 +1930,14 @@ class AdminBulkBalanceUploadView(APIView):
                 row_errors.append('ID Number is required.')
             else:
                 try:
-                    employee = loginCredentials.objects.get(idnumber=id_number, is_active=True)
+                    employee = loginCredentials.objects.get(
+                        idnumber=id_number,
+                        is_active=True,
+                        admin=False,
+                        hr=False,
+                    )
                 except loginCredentials.DoesNotExist:
-                    row_errors.append(f'Employee ID "{id_number}" not found or inactive.')
+                    row_errors.append(f'Employee ID "{id_number}" not found, inactive, or not eligible for leave balances.')
 
             # Leave Type
             if not lt_name:
@@ -1338,16 +1955,26 @@ class AdminBulkBalanceUploadView(APIView):
                 period_start = period_start_raw.date()
             elif isinstance(period_start_raw, dt.date):
                 period_start = period_start_raw
+            elif isinstance(period_start_raw, str) and period_start_raw.strip():
+                try:
+                    period_start = dt.datetime.strptime(period_start_raw.strip(), '%Y-%m-%d').date()
+                except ValueError:
+                    row_errors.append('Period Start must be in YYYY-MM-DD format.')
             else:
-                row_errors.append('Period Start must be a valid date.')
+                row_errors.append('Period Start is required.')
 
             # Period End
             if isinstance(period_end_raw, dt.datetime):
                 period_end = period_end_raw.date()
             elif isinstance(period_end_raw, dt.date):
                 period_end = period_end_raw
+            elif isinstance(period_end_raw, str) and period_end_raw.strip():
+                try:
+                    period_end = dt.datetime.strptime(period_end_raw.strip(), '%Y-%m-%d').date()
+                except ValueError:
+                    row_errors.append('Period End must be in YYYY-MM-DD format.')
             else:
-                row_errors.append('Period End must be a valid date.')
+                row_errors.append('Period End is required.')
 
             if period_start and period_end and period_end < period_start:
                 row_errors.append('Period End cannot be before Period Start.')
@@ -1358,7 +1985,7 @@ class AdminBulkBalanceUploadView(APIView):
                 if entitled <= Decimal('0'):
                     row_errors.append('Entitled Leave must be greater than 0.')
             except Exception:
-                row_errors.append('Entitled Leave must be a valid positive number.')
+                row_errors.append('Balance must be a valid positive number.')
 
             if row_errors:
                 errors.append({'row': row_num, 'errors': '; '.join(row_errors), 'data': row})
@@ -1368,7 +1995,7 @@ class AdminBulkBalanceUploadView(APIView):
                     'leave_type': leave_type_obj,
                     'period_start': period_start,
                     'period_end': period_end,
-                    'entitled_leave': entitled,
+                    'entitled_leave_days': entitled,
                     'row': row_num,
                 })
 
@@ -1390,6 +2017,7 @@ class AdminBulkBalanceUploadView(APIView):
             response = HttpResponse(
                 error_bytes,
                 content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                status=http_status.HTTP_400_BAD_REQUEST,
             )
             response['Content-Disposition'] = (
                 'attachment; filename="leave_balance_upload_errors.xlsx"'
@@ -1398,12 +2026,13 @@ class AdminBulkBalanceUploadView(APIView):
 
         # All rows valid — save
         for r in valid_rows:
+            entitled_hours = (r['entitled_leave_days'] * hours_per_day).quantize(Decimal('0.1'))
             LeaveBalance.objects.update_or_create(
                 employee=r['employee'],
                 leave_type=r['leave_type'],
                 period_start=r['period_start'],
                 period_end=r['period_end'],
-                defaults={'entitled_leave': r['entitled_leave']},
+                defaults={'entitled_leave': entitled_hours},
             )
 
         return Response({'detail': f'{len(valid_rows)} balance record(s) saved successfully.'})
@@ -1423,7 +2052,6 @@ class AdminBulkBalanceUploadView(APIView):
         border = Border(left=thin, right=thin, top=thin, bottom=thin)
         header_fill = PatternFill(start_color='2845D6', end_color='2845D6', fill_type='solid')
         header_font = Font(bold=True, color='FFFFFF')
-        red_fill = PatternFill(start_color='FFCCCC', end_color='FFCCCC', fill_type='solid')
         red_font = Font(color='CC0000')
 
         for col_idx, h in enumerate(all_headers, 1):
@@ -1440,7 +2068,6 @@ class AdminBulkBalanceUploadView(APIView):
             row_data.append(err['errors'])
             for col_idx, val in enumerate(row_data, 1):
                 cell = ws.cell(row=err['row'], column=col_idx, value=str(val) if val is not None else '')
-                cell.fill = red_fill
                 cell.font = red_font
                 cell.border = border
 
@@ -1509,8 +2136,8 @@ class AdminLeaveRequestExportView(APIView):
                 reason,
                 lr.date_start.strftime('%B %d, %Y'),
                 lr.date_end.strftime('%B %d, %Y'),
-                str(lr.days_count),
-                str(lr.hours),
+                str(lr.total_days),
+                str(lr.total_hours),
                 lr.get_status_display(),
                 lr.date_prepared.strftime('%B %d, %Y'),
             ]
@@ -1648,16 +2275,16 @@ class ApprovalQueueChartView(APIView):
         # ── Query ──────────────────────────────────────────────────────
         requests_qs = (
             qs.filter(date_start__gte=date_start, date_start__lte=date_end)
-            .values('date_start', 'leave_type__name', 'days_count')
+            .values('date_start', 'leave_type__name', 'total_days')
         )
 
-        # Accumulate days_count per (bucket_label, leave_type_name)
+        # Accumulate total_days per (bucket_label, leave_type_name)
         # Keys: leave_type name → {bucket_label: total_days}
         type_bucket_map: dict[str, dict[str, Decimal]] = {}
         for row in requests_qs:
             lt_name = row['leave_type__name'] or 'Unknown'
             bucket = _bucket(row['date_start'])
-            days = Decimal(str(row['days_count']))
+            days = Decimal(str(row['total_days']))
             if lt_name not in type_bucket_map:
                 type_bucket_map[lt_name] = {}
             type_bucket_map[lt_name][bucket] = type_bucket_map[lt_name].get(bucket, Decimal('0')) + days
@@ -1831,8 +2458,8 @@ class ApprovalQueueExportView(APIView):
                 lr.reason.title,
                 lr.subreason.title if lr.subreason else '',
                 self._fmt_range(lr.date_start, lr.date_end),
-                str(lr.days_count),
-                str(lr.hours),
+                str(lr.total_days),
+                str(lr.total_hours),
                 lr.get_status_display(),
             ]
             for col_idx, val in enumerate(values, 1):

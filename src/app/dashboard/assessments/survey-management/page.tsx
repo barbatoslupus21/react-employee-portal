@@ -393,20 +393,6 @@ function SurveysPage({ user }: { user: UserData }) {
     } catch { /* ignore */ }
   }, []);
 
-  useEffect(() => {
-    if (
-      editSurveyId !== null &&
-      !survTemplateId &&
-      survTemplateType &&
-      modalTemplates.length > 0
-    ) {
-      const match = modalTemplates.find(t => t.template_type === survTemplateType);
-      if (match) {
-        setSurvTemplateId(String(match.id));
-      }
-    }
-  }, [editSurveyId, survTemplateId, survTemplateType, modalTemplates]);
-
   const fetchAllUsers = useCallback(async () => {
     setUsersLoading(true);
     try {
@@ -529,6 +515,9 @@ function SurveysPage({ user }: { user: UserData }) {
         const fe: Record<string, string> = {};
         for (const [k, v] of Object.entries(raw as Record<string, unknown>))
           fe[k] = Array.isArray(v) ? (v as string[])[0] : String(v);
+        if (fe.target_user_ids && !fe.target) fe.target = fe.target_user_ids;
+        if (fe.template_id && !fe.template) fe.template = fe.template_id;
+        if (fe.detail && !fe.title && !fe.template && !fe.target) fe.general = fe.detail;
         setSurvErrors(fe);
         return;
       }
@@ -732,7 +721,7 @@ function SurveysPage({ user }: { user: UserData }) {
         actions={showHeaderButton ? (
           <button
             onClick={openNewSurvey}
-            className="flex items-center gap-1.5 rounded-md bg-[var(--btn-primary-bg,#2845D6)] px-4 py-2 text-xs font-normal text-white hover:opacity-90 transition-opacity whitespace-nowrap"
+            className="flex items-center gap-1.5 rounded-lg bg-[var(--btn-primary-bg,#2845D6)] px-4 py-2 text-xs font-normal text-white hover:opacity-90 transition-opacity whitespace-nowrap"
           >
             <Plus className="size-4" /> New Survey
           </button>
@@ -794,6 +783,7 @@ function SurveysPage({ user }: { user: UserData }) {
                 </label>
                 <Input value={survTitle} onChange={e => setSurvTitle(e.target.value)} maxLength={200} placeholder="Enter survey title…" className={cn(survErrors.title && 'border-destructive')} />
                 {survErrors.title && <p className="text-xs text-destructive">{survErrors.title}</p>}
+                {survErrors.general && <p className="text-xs text-destructive">{survErrors.general}</p>}
               </div>
 
               <div className="flex flex-col gap-1.5">
@@ -867,14 +857,14 @@ function SurveysPage({ user }: { user: UserData }) {
                 onClick={handleSaveSurvey}
                 disabled={isCreateSurveyDisabled}
                 className={cn(
-                  'min-w-[130px] inline-flex items-center justify-center gap-2 px-5 py-2 rounded-lg text-sm font-semibold transition-all',
+                  'inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-xs font-normal transition-all',
                   'bg-[var(--btn-primary-bg,#2845D6)] text-white',
                   isCreateSurveyDisabled && 'opacity-60 cursor-not-allowed',
                 )}
               >
                 {!newSurveySaving && <Plus className="size-4" />}
                 {newSurveySaving ? (
-                  <TextShimmer duration={1.2} className="text-sm font-semibold [--base-color:#a5b4fc] [--base-gradient-color:#ffffff]">
+                  <TextShimmer duration={1.2} className="text-xs font-normal [--base-color:#a5b4fc] [--base-gradient-color:#ffffff]">
                     {editSurveyId !== null ? 'Saving…' : 'Creating…'}
                   </TextShimmer>
                 ) : (editSurveyId !== null ? 'Save Changes' : 'Create Survey')}
@@ -931,10 +921,10 @@ export default function SurveyManagementPage() {
   if (!user) return null;
 
   return (
-    <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
+    <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4">
       <div>
         <h1 className="text-lg font-bold text-[var(--color-text-primary)] flex items-center gap-2">Survey Management</h1>
-        <p className="text-xs text-[var(--color-text-muted)] mt-0.5">Create and manage surveys and collect responses</p>
+        <p className="text-xs text-[var(--color-text-muted)]">Create and manage surveys and collect responses</p>
       </div>
       <div>
         <SurveysPage user={user} />

@@ -27,7 +27,7 @@ import {
   DrawerTrigger,
 } from '@/components/ui/drawer';
 
-const ModalContext = React.createContext<{ isMobile: boolean; open: boolean } | null>(null);
+const ModalContext = React.createContext<{ useDrawer: boolean; open: boolean } | null>(null);
 
 function useModalContext() {
   const context = React.useContext(ModalContext);
@@ -43,15 +43,24 @@ type ModalProps = {
   children: React.ReactNode;
   dialogProps?: React.ComponentProps<typeof Dialog>;
   drawerProps?: React.ComponentProps<typeof Drawer>;
+  mobileVariant?: 'auto' | 'dialog';
 };
 
-const Modal = ({ open, onOpenChange, dialogProps, drawerProps, children }: ModalProps) => {
+const Modal = ({
+  open,
+  onOpenChange,
+  dialogProps,
+  drawerProps,
+  children,
+  mobileVariant = 'auto',
+}: ModalProps) => {
   const isMobile = useIsMobile();
-  const Component = isMobile ? Drawer : Dialog;
-  const props = isMobile ? drawerProps : dialogProps;
+  const useDrawer = isMobile && mobileVariant === 'auto';
+  const Component = useDrawer ? Drawer : Dialog;
+  const props = useDrawer ? drawerProps : dialogProps;
 
   return (
-    <ModalContext.Provider value={{ isMobile, open }}>
+    <ModalContext.Provider value={{ useDrawer, open }}>
       <Component open={open} onOpenChange={onOpenChange} {...props}>
         {children}
       </Component>
@@ -66,8 +75,8 @@ type ModalTriggerProps = {
 };
 
 const ModalTrigger = ({ className, children, asChild }: ModalTriggerProps) => {
-  const { isMobile } = useModalContext();
-  const Component = isMobile ? DrawerTrigger : DialogTrigger;
+  const { useDrawer } = useModalContext();
+  const Component = useDrawer ? DrawerTrigger : DialogTrigger;
 
   return (
     <Component className={className} asChild={asChild}>
@@ -83,8 +92,8 @@ type ModalCloseProps = {
 };
 
 const ModalClose = ({ className, children, asChild }: ModalCloseProps) => {
-  const { isMobile } = useModalContext();
-  const Component = isMobile ? DrawerClose : DialogClose;
+  const { useDrawer } = useModalContext();
+  const Component = useDrawer ? DrawerClose : DialogClose;
 
   return (
     <Component className={className} asChild={asChild}>
@@ -99,9 +108,9 @@ type ModalContentProps = {
 };
 
 const ModalContent = ({ className, children }: ModalContentProps) => {
-  const { isMobile, open } = useModalContext();
+  const { useDrawer, open } = useModalContext();
 
-  if (isMobile) {
+  if (useDrawer) {
     return <DrawerContent className={className}>{children}</DrawerContent>;
   }
 
@@ -140,10 +149,10 @@ const ModalContent = ({ className, children }: ModalContentProps) => {
           >
             <motion.div
               className={cn(
-                'fixed left-1/2 top-1/2 z-50 w-full max-w-lg -translate-x-1/2 -translate-y-1/2',
+                'fixed left-1/2 top-1/2 z-50 w-[calc(100vw-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2',
                 'flex flex-col max-h-[90vh] overflow-hidden',
                 'border border-[var(--color-border)] bg-[var(--color-bg-elevated)]',
-                'shadow-2xl sm:rounded-2xl',
+                'shadow-2xl rounded-2xl',
                 className,
               )}
               initial={{ opacity: 0, scale: 0.96, y: 10 }}
@@ -166,18 +175,18 @@ const ModalHeader = ({
   hideCloseButton = false,
   ...props
 }: React.ComponentProps<'div'> & { hideCloseButton?: boolean }) => {
-  const { isMobile } = useModalContext();
+  const { useDrawer } = useModalContext();
   const headerClass = cn(
     'flex items-center justify-between px-6 pt-5 pb-4 border-b border-[var(--color-border)]',
     className,
   );
 
-  if (isMobile) {
+  if (useDrawer) {
     return (
       <DrawerHeader className={headerClass} {...props}>
         {children}
         {!hideCloseButton && (
-          <DrawerClose className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-bg-card)] hover:text-[var(--color-text-primary)] transition-colors">
+          <DrawerClose className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[var(--color-text-muted)] hover:bg-[var(--color-bg-card)] hover:text-[var(--color-text-primary)] transition-colors">
             <X size={16} />
             <span className="sr-only">Close</span>
           </DrawerClose>
@@ -190,7 +199,7 @@ const ModalHeader = ({
     <div className={headerClass} {...props}>
       {children}
       {!hideCloseButton && (
-        <DialogPrimitive.Close className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-bg-card)] hover:text-[var(--color-text-primary)] transition-colors">
+        <DialogPrimitive.Close className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[var(--color-text-muted)] hover:bg-[var(--color-bg-card)] hover:text-[var(--color-text-primary)] transition-colors">
           <X size={16} />
           <span className="sr-only">Close</span>
         </DialogPrimitive.Close>
@@ -205,8 +214,8 @@ type ModalTitleProps = {
 };
 
 const ModalTitle = ({ className, children }: ModalTitleProps) => {
-  const { isMobile } = useModalContext();
-  const Component = isMobile ? DrawerTitle : DialogTitle;
+  const { useDrawer } = useModalContext();
+  const Component = useDrawer ? DrawerTitle : DialogTitle;
 
   return <Component className={cn('text-base font-semibold text-[var(--color-text-primary)]', className)}>{children}</Component>;
 };
@@ -217,8 +226,8 @@ type ModalDescriptionProps = {
 };
 
 const ModalDescription = ({ className, children }: ModalDescriptionProps) => {
-  const { isMobile } = useModalContext();
-  const Component = isMobile ? DrawerDescription : DialogDescription;
+  const { useDrawer } = useModalContext();
+  const Component = useDrawer ? DrawerDescription : DialogDescription;
 
   return <Component className={className}>{children}</Component>;
 };
@@ -228,10 +237,13 @@ const ModalBody = ({ className, ...props }: React.ComponentProps<'div'>) => {
 };
 
 const ModalFooter = ({ className, ...props }: React.ComponentProps<'div'>) => {
-  const { isMobile } = useModalContext();
-  const footerClass = cn('flex items-center justify-end gap-2 px-6 pb-5 pt-0', className);
+  const { useDrawer } = useModalContext();
+  const footerClass = cn(
+    'mt-auto flex min-h-16 items-center justify-end gap-2 border-t border-[var(--color-border)] px-6 py-4',
+    className,
+  );
 
-  if (isMobile) {
+  if (useDrawer) {
     return <DrawerFooter className={footerClass} {...props} />;
   }
 

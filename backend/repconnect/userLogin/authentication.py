@@ -1,6 +1,7 @@
 from django.conf import settings
 from django.middleware.csrf import CsrfViewMiddleware
 from rest_framework import exceptions
+from rest_framework.permissions import SAFE_METHODS
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 
@@ -47,6 +48,9 @@ class CookieJWTAuthentication(JWTAuthentication):
         Run Django's CSRF check against the incoming request.
         Raises PermissionDenied if validation fails.
         """
+        if request.method in SAFE_METHODS:
+            return
+
         check = _CSRFCheck(get_response=lambda r: None)
         check.process_request(request)
         reason = check.process_view(request, None, (), {})

@@ -3291,7 +3291,7 @@ function SurveyRightPanel({ surveyId, pillStatus, onSubmitted }: SurveyRightPane
     banner = (
       <div className="mx-4 mt-4 rounded-xl border border-red-200 bg-red-50 dark:border-red-900/40 dark:bg-red-950/20 p-2 flex items-center gap-2">
         <Lock size={15} className="text-red-500 shrink-0" />
-        <p className="text-sm text-red-700 dark:text-red-400 font-medium">This survey has ended and is no longer accepting responses.</p>
+        <p className="text-xs text-red-700 dark:text-red-400 font-medium">This survey has ended and is no longer accepting responses.</p>
       </div>
     );
   } else if (pillStatus === 'draft') {
@@ -3433,7 +3433,7 @@ function SurveyRightPanel({ surveyId, pillStatus, onSubmitted }: SurveyRightPane
               )}
             >
               {submitting ? (
-                <TextShimmer duration={1.2} className="text-xs font-semibold [--base-color:#a5b4fc] [--base-gradient-color:#ffffff]">
+                <TextShimmer duration={1.2} className="text-xs font-normal [--base-color:#a5b4fc] [--base-gradient-color:#ffffff]">
                   Submitting…
                 </TextShimmer>
               ) : (
@@ -3637,7 +3637,7 @@ function SurveyUserPage() {
           <h1 className="text-lg font-bold text-[var(--color-text-primary)] flex items-center gap-2">
             My Surveys
           </h1>
-          <p className="text-xs text-[var(--color-text-muted)] mt-0.5">View and respond to surveys assigned to you.</p>
+          <p className="text-xs text-[var(--color-text-muted)]">View and respond to surveys assigned to you.</p>
         </div>
       </div>
 
@@ -3782,10 +3782,10 @@ function SurveyAdminPageContent() {
       {/* Page header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-xl font-semibold flex items-center gap-2">
+          <h1 className="text-lg font-semibold flex items-center gap-2">
             Survey Management
           </h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
+          <p className="text-xs text-muted-foreground">
             Create and manage surveys, templates, and view results
           </p>
         </div>

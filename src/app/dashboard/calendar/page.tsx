@@ -12,6 +12,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronDown,
+  ChevronUp,
   Plus,
   X,
   Check,
@@ -21,6 +22,10 @@ import {
   Search,
   Users,
   Info,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
+  ListFilter,
 } from 'lucide-react';
 import { ChoiceboxGroup } from '@/components/ui/choicebox-1';
 import SearchBar from '@/components/ui/searchbar';
@@ -49,6 +54,7 @@ import {
   PaginationNext,
   PaginationEllipsis,
 } from '@/components/ui/pagination';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -66,6 +72,7 @@ interface CalendarEvent {
   id: number;
   title: string;
   date: string;        // YYYY-MM-DD
+  end_date?: string;
   start_time?: string;  // HH:MM(:SS) — not persisted by backend
   end_time?: string;    // HH:MM(:SS) — not persisted by backend
   event_type: EventType;
@@ -75,6 +82,7 @@ interface CalendarEvent {
   owner_detail?: CalendarMember;
   members: number[];
   members_detail: CalendarMember[];
+  seen?: boolean;
 }
 
 type RepetitionType = 'once' | 'daily' | 'weekly' | 'monthly' | 'yearly';
@@ -91,7 +99,7 @@ interface FormState {
   memberIds: number[];
 }
 
-type TimelogStatus = 'no_time_out' | 'no_time_in' | 'absent';
+type TimelogStatus = 'no_time_out' | 'no_time_in' | 'absent' | 'night_shift';
 type TimelogStatusMap = Record<string, TimelogStatus>;
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -102,6 +110,73 @@ const MONTHS = [
 ];
 
 const WEEKDAYS_FULL  = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+function ColumnFilterPopover({
+  label,
+  options,
+  value,
+  onChange,
+}: {
+  label: string;
+  options: string[];
+  value: string;
+  onChange: (next: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const active = value !== '';
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          title={`Filter by ${label}`}
+          className={cn(
+            'ml-1 inline-flex h-5 w-5 items-center justify-center rounded-md transition-colors',
+            active
+              ? 'text-[#2845D6]'
+              : 'text-[var(--color-text-muted)] hover:bg-[var(--color-bg-card)] hover:text-[var(--color-text-primary)]',
+          )}
+        >
+          <ListFilter size={10} />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-56 p-2">
+        <div className="space-y-0.5 max-h-56 overflow-y-auto calendar-scrollbar">
+          <button
+            type="button"
+            onClick={() => { onChange(''); setOpen(false); }}
+            className={cn(
+              'w-full rounded-md px-2 py-1.5 text-left text-xs transition-colors',
+              value === ''
+                ? 'bg-[#2845D6]/10 font-medium text-[#2845D6]'
+                : 'text-[var(--color-text-muted)] hover:bg-[var(--color-bg-card)]',
+            )}
+          >
+            All
+          </button>
+          {options.map(option => (
+            <button
+              key={option}
+              type="button"
+              onClick={() => { onChange(option); setOpen(false); }}
+              className={cn(
+                'w-full rounded-md px-2 py-1.5 text-left text-xs transition-colors',
+                value === option
+                  ? 'bg-[#2845D6]/10 font-medium text-[#2845D6]'
+                  : 'text-[var(--color-text-muted)] hover:bg-[var(--color-bg-card)]',
+              )}
+            >
+              {option}
+            </button>
+          ))}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+
 const WEEKDAYS_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 const EVENT_TYPE_CONFIG: Record<EventType, { label: string; color: string }> = {
@@ -115,6 +190,8 @@ const EVENT_TYPE_CONFIG: Record<EventType, { label: string; color: string }> = {
   day_off:   { label: 'Day Off', color: '#9CCFFF' },
   company:   { label: 'Company Holiday', color: '#237227' },
 };
+
+const NEW_PILL_EVENT_TYPES: EventType[] = ['important', 'meeting', 'task', 'reminder', 'deadline'];
 
 // ── Pure helpers ───────────────────────────────────────────────────────────────
 
@@ -136,6 +213,25 @@ function durationLabel(start: string, end: string): string {
   const h = Math.floor(mins / 60);
   const m = mins % 60;
   return m ? `${h}h ${m}m` : `${h} hour${h > 1 ? 's' : ''}`;
+}
+
+function formatMemberName(member: CalendarMember): string {
+  const first = (member.firstname ?? '').trim();
+  const last = (member.lastname ?? '').trim();
+  const full = `${first} ${last}`.trim();
+  return full || member.idnumber;
+}
+
+function eventDateLabel(event: CalendarEvent, fallbackDate: string): string {
+  const startRaw = event.date || fallbackDate;
+  if (!startRaw) return '';
+  const start = new Date(`${startRaw}T00:00:00`);
+  const endRaw = event.end_date;
+  if (endRaw) {
+    const end = new Date(`${endRaw}T00:00:00`);
+    return `${start.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })} to ${end.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`;
+  }
+  return start.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
 }
 
 function buildCells(year: number, month: number) {
@@ -232,7 +328,7 @@ function EventChip({
         className="inline-block w-[3px] shrink-0 self-stretch rounded-full"
         style={{ backgroundColor: cfg.color }}
       />
-      <span className="truncate text-[var(--color-text-primary)]">{event.title}</span>
+      <span className="truncate text-[10px] font-normal text-[var(--color-text-primary)]">{event.title}</span>
     </button>
   );
 }
@@ -308,14 +404,14 @@ function MemberPicker({
   }
 
   return (
-    <div className="rounded-xl border border-[var(--color-border)] overflow-hidden">
+    <div className="overflow-hidden border-t border-[var(--color-border)]">
       {/* Search input (global SearchBar) */}
-      <div className="border-b border-[var(--color-border)] p-2">
+      <div className="border-[var(--color-border)] py-2">
         <SearchBar value={search} onChange={setSearch} placeholder="Search employees…" />
       </div>
 
       {/* User list */}
-      <div className="max-h-[240px] overflow-y-auto [scrollbar-width:thin]">
+      <div className="max-h-[240px] overflow-y-auto calendar-scrollbar">
         {filtered.length === 0 ? (
           <EmptyState
             title={search.trim() ? 'No results found' : 'No employees'}
@@ -342,12 +438,12 @@ function MemberPicker({
                 <img
                   src={u.avatar ?? "/default-avatar.png"}
                   alt={memberName(u)}
-                  className="w-8 h-8 rounded-full object-cover shrink-0"
+                  className="w-6 h-6 rounded-full object-cover shrink-0"
                 />
 
                 {/* Name + ID */}
                 <div className="flex-1 min-w-0">
-                  <p className="text-xs font-semibold text-[var(--color-text-primary)] truncate">
+                  <p className="text-xs font-medium text-[var(--color-text-primary)] truncate">
                     {memberName(u)}
                   </p>
                   <p className="text-[10px] text-[var(--color-text-muted)]">
@@ -358,7 +454,7 @@ function MemberPicker({
                 {/* Checkbox indicator */}
                 <span
                   className={`shrink-0 w-4 h-4 rounded border-2 flex items-center justify-center transition-colors
-                    ${selected ? 'bg-[#2845D6] border-[#2845D6]' : 'border-[var(--color-border-strong)] bg-transparent'}`}
+                    ${selected ? 'bg-[#2845D6] border-[#2845D6]' : 'border-[var(--color-border)] bg-transparent'}`}
                 >
                   {selected && <Check size={10} className="text-white" />}
                 </span>
@@ -405,15 +501,44 @@ interface ModalProps {
 
 function EventModal({ event, form, setForm, onClose, onSave, onDelete, saving, isAdmin, isOwner = true, allUsers, usersLoading }: ModalProps) {
   const isNew = event === null;
+  const isViewMode = !isNew && !isOwner;
   const [titleError,      setTitleError]      = useState('');
   const [noteError,       setNoteError]       = useState('');
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   const dateLabel = useMemo(() => {
-    if (!form.date) return '';
-    const d = new Date(form.date + 'T00:00:00');
-    return d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
-  }, [form.date]);
+    if (!event) {
+      if (!form.date) return '';
+      const d = new Date(form.date + 'T00:00:00');
+      return d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+    }
+    return eventDateLabel(event, form.date);
+  }, [event, form.date]);
+
+  const participantMembers = useMemo(() => {
+    if (!event) return [] as CalendarMember[];
+    const map = new Map<number, CalendarMember>();
+    if (event.owner_detail) {
+      map.set(event.owner_detail.id, event.owner_detail);
+    }
+    event.members_detail.forEach(member => map.set(member.id, member));
+    return Array.from(map.values());
+  }, [event]);
+
+  const participantNamesText = useMemo(() => {
+    const topNames = participantMembers.map(formatMemberName).filter(Boolean).slice(0, 3);
+    const othersCount = Math.max(0, participantMembers.length - topNames.length);
+    if (!topNames.length) return 'No participants';
+    return `${topNames.join(', ')}${othersCount > 0 ? ` and ${othersCount} others` : ''}`;
+  }, [participantMembers]);
+
+  const repetitionLabel = useMemo(() => {
+    const match = REPETITION_OPTIONS.find(opt => opt.value === form.repetition);
+    return match?.label ?? form.repetition;
+  }, [form.repetition]);
+
+  const eventTypeLabel = EVENT_TYPE_CONFIG[form.event_type]?.label ?? 'Event';
+  const eventTypeColor = EVENT_TYPE_CONFIG[form.event_type]?.color ?? '#2845D6';
 
   return (
     <motion.div
@@ -430,7 +555,7 @@ function EventModal({ event, form, setForm, onClose, onSave, onDelete, saving, i
         exit={{ opacity: 0, scale: 0.95, y: 8 }}
         transition={{ type: 'spring', stiffness: 320, damping: 28 }}
         onClick={e => e.stopPropagation()}
-        className="w-full max-w-lg rounded-2xl border border-[var(--color-border)]
+        className="w-full max-w-md rounded-2xl border border-[var(--color-border)]
           bg-[var(--color-bg-elevated)] shadow-2xl overflow-hidden"
       >
         {/* ── Header ── */}
@@ -449,11 +574,60 @@ function EventModal({ event, form, setForm, onClose, onSave, onDelete, saving, i
         </div>
 
         {/* ── Body ── */}
-        <div className={`space-y-5 p-6 max-h-[calc(100vh-16rem)] overflow-y-auto${!isOwner && !isNew ? ' pointer-events-none select-none opacity-70' : ''}`}>
+        {isViewMode ? (
+          <div className="space-y-4 p-4 max-h-[calc(100vh-16rem)] overflow-y-auto calendar-scrollbar">
+            <section className="px-4 py-2">
+              <div className="flex items-center justify-between gap-2 pb-2">
+                <p className="text-sm font-semibold text-[var(--color-text-primary)]">Event Details</p>
+                <span
+                  className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium text-white"
+                  style={{ backgroundColor: eventTypeColor }}
+                >
+                  {eventTypeLabel}
+                </span>
+              </div>
+              <div className="mt-3 space-y-2">
+                <div className="grid grid-cols-[110px_1fr] items-start gap-2 text-xs">
+                  <span className="text-[11px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wide">Title</span>
+                  <span className="text-[var(--color-text-primary)]">{form.title}</span>
+                </div>
+                <div className="grid grid-cols-[110px_1fr] items-start gap-2 text-xs">
+                  <span className="text-[11px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wide">Date</span>
+                  <span className="text-[var(--color-text-primary)]">{dateLabel}</span>
+                </div>
+                <div className="grid grid-cols-[110px_1fr] items-start gap-2 text-xs">
+                  <span className="text-[11px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wide">Repeat</span>
+                  <span className="text-[var(--color-text-primary)]">{repetitionLabel}</span>
+                </div>
+                <div className="grid grid-cols-[110px_1fr] items-start gap-2 text-xs">
+                  <span className="text-[11px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wide">Note</span>
+                  <span className="whitespace-pre-wrap text-[var(--color-text-primary)]">{form.note || 'No note provided.'}</span>
+                </div>
+              </div>
+            </section>
+
+            <section className="px-4 py-2">
+              <p className="text-sm font-semibold text-[var(--color-text-primary)]">Participants</p>
+              <div className="mt-3 flex items-start gap-3">
+                <AvatarGroup
+                  items={participantMembers.slice(0, 6).map(member => ({
+                    id: member.id,
+                    name: formatMemberName(member),
+                    image: member.avatar ?? '/default-avatar.png',
+                    color: '#0D1A63',
+                  }))}
+                  size="sm"
+                />
+                <p className="text-xs text-[var(--color-text-muted)]">{participantNamesText}</p>
+              </div>
+            </section>
+          </div>
+        ) : (
+        <div className="space-y-5 p-4 max-h-[calc(100vh-16rem)] overflow-y-auto calendar-scrollbar">
 
           {/* Title */}
           <div className="space-y-2">
-            <label className="text-sm font-medium text-[var(--color-text-primary)]">Event Title</label>
+            <label className="text-[10px] font-semibold tracking-wide uppercase text-[var(--color-text-muted)]">Event Title</label>
             <Input
               autoFocus
               placeholder="e.g., Team Standup"
@@ -491,9 +665,9 @@ function EventModal({ event, form, setForm, onClose, onSave, onDelete, saving, i
 
           {/* Date (display-only) */}
           <div className="space-y-2">
-            <label className="text-sm font-medium text-[var(--color-text-primary)]">Date</label>
-            <div className="flex h-9 items-center rounded-lg border border-[var(--color-border-strong)]
-              bg-[var(--color-bg-elevated)] px-3 text-sm text-[var(--color-text-muted)]">
+            <label className="text-[10px] font-semibold tracking-wide uppercase text-[var(--color-text-muted)]">Date</label>
+            <div className="flex h-9 items-center rounded-lg border border-[var(--color-border)]
+              bg-[var(--color-bg-elevated)] px-3 text-xs text-[var(--color-text-muted)]">
               {dateLabel}
             </div>
           </div>
@@ -501,7 +675,7 @@ function EventModal({ event, form, setForm, onClose, onSave, onDelete, saving, i
           {/* Type + Repetition */}
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <label className="text-sm font-medium text-[var(--color-text-primary)]">Event Type</label>
+              <label className="text-[10px] font-semibold tracking-wide uppercase text-[var(--color-text-muted)]">Event Type</label>
               <Select
                 value={form.event_type}
                 onValueChange={v => setForm(f => ({ ...f, event_type: v as EventType }))}
@@ -528,7 +702,7 @@ function EventModal({ event, form, setForm, onClose, onSave, onDelete, saving, i
             </div>
 
             <div className="space-y-2">
-              <label className="text-sm font-medium text-[var(--color-text-primary)]">Repeat</label>
+              <label className="text-[10px] font-semibold tracking-wide uppercase text-[var(--color-text-muted)]">Repeat</label>
               <Select
                 value={form.repetition}
                 onValueChange={v => setForm(f => ({ ...f, repetition: v as RepetitionType }))}
@@ -626,16 +800,17 @@ function EventModal({ event, form, setForm, onClose, onSave, onDelete, saving, i
             </AnimatePresence>
           </div>
         </div>
+        )}
 
         {/* ── Footer ── */}
         <div className="border-t border-[var(--color-border)] p-4 overflow-hidden">
           {/* Read-only footer — shown when the current user is just a member */}
-          {!isOwner && !isNew ? (
+          {isViewMode ? (
             <div className="flex justify-end">
               <button
                 type="button"
                 onClick={onClose}
-                className="px-4 py-2 rounded-lg text-sm font-medium border border-[var(--color-border-strong)]
+                className="px-4 py-2 rounded-lg text-xs font-normal border border-[var(--color-border)]
                   text-[var(--color-text-primary)] hover:bg-[var(--color-bg-card)] transition-colors"
               >
                 Close
@@ -662,7 +837,7 @@ function EventModal({ event, form, setForm, onClose, onSave, onDelete, saving, i
                     type="button"
                     onClick={() => setConfirmingDelete(false)}
                     disabled={saving}
-                    className="px-3 py-1.5 rounded-lg text-sm font-medium border border-[var(--color-border-strong)]
+                    className="px-3 py-1.5 rounded-lg text-sm font-medium border border-[var(--color-border)]
                       text-[var(--color-text-primary)] hover:bg-[var(--color-bg-card)] transition-colors disabled:opacity-50"
                   >
                     Cancel
@@ -697,10 +872,10 @@ function EventModal({ event, form, setForm, onClose, onSave, onDelete, saving, i
                       type="button"
                       onClick={() => setConfirmingDelete(true)}
                       disabled={saving}
-                      className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium text-white
+                      className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-normal text-white
                         bg-red-500 hover:bg-red-600 transition-colors disabled:opacity-50"
                     >
-                      <X size={14} />Delete
+                      <X size={14} />Delete Event
                     </button>
                   )}
                 </div>
@@ -709,11 +884,11 @@ function EventModal({ event, form, setForm, onClose, onSave, onDelete, saving, i
                     type="button"
                     onClick={onSave}
                     disabled={saving || !form.title.trim() || !!titleError || !!noteError || (form.memberScope === 'selected' && form.memberIds.length === 0)}
-                    className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#2845D6] text-white text-sm font-semibold
+                    className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#2845D6] text-white text-xs font-normal
                       hover:bg-[#1f38c0] disabled:opacity-50 transition-colors"
                   >
                     {saving
-                      ? <TextShimmer duration={1.2} className="text-sm font-semibold text-white [--base-color:#a5b4fc] [--base-gradient-color:#ffffff] dark:[--base-color:#a5b4fc] dark:[--base-gradient-color:#ffffff]">{isNew ? 'Creating…' : 'Saving…'}</TextShimmer>
+                      ? <TextShimmer duration={1.2} className="text-xs font-semibold text-white [--base-color:#a5b4fc] [--base-gradient-color:#ffffff] dark:[--base-color:#a5b4fc] dark:[--base-gradient-color:#ffffff]">{isNew ? 'Creating…' : 'Saving…'}</TextShimmer>
                       : <><Check size={14} /><span>{isNew ? 'Create Event' : 'Save changes'}</span></>
                     }
                   </button>
@@ -743,6 +918,8 @@ interface UserTimelog {
   date: string;       // YYYY-MM-DD
   time_in: string | null;
   time_out: string | null;
+  time_in_date?: string | null;
+  time_out_date?: string | null;
   is_complete: boolean;
 }
 
@@ -759,6 +936,7 @@ function UserTimelogsModal({
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     fetch(`/api/timelogs/user-logs?idnumber=${encodeURIComponent(employee.idnumber)}`, {
       credentials: 'include',
@@ -772,6 +950,11 @@ function UserTimelogsModal({
   function formatDate(dateStr: string): string {
     const d = new Date(dateStr + 'T00:00:00');
     return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  }
+
+  function formatDateShort(dateStr: string): string {
+    const d = new Date(dateStr + 'T00:00:00');
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   }
 
   return (
@@ -798,7 +981,7 @@ function UserTimelogsModal({
             <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">
               {employee.lastname}, {employee.firstname}
             </h3>
-            <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
+            <p className="text-[12px] text-[var(--color-text-muted)] mt-0.5">
               {employee.idnumber} · Current Week Timelogs
             </p>
           </div>
@@ -813,7 +996,7 @@ function UserTimelogsModal({
         </div>
 
         {/* Table */}
-        <div className="overflow-y-auto max-h-[420px] [scrollbar-width:thin]">
+        <div className="overflow-y-auto max-h-[420px] calendar-scrollbar">
           {loading ? (
             <div className="flex justify-center items-center py-12">
               <div className="h-5 w-5 rounded-full border-2 border-[#2845D6] border-t-transparent animate-spin" />
@@ -824,6 +1007,7 @@ function UserTimelogsModal({
               description="No timelog records found for the current week."
               icons={[Clock]}
               className="py-10"
+
             />
           ) : (
             <table className="w-full text-sm">
@@ -846,10 +1030,24 @@ function UserTimelogsModal({
                       {formatDate(log.date)}
                     </td>
                     <td className="px-4 py-2.5 text-xs text-[var(--color-text-primary)] tabular-nums">
-                      {log.time_in ?? <span className="text-[var(--color-text-muted)]">—</span>}
+                      {log.time_in ? (
+                        <span>
+                          {log.time_in}
+                          {log.time_in_date && log.time_in_date !== log.date ? (
+                            <span className="ml-1 text-[10px] text-[var(--color-text-muted)]">({formatDateShort(log.time_in_date)})</span>
+                          ) : null}
+                        </span>
+                      ) : <span className="text-[var(--color-text-muted)]">—</span>}
                     </td>
                     <td className="px-4 py-2.5 text-xs text-[var(--color-text-primary)] tabular-nums">
-                      {log.time_out ?? <span className="text-[var(--color-text-muted)]">—</span>}
+                      {log.time_out ? (
+                        <span>
+                          {log.time_out}
+                          {log.time_out_date && log.time_out_date !== log.date ? (
+                            <span className="ml-1 text-[10px] text-[var(--color-text-muted)]">({formatDateShort(log.time_out_date)})</span>
+                          ) : null}
+                        </span>
+                      ) : <span className="text-[var(--color-text-muted)]">—</span>}
                     </td>
                     <td className="px-4 py-2.5">
                       <span
@@ -871,7 +1069,7 @@ function UserTimelogsModal({
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-1.5 rounded-lg text-sm font-medium border border-[var(--color-border-strong)]
+            className="px-4 py-2 rounded-lg text-xs font-normal border border-[var(--color-border)]
               text-[var(--color-text-primary)] hover:bg-[var(--color-bg-card)] transition-colors"
           >
             Close
@@ -899,12 +1097,30 @@ function TimelogsModal({ onClose }: { onClose: () => void }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const PAGE_SIZE = 10;
   const [page, setPage] = useState(1);
+  const [deptFilter, setDeptFilter] = useState('');
+  const [lineFilter, setLineFilter] = useState('');
+  const [interactionLoading, setInteractionLoading] = useState(false);
+  const interactionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [sortField, setSortField] = useState<'idnumber' | 'employee' | 'department' | 'line' | 'completeness'>('employee');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
 
   const isBusy = phase === 'checking' || phase === 'uploading';
 
-  useEffect(() => { setPage(1); }, [search]);
+  function triggerInteractionSkeleton() {
+    if (interactionTimerRef.current) clearTimeout(interactionTimerRef.current);
+    setInteractionLoading(true);
+    interactionTimerRef.current = setTimeout(() => {
+      setInteractionLoading(false);
+      interactionTimerRef.current = null;
+    }, 1000);
+  }
+
+  useEffect(() => () => {
+    if (interactionTimerRef.current) clearTimeout(interactionTimerRef.current);
+  }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoadingEmps(true);
     fetch('/api/timelogs/completeness', { credentials: 'include' })
       .then(r => r.ok ? r.json() : [])
@@ -915,18 +1131,87 @@ function TimelogsModal({ onClose }: { onClose: () => void }) {
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase();
-    if (!q) return employees;
-    return employees.filter(e =>
-      e.idnumber.toLowerCase().includes(q) ||
-      e.firstname.toLowerCase().includes(q) ||
-      e.lastname.toLowerCase().includes(q) ||
-      e.department.toLowerCase().includes(q) ||
-      e.line.toLowerCase().includes(q),
-    );
-  }, [employees, search]);
+    return employees.filter(e => {
+      if (deptFilter && e.department !== deptFilter) return false;
+      if (lineFilter && e.line !== lineFilter) return false;
+      if (!q) return true;
+      return (
+        e.idnumber.toLowerCase().includes(q) ||
+        e.firstname.toLowerCase().includes(q) ||
+        e.lastname.toLowerCase().includes(q) ||
+        e.department.toLowerCase().includes(q) ||
+        e.line.toLowerCase().includes(q)
+      );
+    });
+  }, [employees, search, deptFilter, lineFilter]);
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const sorted = useMemo(() => {
+    const rows = [...filtered];
+    rows.sort((a, b) => {
+      let left: string | number;
+      let right: string | number;
+      if (sortField === 'employee') {
+        left = `${a.lastname}, ${a.firstname}`.toLowerCase();
+        right = `${b.lastname}, ${b.firstname}`.toLowerCase();
+      } else {
+        left = a[sortField];
+        right = b[sortField];
+      }
+      if (typeof left === 'number' && typeof right === 'number') {
+        return sortDir === 'asc' ? left - right : right - left;
+      }
+      const cmp = String(left).localeCompare(String(right), undefined, { numeric: true, sensitivity: 'base' });
+      return sortDir === 'asc' ? cmp : -cmp;
+    });
+    return rows;
+  }, [filtered, sortField, sortDir]);
+
+  const departmentOptions = useMemo(
+    () => Array.from(new Set(employees.map(e => e.department).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
+    [employees],
+  );
+  const lineOptions = useMemo(
+    () => Array.from(new Set(employees.map(e => e.line).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
+    [employees],
+  );
+
+  const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  const paginated = sorted.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+
+  function onSearchChange(next: string) {
+    setSearch(next);
+    setPage(1);
+    triggerInteractionSkeleton();
+  }
+
+  function onChangeDeptFilter(next: string) {
+    setDeptFilter(next);
+    setPage(1);
+    triggerInteractionSkeleton();
+  }
+
+  function onChangeLineFilter(next: string) {
+    setLineFilter(next);
+    setPage(1);
+    triggerInteractionSkeleton();
+  }
+
+  function onSort(field: 'idnumber' | 'employee' | 'department' | 'line' | 'completeness') {
+    if (sortField === field) {
+      setSortDir(prev => prev === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortDir('asc');
+    }
+    setPage(1);
+    triggerInteractionSkeleton();
+  }
+
+  function onChangePage(next: number) {
+    setPage(next);
+    triggerInteractionSkeleton();
+  }
 
   function getPageRange(current: number, total: number): (number | '...')[] {
     if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
@@ -1078,54 +1363,100 @@ function TimelogsModal({ onClose }: { onClose: () => void }) {
         {/* ── Search bar + Upload button ── */}
         <div className="px-6 py-3 border-[var(--color-border)] shrink-0 flex items-center gap-2">
           <div className="flex-1">
-            <SearchBar value={search} onChange={setSearch} placeholder="Search by name, ID, department or line…" />
+            <SearchBar value={search} onChange={onSearchChange} placeholder="Search by name, ID, department or line…" />
           </div>
           {!loadingEmps && employees.length > 0 && (
             <button
               type="button"
               onClick={() => setUploadOpen(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium shrink-0
-                border border-[var(--color-border-strong)] text-[var(--color-text-primary)]
-                hover:bg-[var(--color-bg-card)] transition-colors"
+              className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-normal shrink-0
+                border border-[var(--color-border)] text-white
+                bg-[var(--btn-primary-bg)] hover:bg-[var(--btn-primary-hover)] transition-colors"
             >
-              <Upload size={13} />
+              <Upload size={14} />
               Upload
             </button>
           )}
         </div>
 
         {/* ── Table ── */}
-        <div className="flex-1 overflow-y-auto [scrollbar-width:thin] px-4 pb-4">
+        <div className="flex-1 overflow-y-auto calendar-scrollbar px-4 pb-4">
           {loadingEmps ? (
             <div className="flex justify-center items-center py-16">
               <div className="h-5 w-5 rounded-full border-2 border-[#2845D6] border-t-transparent animate-spin" />
             </div>
-          ) : filtered.length === 0 ? (
+          ) : sorted.length === 0 ? (
             <EmptyState
-              title={search ? 'No results found' : 'No timelogs yet'}
-              description={search ? 'Try a different search term.' : 'Upload a timelog file to see employee completeness.'}
+              title={search || deptFilter || lineFilter ? 'No results found' : 'No timelogs yet'}
+              description={search || deptFilter || lineFilter ? 'Try a different search term or clear filters.' : 'Upload a timelog file to see employee completeness.'}
               icons={[FileSpreadsheet, Clock, Upload]}
-              action={!search ? { label: 'Upload', onClick: () => setUploadOpen(true), icon: <Upload size={13} /> } : undefined}
+              action={!search && !deptFilter && !lineFilter ? { label: 'Upload', onClick: () => setUploadOpen(true), icon: <Upload size={13} /> } : undefined}
               className="py-16 mx-auto max-w-md"
             />
           ) : (
-            <table className="w-full text-sm">
+            <table className="w-full text-xs">
               <thead className="sticky top-0 bg-[var(--color-bg-elevated)] z-10">
                 <tr className="border-b border-[var(--color-border)]">
-                  {['ID Number', 'Employee', 'Department', 'Line', 'Completeness'].map(h => (
-                    <th
-                      key={h}
-                      className={cn(
-                        'px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]',
-                        h === 'Completeness' ? 'text-center' : 'text-left',
-                      )}
-                    >
-                      {h}
-                    </th>
-                  ))}
+                  <th className="px-4 py-2.5 text-left">
+                    <button type="button" onClick={() => onSort('idnumber')} className="inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
+                      ID Number
+                      {sortField === 'idnumber' ? (sortDir === 'asc' ? <ArrowUp size={11} /> : <ArrowDown size={11} />) : <ArrowUpDown size={11} />}
+                    </button>
+                  </th>
+                  <th className="px-4 py-2.5 text-left">
+                    <button type="button" onClick={() => onSort('employee')} className="inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
+                      Employee
+                      {sortField === 'employee' ? (sortDir === 'asc' ? <ArrowUp size={11} /> : <ArrowDown size={11} />) : <ArrowUpDown size={11} />}
+                    </button>
+                  </th>
+                  <th className="px-4 py-2.5 text-left">
+                    <div className="inline-flex items-center">
+                      <button type="button" onClick={() => onSort('department')} className="inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
+                        Department
+                        {sortField === 'department' ? (sortDir === 'asc' ? <ArrowUp size={11} /> : <ArrowDown size={11} />) : <ArrowUpDown size={11} />}
+                      </button>
+                      <ColumnFilterPopover
+                        label="Department"
+                        options={departmentOptions}
+                        value={deptFilter}
+                        onChange={onChangeDeptFilter}
+                      />
+                    </div>
+                  </th>
+                  <th className="px-4 py-2.5 text-left">
+                    <div className="inline-flex items-center">
+                      <button type="button" onClick={() => onSort('line')} className="inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
+                        Line
+                        {sortField === 'line' ? (sortDir === 'asc' ? <ArrowUp size={11} /> : <ArrowDown size={11} />) : <ArrowUpDown size={11} />}
+                      </button>
+                      <ColumnFilterPopover
+                        label="Line"
+                        options={lineOptions}
+                        value={lineFilter}
+                        onChange={onChangeLineFilter}
+                      />
+                    </div>
+                  </th>
+                  <th className="px-4 py-2.5 text-center">
+                    <button type="button" onClick={() => onSort('completeness')} className="inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
+                      Completeness
+                      {sortField === 'completeness' ? (sortDir === 'asc' ? <ArrowUp size={11} /> : <ArrowDown size={11} />) : <ArrowUpDown size={11} />}
+                    </button>
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--color-border)]">
+                {interactionLoading ? (
+                  Array.from({ length: Math.min(PAGE_SIZE, Math.max(1, paginated.length)) }).map((_, idx) => (
+                    <tr key={`sk-${idx}`}>
+                      {Array.from({ length: 5 }).map((__, ci) => (
+                        <td key={`sk-${idx}-${ci}`} className="px-4 py-2.5">
+                          <div className="h-3.5 w-full animate-pulse rounded bg-[var(--color-skeleton)]/70" />
+                        </td>
+                      ))}
+                    </tr>
+                  ))
+                ) : (
                 <AnimatePresence initial={false}>
                   {paginated.map((emp, idx) => {
                     const pct = Math.min(100, Math.max(0, emp.completeness));
@@ -1160,31 +1491,32 @@ function TimelogsModal({ onClose }: { onClose: () => void }) {
                     );
                   })}
                 </AnimatePresence>
+                )}
               </tbody>
             </table>
           )}
         </div>
 
         {/* ── Pagination ── */}
-        {!loadingEmps && filtered.length > PAGE_SIZE && (
+        {!loadingEmps && sorted.length > PAGE_SIZE && (
           <div className="shrink-0 border-t border-[var(--color-border)] px-4 py-2.5 flex items-center justify-between gap-4">
             <span className="text-xs text-[var(--color-text-muted)] shrink-0">
-              Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, filtered.length)} of {filtered.length}
+              Showing {(currentPage - 1) * PAGE_SIZE + 1}–{Math.min(currentPage * PAGE_SIZE, sorted.length)} of {sorted.length}
             </span>
             <Pagination className="w-auto mx-0 justify-end">
               <PaginationContent>
                 <PaginationItem>
                   <PaginationPrevious
-                    onClick={() => setPage(p => Math.max(1, p - 1))}
-                    className={page === 1 ? 'pointer-events-none opacity-40' : undefined}
+                    onClick={() => onChangePage(Math.max(1, currentPage - 1))}
+                    className={currentPage === 1 || interactionLoading ? 'pointer-events-none opacity-40' : undefined}
                   />
                 </PaginationItem>
-                {getPageRange(page, totalPages).map((p, i) =>
+                {getPageRange(currentPage, totalPages).map((p, i) =>
                   p === '...' ? (
                     <PaginationItem key={`ellipsis-${i}`}><PaginationEllipsis /></PaginationItem>
                   ) : (
                     <PaginationItem key={p}>
-                      <PaginationLink isActive={page === (p as number)} onClick={() => setPage(p as number)}>
+                      <PaginationLink isActive={currentPage === (p as number)} onClick={() => onChangePage(p as number)}>
                         {p}
                       </PaginationLink>
                     </PaginationItem>
@@ -1192,8 +1524,8 @@ function TimelogsModal({ onClose }: { onClose: () => void }) {
                 )}
                 <PaginationItem>
                   <PaginationNext
-                    onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-                    className={page === totalPages ? 'pointer-events-none opacity-40' : undefined}
+                    onClick={() => onChangePage(Math.min(totalPages, currentPage + 1))}
+                    className={currentPage === totalPages || interactionLoading ? 'pointer-events-none opacity-40' : undefined}
                   />
                 </PaginationItem>
               </PaginationContent>
@@ -1229,7 +1561,7 @@ function TimelogsModal({ onClose }: { onClose: () => void }) {
               className="w-full max-w-sm rounded-2xl border border-[var(--color-border)]
                 bg-[var(--color-bg-elevated)] shadow-2xl overflow-hidden"
             >
-              <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--color-border)]">
+              <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border)]">
                 <div>
                   <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">Upload Timelogs</h3>
                   <p className="text-xs text-[var(--color-text-muted)] mt-0.5">.xlsx, .xls, or .csv</p>
@@ -1293,15 +1625,15 @@ function TimelogsModal({ onClose }: { onClose: () => void }) {
                       isBusy ? 'pointer-events-none opacity-60' : '',
                       isDragging
                         ? 'border-[#2845D6] bg-[#2845D6]/5'
-                        : 'border-[var(--color-border-strong)] hover:border-[#2845D6]/50 hover:bg-[var(--color-bg-elevated)]',
+                        : 'border-[var(--color-border)] hover:border-[#2845D6]/50 hover:bg-[var(--color-bg-elevated)]',
                     )}
                   >
                     <div className="bg-transparent">
                       <FileSpreadsheet size={36} className={cn('transition-colors', isDragging ? 'text-[#2845D6]' : 'text-[var(--color-text-muted)]')} />
                     </div>
                     <div className="text-center">
-                      <p className="text-sm font-medium text-[var(--color-text-primary)]">Click to select or drag &amp; drop</p>
-                      <p className="text-xs text-[var(--color-text-muted)] mt-0.5">.xlsx, .xls, or .csv</p>
+                      <p className="text-xs font-medium text-[var(--color-text-primary)]">Click to select or drag &amp; drop</p>
+                      <p className="text-[10px] text-[var(--color-text-muted)] mt-0.5">.xlsx, .xls, or .csv</p>
                     </div>
                   </div>
                 ) : (
@@ -1365,12 +1697,12 @@ function TimelogsModal({ onClose }: { onClose: () => void }) {
                   type="button"
                   onClick={() => selectedFile && handleUpload(selectedFile)}
                   disabled={isBusy || !selectedFile}
-                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl
-                    bg-[#2845D6] text-white text-sm font-semibold
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg
+                    bg-[#2845D6] text-white text-xs font-normal
                     hover:bg-[#1f38c0] disabled:opacity-50 transition-colors"
                 >
                   {isBusy
-                    ? <TextShimmer duration={1.2} className="text-sm font-semibold text-white [--base-color:#a5b4fc] [--base-gradient-color:#ffffff]">
+                    ? <TextShimmer duration={1.2} className="text-xs font-normal text-white [--base-color:#a5b4fc] [--base-gradient-color:#ffffff]">
                         {phase === 'checking' ? 'Checking…' : 'Uploading…'}
                       </TextShimmer>
                     : <><Upload size={14} />Upload File</>
@@ -1428,9 +1760,9 @@ function ScheduledPanel({
             <button
               onClick={() => setTimelogsOpen(true)}
               title="Timelogs"
-              className="flex h-7 w-7 items-center justify-center rounded-lg
+              className="flex h-7 w-7 items-center justify-center rounded-full
                 text-[var(--color-text-muted)] hover:bg-[var(--color-bg-card)]
-                hover:text-[#2845D6] transition-colors border border-[var(--color-border)]"
+                dark:hover:bg-[var(--color-border)] transition-colors"
             >
               <Clock size={14} />
             </button>
@@ -1438,23 +1770,23 @@ function ScheduledPanel({
           <button
             onClick={onNewEvent}
             title="Add event"
-            className="flex h-7 w-7 items-center justify-center rounded-lg
+            className="flex h-7 w-7 items-center justify-center rounded-full
               text-[var(--color-text-muted)] hover:bg-[var(--color-bg-card)]
-              hover:text-[#2845D6] transition-colors border border-[var(--color-border)]"
+              transition-colors dark:hover:bg-[var(--color-border)]"
           >
             <Plus size={14} />
           </button>
           <button
             onClick={onPrevDay}
-            className="flex h-7 w-7 items-center justify-center rounded-lg
-              text-[var(--color-text-muted)] hover:bg-[var(--color-bg-card)] transition-colors"
+            className="flex h-7 w-7 items-center justify-center rounded-full
+              text-[var(--color-text-muted)] hover:bg-[var(--color-bg-card)] transition-colors dark:hover:bg-[var(--color-border)]"
           >
             <ChevronLeft size={14} />
           </button>
           <button
             onClick={onNextDay}
-            className="flex h-7 w-7 items-center justify-center rounded-lg
-              text-[var(--color-text-muted)] hover:bg-[var(--color-bg-card)] transition-colors"
+            className="flex h-7 w-7 items-center justify-center rounded-full
+              text-[var(--color-text-muted)] hover:bg-[var(--color-bg-card)] transition-colors dark:hover:bg-[var(--color-border)]"
           >
             <ChevronRight size={14} />
           </button>
@@ -1462,7 +1794,7 @@ function ScheduledPanel({
       </div>
 
       {/* Timeline */}
-      <div className="flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      <div className="flex-1 overflow-y-auto calendar-scrollbar">
         {events.length === 0 ? (
           <EmptyState
             title="No events today"
@@ -1482,10 +1814,11 @@ function ScheduledPanel({
               return (
                 <div
                   key={ev.id}
+                  onClick={() => onEventClick(ev)}
                   className="w-full rounded-lg border border-[var(--color-border)]
                     bg-[var(--color-bg-elevated)] p-3
                     hover:shadow-md transition-all duration-150
-                    hover:bg-[var(--color-bg)"
+                    hover:bg-[var(--color-bg)] cursor-pointer"
                 >
                   {/* Top row: type badge + members avatar group */}
                   <div className="flex items-center justify-between gap-2">
@@ -1513,14 +1846,13 @@ function ScheduledPanel({
                   </div>
 
                   {/* Title */}
-                  <p className="text-sm font-bold text-[var(--color-text-primary)] leading-snug line-clamp-2 cursor-pointer mt-1.5"
-                    onClick={() => onEventClick(ev)}>
+                  <p className="text-xs font-bold text-[var(--color-text-primary)] leading-snug line-clamp-2 mt-1">
                     {ev.title}
                   </p>
 
                   {/* Note */}
                   {ev.note && (
-                    <p className="text-xs text-[var(--color-text-muted)] mt-1 line-clamp-2">
+                    <p className="text-[11px] text-[var(--color-text-muted)] mt-1 line-clamp-2">
                       {ev.note}
                     </p>
                   )}
@@ -1675,8 +2007,18 @@ export default function CalendarPage() {
   }
 
   function openEdit(ev: CalendarEvent) {
-    // Block non-owners from opening the modal entirely
-    if (currentUserId !== null && ev.owner !== currentUserId) return;
+    if (ev.id) {
+      void fetch(`/api/calendar/events/${ev.id}/seen`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'X-CSRFToken': getCsrfToken() },
+      }).then(() => {
+        setEvents(prev => prev.map(item => item.id === ev.id ? { ...item, seen: true } : item));
+        window.dispatchEvent(new Event('calendar-badge-refresh'));
+      }).catch(() => {
+        // non-blocking — event modal should still open
+      });
+    }
     setEditingEvent(ev);
     const hasMembers = ev.members && ev.members.length > 0;
     setForm({
@@ -1710,6 +2052,7 @@ export default function CalendarPage() {
       event_type: form.event_type,
       repetition: form.repetition,
       note:       form.note,
+      member_scope: form.memberScope,
       members:    membersPayload,
     };
     try {
@@ -1785,17 +2128,17 @@ export default function CalendarPage() {
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
-    <div className="p-4 md:p-6">
+    <div className="h-[calc(100dvh-var(--header-height))] overflow-hidden p-4 md:p-6">
       {/*
         Two-column responsive layout:
         - mobile   (<640px)  → single column (calendar then scheduled below)
         - tablet   (<1024px) → single column (calendar then scheduled below)
         - desktop  (≥1024px) → side by side, calendar takes remaining space
       */}
-      <div className="flex flex-col lg:flex-row gap-5 lg:items-start lg:h-[calc(100vh-var(--header-height)-3rem)]">
+      <div className="flex flex-col lg:flex-row gap-5 lg:items-start lg:h-[calc(100vh-var(--header-height)-2.5rem)]">
 
         {/* ── LEFT: Monthly Calendar ── */}
-        <div className="flex-1 min-w-0 lg:h-full flex flex-col min-h-0">
+        <div className="flex-1 min-w-0 lg:h-full flex flex-col min-h-0 overflow-hidden">
 
           {/* Calendar nav header */}
           <div className="flex items-center justify-between mb-4 shrink-0">
@@ -1807,7 +2150,7 @@ export default function CalendarPage() {
                   onClick={() => { setMonthOpen(v => !v); setYearOpen(false); }}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-bold
                     text-[var(--color-text-primary)] hover:bg-[var(--color-bg-card)]
-                    transition-colors border border-transparent hover:border-[var(--color-border)]"
+                    transition-colors border border-[var(--color-border)] hover:border-[var(--color-border)]"
                 >
                   {MONTHS[month]}
                   <ChevronDown size={13} className="text-[var(--color-text-muted)]" />
@@ -1844,7 +2187,7 @@ export default function CalendarPage() {
                   onClick={() => { setYearOpen(v => !v); setMonthOpen(false); }}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-bold
                     text-[var(--color-text-primary)] hover:bg-[var(--color-bg-card)]
-                    transition-colors border border-transparent hover:border-[var(--color-border)]"
+                    transition-colors border border-[var(--color-border)] hover:border-[var(--color-border)]"
                 >
                   {year}
                   <ChevronDown size={13} className="text-[var(--color-text-muted)]" />
@@ -1880,7 +2223,7 @@ export default function CalendarPage() {
             <div className="flex items-center gap-1">
               <button
                 onClick={goPrev}
-                className="flex h-8 w-8 items-center justify-center rounded-lg
+                className="flex h-8 w-8 items-center justify-center rounded-full
                   text-[var(--color-text-muted)] border border-[var(--color-border)]
                   hover:bg-[var(--color-bg-card)] hover:text-[var(--color-text-primary)] transition-colors"
               >
@@ -1888,7 +2231,7 @@ export default function CalendarPage() {
               </button>
               <button
                 onClick={goNext}
-                className="flex h-8 w-8 items-center justify-center rounded-lg
+                className="flex h-8 w-8 items-center justify-center rounded-full
                   text-[var(--color-text-muted)] border border-[var(--color-border)]
                   hover:bg-[var(--color-bg-card)] hover:text-[var(--color-text-primary)] transition-colors"
               >
@@ -1912,7 +2255,7 @@ export default function CalendarPage() {
           </div>
 
           {/* Calendar grid */}
-          <div className="flex-1 min-h-0 overflow-hidden relative">
+          <div className="flex-1 min-h-0 overflow-y-auto calendar-scrollbar relative pr-1">
           <AnimatePresence mode="wait" custom={slideDir.current}>
           <motion.div
             key={`${year}-${month}`}
@@ -1947,6 +2290,9 @@ export default function CalendarPage() {
               const isToday   = dateStr === todayStr;
               const isSelected = dateStr === selectedStr;
               const dayEvents = eventsForDate(cell.date);
+              const hasUnseen = dayEvents.some(
+                ev => ev.seen === false && NEW_PILL_EVENT_TYPES.includes(ev.event_type),
+              );
 
               const cellBgClass = isSelected
                 ? 'border-dashed border-2 rounded-2xl border-[var(--color-accent-mid)] bg-[var(--color-accent-mid)]/20'
@@ -1965,7 +2311,7 @@ export default function CalendarPage() {
                   key={dateStr}
                   onClick={() => setSelectedDate(cell.date!)}
                   className={`border border-[var(--color-border)] min-h-[88px] md:min-h-[104px] cursor-pointer p-1.5 pt-1.5
-                    flex flex-col transition-colors duration-100 select-none rounded-lg hover:border-dashed hover:border-2 hover:rounded-2xl hover:border-[var(--color-accent-mid)] hover:bg-[var(--color-accent-mid)]/20 ${cellBgClass}`}>
+                    flex flex-col transition-colors duration-100 select-none rounded-lg group hover:border-dashed hover:border-2 hover:rounded-2xl hover:border-[var(--color-accent-mid)] hover:bg-[var(--color-accent-mid)]/20 ${cellBgClass}`}>
                   {/* Day number */}
                   <div className="flex items-start justify-between mb-1">
                     <span
@@ -1974,17 +2320,25 @@ export default function CalendarPage() {
                     >
                       {cell.day}
                     </span>
-                  {/* Quick-add button — visible on hover */}
-                  <button
-                    onClick={e => { e.stopPropagation(); openCreate(cell.date!); }}
-                    className="opacity-0 hover:opacity-100 group-hover:opacity-100
-                      flex h-5 w-5 items-center justify-center rounded-full
-                      text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] hover:text-[#2845D6]
-                      transition-all"
-                    title="Add event"
-                  >
-                    <Plus size={11} />
-                  </button>
+                    <div className="flex items-center gap-1">
+                      
+                      {/* Quick-add button — visible on hover */}
+                      <button
+                        onClick={e => { e.stopPropagation(); openCreate(cell.date!); }}
+                        className="opacity-0 hover:opacity-100 group-hover:opacity-100
+                          flex h-5 w-5 items-center justify-center rounded-full
+                          text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] hover:text-[#2845D6]
+                          transition-all"
+                        title="Add event"
+                      >
+                        <Plus size={11} />
+                      </button>
+                      {hasUnseen && (
+                        <span className="inline-flex items-center rounded-full bg-[#16A34A] px-1.5 py-[1px] text-[8px] font-normal text-white">
+                          New
+                        </span>
+                      )}
+                    </div>
                   </div>
 
                   {/* Events + timelog pill container */}
@@ -1992,14 +2346,18 @@ export default function CalendarPage() {
                     {/* Timelog status pill — top of list, only for non-privileged users */}
                     {!isPrivileged && timelogStatus[dateStr] && (
                       <span
-                        className={`self-start inline-block rounded-full px-[6px] py-[1px] text-[9px] font-semibold leading-tight text-white ${
+                        className={`ml-1 self-start inline-block rounded-full px-[6px] py-[1px] text-[9px] font-semibold leading-tight text-white ${
                           timelogStatus[dateStr] === 'absent'
                             ? 'bg-[#F63049]'
+                            : timelogStatus[dateStr] === 'night_shift'
+                            ? 'bg-[#2845D6]'
                             : 'bg-[#F59E0B]'
                         }`}
                       >
                         {timelogStatus[dateStr] === 'absent'
                           ? 'Absent'
+                          : timelogStatus[dateStr] === 'night_shift'
+                          ? 'Nightshift'
                           : timelogStatus[dateStr] === 'no_time_out'
                           ? 'No Time-out'
                           : 'No Time-in'}

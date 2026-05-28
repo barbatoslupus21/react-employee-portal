@@ -12,6 +12,7 @@ export interface EmptyStateProps {
     label: string;
     onClick: () => void;
     icon?: React.ReactNode;
+    variant?: 'default' | 'accent';
   };
   className?: string;
 }
@@ -66,10 +67,10 @@ export function EmptyState({
           onClick={action.onClick}
           className={cn(
             "mt-4 inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-medium",
-            "border border-[var(--color-border)] bg-[var(--color-bg-elevated)]",
-            "text-[var(--color-text-primary)]",
-            "hover:bg-[var(--color-bg)] hover:shadow-sm active:shadow-none",
             "transition-all duration-200",
+            action.variant === 'accent'
+              ? "border border-[#2845D6] text-[#2845D6] bg-transparent hover:bg-[#2845D6]/10"
+              : "border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg)] hover:shadow-sm active:shadow-none",
           )}
         >
           {action.icon && <span>{action.icon}</span>}

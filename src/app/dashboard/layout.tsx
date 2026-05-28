@@ -8,12 +8,11 @@ import {
   LayoutDashboard,
   LogOut,
   Megaphone,
-  Stethoscope,
   Calculator,
+  MessageSquare,
   Users,
   Users2,
   Monitor,
-  ShieldCheck,
   Calendar,
   FileText,
   Award,
@@ -23,11 +22,17 @@ import {
   Settings,
   Search,
   ChevronRight,
+  ChevronUp,
+  ChevronDown,
   Menu,
   CalendarFold,
   GraduationCap,
   X,
 } from "lucide-react";
+import { SystemFeedbackModal } from "@/components/SystemFeedbackModal";
+import { WhatIsNewModal } from "@/components/WhatIsNewModal";
+import { Balloons } from "@/components/screen-effects/Balloons";
+import { HappyBirthdayModal } from "@/components/HappyBirthdayModal";
 import { ThemeSwitch } from "@/components/ui/theme-switch-button";
 import { NotificationInboxPopover } from "@/components/ui/notification-inbox-popover";
 import { Sidebar, SidebarBody, SidebarLink, useSidebar } from "@/components/ui/sidebar";
@@ -64,6 +69,7 @@ interface UserData {
   is_approver: boolean;
   employment_type_name: string | null;
   date_hired: string | null;
+  birth_date?: string | null;
 }
 
 type NavItem = {
@@ -100,12 +106,15 @@ function isEvalEligible(user: UserData, periodStartDate: string | null): boolean
 
 function buildNav(user: UserData, activePeriodStart: string | null): NavItem[] {
   const extra: NavItem[] = [];
-  if (user.admin || user.hr || user.accounting)
+  if (user.admin || user.hr || user.accounting) {
     extra.push({ icon: Megaphone,   label: "Announcements", href: "/dashboard/announcements", section: "Modules" });
-  if (user.clinic)
-    extra.push({ icon: Stethoscope, label: "Clinic",     href: "/dashboard/clinic",     section: "Modules" });
-  if (user.admin || user.is_staff)
-    extra.push({ icon: ShieldCheck, label: "Admin",      href: "/dashboard/admin",      section: "Modules" });
+  }
+  if (user.admin || user.hr) {
+    extra.push({ icon: Settings, label: "System Settings", href: "/dashboard/system-settings", section: "Modules" });
+  }
+  if (user.admin) {
+    extra.push({ icon: MessageSquare, label: "Feedback", href: "/dashboard/feedback", section: "Modules" });
+  }
 
   const financeHref = user.accounting
     ? '/dashboard/finance/admin'
@@ -120,7 +129,7 @@ function buildNav(user: UserData, activePeriodStart: string | null): NavItem[] {
 
   const base = STATIC_NAV.map((item) => {
       if (item.href === "/dashboard/certification") {
-        if (user.accounting) {
+        if (user.accounting && !user.hr) {
           return null;
         }
         if (user.admin || user.hr) {
@@ -129,6 +138,13 @@ function buildNav(user: UserData, activePeriodStart: string | null): NavItem[] {
       }
       if (item.href === "/dashboard/pr-form" && (user.admin || user.hr || user.accounting)) {
         return { ...item, label: "PR Request" };
+      }
+      if (item.href === "/dashboard/mis-ticket") {
+        return {
+          ...item,
+          href: user.mis ? "/dashboard/mis-ticket/admin" : "/dashboard/mis-ticket",
+          label: user.mis ? "MIS Ticket Admin" : "MIS Ticket",
+        };
       }
       return item;
     }).filter((item): item is NavItem => item !== null);
@@ -408,11 +424,13 @@ function SidebarSurveyAccordion({
   surveyBadgeCount?: number;
 }) {
   const { open: sidebarOpen, animate } = useSidebar();
-  const [surveyAccordionOpen, setSurveyAccordionOpen] = useState(false);
-
-  useEffect(() => {
-    setSurveyAccordionOpen(currentSurveyView !== null || activeTab === 'survey-admin' || activeTab === 'survey-templates' || activeTab === 'survey-my');
-  }, [currentSurveyView, activeTab]);
+  const surveyContextActive =
+    currentSurveyView !== null ||
+    activeTab === 'survey-admin' ||
+    activeTab === 'survey-templates' ||
+    activeTab === 'survey-my';
+  const [surveyAccordionOpen, setSurveyAccordionOpen] = useState(surveyContextActive);
+  const effectiveSurveyAccordionOpen = surveyContextActive || surveyAccordionOpen;
 
   const ALL_ITEMS = [
     { label: 'My Surveys', href: '/dashboard/assessments/survey?view=my', tab: 'survey-my' as const, iadOnly: true },
@@ -425,7 +443,7 @@ function SidebarSurveyAccordion({
     <Accordion
       type="single"
       collapsible
-      value={surveyAccordionOpen ? 'survey' : ''}
+      value={effectiveSurveyAccordionOpen ? 'survey' : ''}
       onValueChange={(v) => {
         const nowOpen = v === 'survey';
         setSurveyAccordionOpen(nowOpen);
@@ -513,15 +531,24 @@ function SidebarLeaveAccordion({
   pathname,
   activeTab,
   onSubClick,
+  requestBadgeCount = 0,
+  approvalBadgeCount = 0,
 }: {
   isExpanded: boolean;
   onToggle: () => void;
   pathname: string;
   activeTab: "request" | "approval" | null;
   onSubClick: (tab: "request" | "approval") => void;
+  requestBadgeCount?: number;
+  approvalBadgeCount?: number;
 }) {
   const { open: sidebarOpen, animate } = useSidebar();
   const onLeave = pathname.startsWith("/dashboard/leave");
+  const totalBadge = requestBadgeCount + approvalBadgeCount;
+  const subBadgeMap: Record<string, number> = {
+    request: requestBadgeCount,
+    approval: approvalBadgeCount,
+  };
 
   return (
     <Accordion
@@ -540,8 +567,14 @@ function SidebarLeaveAccordion({
             text-[var(--color-text-muted)]
             hover:text-[var(--color-text-primary)]"
         >
-          <span className="flex h-10 w-[40px] shrink-0 items-center justify-center">
+          <span className="relative flex h-10 w-[40px] shrink-0 items-center justify-center">
             <CalendarFold size={18} className="shrink-0" />
+            {totalBadge > 0 && !sidebarOpen && (
+              <span
+                className="absolute h-1.5 w-1.5 rounded-full bg-[var(--color-accent)]"
+                style={{ top: '8px', right: '8px' }}
+              />
+            )}
           </span>
           <motion.div
             initial={false}
@@ -586,13 +619,18 @@ function SidebarLeaveAccordion({
                       href={item.href}
                       onClick={() => onSubClick(item.tab)}
                       className={cn(
-                        "flex items-center h-7 rounded-lg pr-3 pl-[42px] text-xs transition-colors duration-150",
+                        "flex items-center justify-between h-7 rounded-lg pr-3 pl-[42px] text-xs transition-colors duration-150",
                         isActive
                           ? "bg-[#2845D6]/10 text-[#2845D6]"
                           : "text-[var(--color-text-muted)] font-medium hover:bg-[var(--color-bg-card)] hover:text-[var(--color-text-primary)]"
                       )}
                     >
                       <span className="whitespace-nowrap">{item.label}</span>
+                      {(subBadgeMap[item.tab] ?? 0) > 0 && (
+                        <span className="inline-flex items-center justify-center rounded-full border border-[var(--color-border)] bg-[var(--color-bg-card)] px-1.5 h-[18px] text-[10px] font-semibold text-[var(--color-text-muted)] min-w-[18px]">
+                          {subBadgeMap[item.tab]}
+                        </span>
+                      )}
                     </Link>
                   </motion.div>
                 );
@@ -908,6 +946,9 @@ export default function DashboardLayout({
   const [user, setUser] = useState<UserData | null>(null);
   const [loading, setLoading] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const sidebarScrollRef = useRef<HTMLDivElement | null>(null);
+  const [showSidebarScrollTop, setShowSidebarScrollTop] = useState(false);
+  const [showSidebarScrollBottom, setShowSidebarScrollBottom] = useState(false);
 
   // ── Leave accordion state (persists for session — layout never remounts) ──
   const [leaveAccordionOpen, setLeaveAccordionOpen] = useState(
@@ -931,19 +972,52 @@ export default function DashboardLayout({
   const [showNavGuardModal, setShowNavGuardModal] = useState(false);
   const [pendingNavHref, setPendingNavHref] = useState('');
   const [navGuardSubmitting, setNavGuardSubmitting] = useState(false);
+  const [pendingLogout, setPendingLogout] = useState(false);
+  const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
+  const [updatesModalOpen, setUpdatesModalOpen] = useState(false);
+  const [happyBirthdayOpen, setHappyBirthdayOpen] = useState(false);
+  const [birthdaySeen, setBirthdaySeen] = useState(false);
+  const [balloonsLaunched, setBalloonsLaunched] = useState(false);
+  const balloonsRef = useRef<{ launchAnimation: () => void } | null>(null);
+  const birthdayTimerRef = useRef<number | null>(null);
 
   const registerGuard = useCallback((handle: NavGuardHandle | null) => {
     navGuardRef.current = handle;
   }, []);
 
+  useEffect(() => {
+    const node = sidebarScrollRef.current;
+    if (!node) return;
+
+    const updateSidebarScrollIndicators = () => {
+      const { scrollTop, scrollHeight, clientHeight } = node;
+      setShowSidebarScrollTop(scrollTop > 8);
+      setShowSidebarScrollBottom(scrollTop + clientHeight < scrollHeight - 8);
+    };
+
+    updateSidebarScrollIndicators();
+    node.addEventListener('scroll', updateSidebarScrollIndicators);
+    window.addEventListener('resize', updateSidebarScrollIndicators);
+
+    return () => {
+      node.removeEventListener('scroll', updateSidebarScrollIndicators);
+      window.removeEventListener('resize', updateSidebarScrollIndicators);
+    };
+  }, [sidebarOpen, user]);
+
   // ── Survey action-required badge ─────────────────────────────────────────
   const [actionRequiredCount, setActionRequiredCount] = useState(0);
   const [certBadgeCount, setCertBadgeCount] = useState(0);
   const [prfBadgeCount, setPrfBadgeCount] = useState(0);
+  const [misBadgeCount, setMisBadgeCount] = useState(0);
+  const [financeBadgeCount, setFinanceBadgeCount] = useState(0);
+  const [calendarBadgeCount, setCalendarBadgeCount] = useState(0);
   const [trainingApprovalBadgeCount, setTrainingApprovalBadgeCount] = useState(0);
   const [trainingEvalBadgeCount, setTrainingEvalBadgeCount] = useState(0);
   const [selfEvalBadgeCount, setSelfEvalBadgeCount] = useState(0);
   const [empEvalApproverBadgeCount, setEmpEvalApproverBadgeCount] = useState(0);
+  const [leaveMyBadgeCount, setLeaveMyBadgeCount] = useState(0);
+  const [leaveApprovalBadgeCount, setLeaveApprovalBadgeCount] = useState(0);
   const [activePeriodStart, setActivePeriodStart] = useState<string | null>(null);
 
   const fetchSurveyBadge = useCallback(async () => {
@@ -1024,8 +1098,38 @@ export default function DashboardLayout({
     } catch { /* silent */ }
   }, []);
 
+  const fetchMisBadge = useCallback(async (currentUser: UserData | null) => {
+    // Only non-MIS users see the badge on the MIS Ticket sidebar link
+    if (!currentUser || currentUser.mis) return;
+    try {
+      const res = await fetch('/api/mis/tickets/unseen-count', { credentials: 'include' });
+      if (!res.ok) return;
+      const data = await res.json();
+      setMisBadgeCount(typeof data.count === 'number' ? data.count : 0);
+    } catch { /* silent */ }
+  }, []);
+
+  const fetchFinanceBadge = useCallback(async (currentUser: UserData | null) => {
+    // Finance badge is user-facing: unseen loans + unsent payslips.
+    if (!currentUser || currentUser.admin || currentUser.hr || currentUser.accounting) return;
+    try {
+      const res = await fetch('/api/finance/my/unseen-count', { credentials: 'include' });
+      if (!res.ok) return;
+      const data = await res.json();
+      setFinanceBadgeCount(typeof data.count === 'number' ? data.count : 0);
+    } catch { /* silent */ }
+  }, []);
+
+  const fetchCalendarBadge = useCallback(async () => {
+    try {
+      const res = await fetch('/api/calendar/events/unseen-count', { credentials: 'include' });
+      if (!res.ok) return;
+      const data = await res.json();
+      setCalendarBadgeCount(typeof data.count === 'number' ? data.count : 0);
+    } catch { /* silent */ }
+  }, []);
+
   const fetchSelfEvalBadge = useCallback(async (currentUser: UserData | null) => {
-    // Only non-admin/hr/accounting users have Self Evaluation access.
     if (!currentUser || currentUser.admin || currentUser.hr || currentUser.accounting) return;
     try {
       const res = await fetch('/api/employee-eval/my/badge', { credentials: 'include' });
@@ -1045,6 +1149,28 @@ export default function DashboardLayout({
     } catch { /* silent */ }
   }, []);
 
+  const fetchLeaveMyBadge = useCallback(async (currentUser: UserData | null) => {
+    if (!currentUser || currentUser.admin || currentUser.hr) return;
+    try {
+      const res = await fetch('/api/leave/requests/unseen-count', { credentials: 'include' });
+      if (!res.ok) return;
+      const data = await res.json();
+      setLeaveMyBadgeCount(typeof data.unseen_count === 'number' ? data.unseen_count : 0);
+    } catch { /* silent */ }
+  }, []);
+
+  const fetchLeaveApprovalBadge = useCallback(async (currentUser: UserData | null) => {
+    if (!currentUser || (!currentUser.admin && !currentUser.hr && !currentUser.is_approver && !currentUser.clinic && !currentUser.iad)) {
+      return;
+    }
+    try {
+      const res = await fetch('/api/leave/approval/pending-count', { credentials: 'include' });
+      if (!res.ok) return;
+      const data = await res.json();
+      setLeaveApprovalBadgeCount(typeof data.pending_count === 'number' ? data.pending_count : 0);
+    } catch { /* silent */ }
+  }, []);
+
   const searchParams = useSearchParams();
   const surveyView = searchParams?.get('view') === 'my' ? 'my' : searchParams?.get('view') === 'admin' ? 'admin' : null;
 
@@ -1054,50 +1180,79 @@ export default function DashboardLayout({
     fetchSurveyBadge();
     fetchCertBadge();
     fetchPrfBadge(user);
+    fetchMisBadge(user);
+    fetchFinanceBadge(user);
+    fetchCalendarBadge();
     fetchTrainingApprovalBadge(user);
     fetchTrainingEvalBadge(user);
     fetchSelfEvalBadge(user);
     fetchEmpEvalApproverBadge(user);
+    fetchLeaveMyBadge(user);
+    fetchLeaveApprovalBadge(user);
     function onVisible() {
       if (document.visibilityState === 'visible') {
         fetchSurveyBadge();
         fetchCertBadge();
         fetchPrfBadge(user);
+        fetchMisBadge(user);
+        fetchFinanceBadge(user);
+        fetchCalendarBadge();
         fetchTrainingApprovalBadge(user);
         fetchTrainingEvalBadge(user);
         fetchSelfEvalBadge(user);
         fetchEmpEvalApproverBadge(user);
+        fetchLeaveMyBadge(user);
+        fetchLeaveApprovalBadge(user);
       }
     }
     function onSurveyRefresh() { fetchSurveyBadge(); }
     function onCertRefresh() { fetchCertBadge(); }
     function onPrfRefresh() { fetchPrfBadge(user); }
+    function onMisRefresh() { fetchMisBadge(user); }
+    function onFinanceRefresh() { fetchFinanceBadge(user); }
+    function onCalendarRefresh() { fetchCalendarBadge(); }
     function onTrainingApprovalRefresh() { fetchTrainingApprovalBadge(user); }
     function onTrainingEvalRefresh() { fetchTrainingEvalBadge(user); }
     function onSelfEvalRefresh() { fetchSelfEvalBadge(user); }
     function onEmpEvalApproverRefresh() { fetchEmpEvalApproverBadge(user); }
+    function onLeaveRefresh() {
+      fetchLeaveMyBadge(user);
+      fetchLeaveApprovalBadge(user);
+    }
     document.addEventListener('visibilitychange', onVisible);
     window.addEventListener('survey-badge-refresh', onSurveyRefresh);
     window.addEventListener('certificate-badge-refresh', onCertRefresh);
     window.addEventListener('prf-badge-refresh', onPrfRefresh);
+    window.addEventListener('mis-ticket-badge-refresh', onMisRefresh);
+    window.addEventListener('finance-badge-refresh', onFinanceRefresh);
+    window.addEventListener('calendar-badge-refresh', onCalendarRefresh);
     window.addEventListener('training-approval-badge-refresh', onTrainingApprovalRefresh);
     window.addEventListener('training-eval-badge-refresh', onTrainingEvalRefresh);
     window.addEventListener('self-eval-badge-refresh', onSelfEvalRefresh);
     window.addEventListener('employee-eval-approver-badge-refresh', onEmpEvalApproverRefresh);
+    window.addEventListener('leave-badge-refresh', onLeaveRefresh);
     return () => {
       document.removeEventListener('visibilitychange', onVisible);
       window.removeEventListener('survey-badge-refresh', onSurveyRefresh);
       window.removeEventListener('certificate-badge-refresh', onCertRefresh);
       window.removeEventListener('prf-badge-refresh', onPrfRefresh);
+      window.removeEventListener('mis-ticket-badge-refresh', onMisRefresh);
+      window.removeEventListener('finance-badge-refresh', onFinanceRefresh);
+      window.removeEventListener('calendar-badge-refresh', onCalendarRefresh);
       window.removeEventListener('training-approval-badge-refresh', onTrainingApprovalRefresh);
       window.removeEventListener('training-eval-badge-refresh', onTrainingEvalRefresh);
       window.removeEventListener('self-eval-badge-refresh', onSelfEvalRefresh);
       window.removeEventListener('employee-eval-approver-badge-refresh', onEmpEvalApproverRefresh);
+      window.removeEventListener('leave-badge-refresh', onLeaveRefresh);
     };
-  }, [user, fetchSurveyBadge, fetchCertBadge, fetchPrfBadge, fetchTrainingApprovalBadge, fetchTrainingEvalBadge, fetchSelfEvalBadge, fetchEmpEvalApproverBadge]);
+  }, [user, fetchSurveyBadge, fetchCertBadge, fetchPrfBadge, fetchMisBadge, fetchFinanceBadge, fetchCalendarBadge, fetchTrainingApprovalBadge, fetchTrainingEvalBadge, fetchSelfEvalBadge, fetchEmpEvalApproverBadge, fetchLeaveMyBadge, fetchLeaveApprovalBadge]);
 
   useEffect(() => {
-    if (user) fetchSurveyBadge();
+    if (user) {
+      fetchSurveyBadge();
+      fetchLeaveMyBadge(user);
+      fetchLeaveApprovalBadge(user);
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname]);
 
@@ -1158,13 +1313,58 @@ export default function DashboardLayout({
 
   const { showWarning, secondsLeft, resetTimer } = useInactivityTimeout(handleInactivityTimeout);
 
+  const fetchMeWithRefreshFallback = useCallback(async () => {
+    const meRes = await fetch("/api/auth/me", {
+      credentials: "include",
+      cache: "no-store",
+    });
+
+    if (meRes.ok) {
+      return meRes;
+    }
+
+    if (meRes.status !== 401) {
+      return meRes;
+    }
+
+    try {
+      const refreshRes = await fetch('/api/auth/token/refresh', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'X-CSRFToken': getCsrfToken() },
+      });
+
+      if (!refreshRes.ok) {
+        return meRes;
+      }
+
+      await new Promise<void>((resolve) => {
+        setTimeout(() => resolve(), 120);
+      });
+
+      return fetch('/api/auth/me', {
+        credentials: 'include',
+        cache: 'no-store',
+      });
+    } catch {
+      return meRes;
+    }
+  }, []);
+
   const fetchUser = useCallback(async () => {
     try {
-      const res = await fetch("/api/auth/me", { credentials: "include" });
+      const res = await fetchMeWithRefreshFallback();
       if (res.status === 401) { router.replace("/"); return; }
       if (res.ok) {
         const userData = await res.json();
         setUser(userData);
+        try {
+          const preferredTheme = userData.theme ? 'dark' : 'light';
+          document.documentElement.setAttribute('data-theme', preferredTheme);
+          localStorage.setItem('repconnect-theme', preferredTheme);
+        } catch {
+          /* ignore */
+        }
         // Fetch the active period start_date so sidebar eligibility uses the real period date.
         if (!userData.admin && !userData.hr) {
           fetch('/api/employee-eval/active-period', { credentials: 'include' })
@@ -1180,9 +1380,75 @@ export default function DashboardLayout({
     } finally {
       setLoading(false);
     }
-  }, [router]);
+  }, [fetchMeWithRefreshFallback, router]);
 
   useEffect(() => { fetchUser(); }, [fetchUser]);
+
+  function isTodayBirthday(birthDate: string | null | undefined) {
+    if (!birthDate) return false;
+    const [year, month, day] = birthDate.split('-').map(Number);
+    if (!month || !day) return false;
+    const today = new Date();
+    return today.getMonth() + 1 === month && today.getDate() === day;
+  }
+
+  useEffect(() => {
+    if (!user || !user.birth_date) return;
+
+    const birthdayStorageKey = `repconnect-happy-birthday-seen-${user.id}-${new Date().getFullYear()}-${user.birth_date.slice(5)}`;
+    const storedValue = window.localStorage.getItem(birthdayStorageKey);
+    setBirthdaySeen(storedValue === '1');
+  }, [user]);
+
+  const handleBirthdayModalChange = useCallback(
+    (open: boolean) => {
+      if (!open) {
+        if (birthdayTimerRef.current) {
+          window.clearTimeout(birthdayTimerRef.current);
+          birthdayTimerRef.current = null;
+        }
+
+        if (user && user.birth_date && isTodayBirthday(user.birth_date)) {
+          const birthdayStorageKey = `repconnect-happy-birthday-seen-${user.id}-${new Date().getFullYear()}-${user.birth_date.slice(5)}`;
+          window.localStorage.setItem(birthdayStorageKey, '1');
+          setBirthdaySeen(true);
+        }
+      }
+      setHappyBirthdayOpen(open);
+    },
+    [user],
+  );
+
+  useEffect(() => {
+    if (!user || !user.birth_date || balloonsLaunched || happyBirthdayOpen || birthdaySeen) return;
+    if (!isTodayBirthday(user.birth_date)) return;
+    if (feedbackModalOpen || updatesModalOpen) return;
+
+    if (balloonsRef.current) {
+      balloonsRef.current.launchAnimation();
+    }
+
+    setBalloonsLaunched(true);
+  }, [user, feedbackModalOpen, updatesModalOpen, balloonsLaunched, happyBirthdayOpen, birthdaySeen]);
+
+  useEffect(() => {
+    if (!balloonsLaunched || happyBirthdayOpen || birthdaySeen) return;
+
+    if (birthdayTimerRef.current) {
+      window.clearTimeout(birthdayTimerRef.current);
+    }
+
+    birthdayTimerRef.current = window.setTimeout(() => {
+      setHappyBirthdayOpen(true);
+      birthdayTimerRef.current = null;
+    }, 3400);
+
+    return () => {
+      if (birthdayTimerRef.current) {
+        window.clearTimeout(birthdayTimerRef.current);
+      }
+    };
+  }, [balloonsLaunched, happyBirthdayOpen, birthdaySeen]);
 
   // ── Force password-change guard ──────────────────────────────────────────
   // If the user's change_password flag is set, they must change it before
@@ -1210,7 +1476,7 @@ export default function DashboardLayout({
     return () => clearInterval(id);
   }, []);
 
-  async function handleLogout() {
+  async function doLogout() {
     try {
       await fetch("/api/auth/logout", {
         method: "POST",
@@ -1218,8 +1484,17 @@ export default function DashboardLayout({
         headers: { "X-CSRFToken": getCsrfToken() },
       });
     } catch { /* silent — navigate regardless */ }
-    // Hard navigate so the landing page re-mounts fresh (restarts Three.js animation).
     window.location.href = "/";
+  }
+
+  async function handleLogout() {
+    if (navGuardRef.current?.isDirty) {
+      setPendingLogout(true);
+      setPendingNavHref('');
+      setShowNavGuardModal(true);
+      return;
+    }
+    await doLogout();
   }
 
   if (loading) {
@@ -1303,6 +1578,7 @@ export default function DashboardLayout({
             <SidebarUserCard user={user} />
             {/* onClickCapture intercepts all link clicks in the sidebar for navigation guard */}
             <div
+              ref={sidebarScrollRef}
               className="flex-1 overflow-y-auto overflow-x-hidden py-2 px-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
               onClickCapture={(e) => {
                 const guard = navGuardRef.current;
@@ -1466,10 +1742,11 @@ export default function DashboardLayout({
                           key="leave-approval"
                           link={{
                             label: "Leave Approval",
-                            href: "/dashboard/leave?tab=approval-queue",
+                            href: "/dashboard/leave/admin",
                             icon: <CalendarFold size={18} className="shrink-0" />,
+                            badgeCount: leaveApprovalBadgeCount,
                           }}
-                          active={pathname === "/dashboard/leave"}
+                          active={pathname.startsWith("/dashboard/leave/admin")}
                         />
                       );
                     }
@@ -1486,6 +1763,8 @@ export default function DashboardLayout({
                           pathname={pathname}
                           activeTab={lastLeaveTab}
                           onSubClick={(tab) => setLastLeaveTab(tab)}
+                          requestBadgeCount={leaveMyBadgeCount}
+                          approvalBadgeCount={leaveApprovalBadgeCount}
                         />
                       );
                     }
@@ -1498,16 +1777,46 @@ export default function DashboardLayout({
                         label: item.label,
                         href: item.href,
                         icon: <Icon size={18} className="shrink-0" />,
-                        badgeCount: item.href === '/dashboard/certification'
+                        badgeCount: item.href === '/dashboard/calendar'
+                          ? calendarBadgeCount
+                          : item.href === '/dashboard/certification'
                           ? certBadgeCount
                           : item.href === '/dashboard/pr-form'
                           ? prfBadgeCount
+                          : item.href === '/dashboard/mis-ticket' && !user?.mis
+                          ? misBadgeCount
+                          : item.href.startsWith('/dashboard/finance')
+                          ? financeBadgeCount
+                          : item.href === '/dashboard/leave'
+                          ? leaveMyBadgeCount
                           : undefined,
                       }}
                       active={pathname === item.href}
                     />
                   );
                 })}
+              </div>
+            </div>
+            <div
+              className={cn(
+                'pointer-events-none absolute inset-x-0 top-0 z-10 flex justify-center py-3 transition-opacity duration-200',
+                showSidebarScrollTop ? 'opacity-100' : 'opacity-0',
+              )}
+            >
+              <div className="absolute inset-x-0 top-0 h-16 bg-gradient-to-b from-[var(--color-bg-elevated)] to-transparent" />
+              <div className="relative flex h-4 w-8 items-center justify-center rounded-full bg-[rgba(255,255,255,0.95)] text-[var(--color-text-muted)] dark:bg-transparent dark:text-white">
+                <ChevronUp className="h-4 w-4" />
+              </div>
+            </div>
+            <div
+              className={cn(
+                'pointer-events-none absolute inset-x-0 bottom-0 z-10 flex justify-center py-3 transition-opacity duration-200',
+                showSidebarScrollBottom ? 'opacity-100' : 'opacity-0',
+              )}
+            >
+              <div className="absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-[var(--color-bg-elevated)] to-transparent" />
+              <div className="relative flex h-4 w-8 items-center justify-center rounded-full bg-[rgba(255,255,255,0.95)] text-[var(--color-text-muted)] dark:bg-transparent dark:text-white">
+                <ChevronDown className="h-4 w-4" />
               </div>
             </div>
             <div className="shrink-0 border-t border-[var(--color-border)] py-2 px-2">
@@ -1517,10 +1826,36 @@ export default function DashboardLayout({
         </Sidebar>
 
         {/* Main — pl-[60px] reserves collapsed sidebar space on desktop */}
-        <div className="flex-1 overflow-y-auto md:pl-[60px]">
-          {children}
+        <div className="flex-1 min-h-0 overflow-hidden md:pl-[60px] relative">
+          <div className="pointer-events-none absolute inset-0 z-0 hidden dark:block bg-background [background:radial-gradient(125%_125%_at_50%_-50%,#c7d2fe_40%,transparent_100%)] dark:[background:radial-gradient(125%_125%_at_50%_-50%,#6366f136_40%,transparent_100%)]" />
+          <div className="relative z-10 h-full">
+            {children}
+          </div>
         </div>
       </div>
+
+      <Balloons ref={balloonsRef} className="pointer-events-none fixed inset-0 z-50" />
+
+      {/* ── System feedback modal (non-admin users only) ── */}
+      <SystemFeedbackModal
+        userId={user.id}
+        admin={user.admin}
+        onOpenChange={setFeedbackModalOpen}
+      />
+
+      {/* ── What's New modal (non-admin users only) ── */}
+      <WhatIsNewModal
+        userId={user.id}
+        admin={user.admin}
+        onOpenChange={setUpdatesModalOpen}
+      />
+
+      {/* ── Happy birthday modal (automatically shown on birthday after balloons) ── */}
+      <HappyBirthdayModal
+        open={happyBirthdayOpen}
+        onOpenChange={handleBirthdayModalChange}
+        firstName={user?.firstname ?? ''}
+      />
 
       {/* ── Inactivity warning modal ── */}
       <AnimatePresence>
@@ -1539,7 +1874,7 @@ export default function DashboardLayout({
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             transition={{ duration: 0.18 }}
             className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
-            onClick={navGuardSubmitting ? undefined : () => setShowNavGuardModal(false)}
+            onClick={navGuardSubmitting ? undefined : () => { setShowNavGuardModal(false); setPendingLogout(false); }}
           >
             <motion.div
               initial={{ opacity: 0, scale: 0.95, y: 10 }}
@@ -1551,15 +1886,19 @@ export default function DashboardLayout({
             >
               <div className="flex items-start justify-between gap-3 p-4 border-b border-[var(--color-border)]">
                 <div>
-                  <p className="text-sm font-semibold text-[var(--color-text-primary)]">Unsaved Evaluation</p>
+                  <p className="text-sm font-semibold text-[var(--color-text-primary)]">Submit Your Evaluation</p>
                   <p className="text-xs text-[var(--color-text-muted)] mt-1">
-                    You have an unsubmitted evaluation. Would you like to submit it before leaving, or discard your changes?
+                    You have answered all required questions for this evaluation but have not submitted it yet. Would you like to submit your evaluation before leaving?
                   </p>
                 </div>
                 <button
                   type="button"
                   disabled={navGuardSubmitting}
-                  onClick={() => setShowNavGuardModal(false)}
+                  onClick={() => {
+                    if (navGuardSubmitting) return;
+                    setShowNavGuardModal(false);
+                    setPendingLogout(false);
+                  }}
                   className="shrink-0 flex h-7 w-7 items-center justify-center rounded-full text-[var(--color-text-muted)] hover:bg-[var(--color-bg-card)] transition-colors disabled:opacity-40"
                 >
                   <X size={15} />
@@ -1572,24 +1911,36 @@ export default function DashboardLayout({
                   onClick={() => {
                     navGuardRef.current = null;
                     setShowNavGuardModal(false);
-                    router.push(pendingNavHref);
+                    const isLogout = pendingLogout;
+                    const href = pendingNavHref;
+                    setPendingLogout(false);
+                    if (isLogout) { void doLogout(); } else { router.push(href); }
                   }}
-                  className="px-4 py-2 rounded-lg text-xs font-medium border border-[var(--color-border)] text-red-600 hover:bg-red-50 dark:hover:bg-red-950/20 transition-colors disabled:opacity-50"
+                  className="px-4 py-2 rounded-lg text-xs font-medium border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-card)] transition-colors disabled:opacity-50"
                 >
-                  Leave Anyway
+                  Leave Without Submitting
                 </button>
                 <button
                   type="button"
                   disabled={navGuardSubmitting}
                   onClick={async () => {
                     const guard = navGuardRef.current;
-                    if (!guard) { setShowNavGuardModal(false); router.push(pendingNavHref); return; }
+                    const isLogout = pendingLogout;
+                    const href = pendingNavHref;
+                    if (!guard) {
+                      setShowNavGuardModal(false);
+                      setPendingLogout(false);
+                      if (isLogout) { void doLogout(); } else { router.push(href); }
+                      return;
+                    }
                     setNavGuardSubmitting(true);
                     try {
                       const ok = await guard.trySubmit();
                       setShowNavGuardModal(false);
-                      if (ok) router.push(pendingNavHref);
-                      // If not ok: validation failed — modal closed, red borders shown on page.
+                      setPendingLogout(false);
+                      if (ok) {
+                        if (isLogout) { void doLogout(); } else { router.push(href); }
+                      }
                     } finally {
                       setNavGuardSubmitting(false);
                     }

@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAnnouncementReactions } from '@/app/dashboard/announcements/_hooks/useAnnouncements';
+import { UserAvatar } from './UserAvatar';
 
 type ReactionsViewModalProps = {
   open: boolean;
@@ -74,14 +75,7 @@ export function ReactionsViewModal({ open, onOpenChange, announcementId }: React
                 <ul className="space-y-3">
                   {reactions.map((r: { id: number; user_name: string; user_avatar: string | null; emoji: string }) => (
                     <li key={r.id} className="flex items-center gap-3">
-                      {r.user_avatar ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={r.user_avatar} alt={r.user_name} className="h-8 w-8 rounded-full object-cover" />
-                      ) : (
-                        <div className="h-8 w-8 rounded-full bg-[#2845D6]/20 flex items-center justify-center text-xs font-semibold text-[#2845D6]">
-                          {r.user_name?.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase()}
-                        </div>
-                      )}
+                      <UserAvatar src={r.user_avatar} alt={r.user_name} className="h-8 w-8" />
                       <span className="flex-1 text-sm text-[var(--color-text-primary)]">{r.user_name}</span>
                       <span className="text-lg">{r.emoji}</span>
                     </li>

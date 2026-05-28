@@ -1400,7 +1400,7 @@ export default function EmployeesAdminPage() {
       sortField:    'idnumber',
       width:        '140px',
       render: row => (
-        <span className="text-xs text-[var(--color-text-muted)] font-mono">{row.idnumber}</span>
+        <span className="text-xs font-normal text-[var(--color-text-primary)]">{row.idnumber}</span>
       ),
     },
     {
@@ -1410,7 +1410,7 @@ export default function EmployeesAdminPage() {
       width:     '220px',
       render: row => {
         const name = [row.lastname, row.firstname].filter(Boolean).join(', ') || row.idnumber;
-        return <span className="text-xs font-medium text-[var(--color-text-primary)]">{name}</span>;
+        return <span className="text-xs font-normal text-[var(--color-text-primary)]">{name}</span>;
       },
     },
     {
@@ -1428,7 +1428,7 @@ export default function EmployeesAdminPage() {
       ),
       filterActive: deptFilter !== null,
       render: row => (
-        <span className="text-xs text-[var(--color-text-muted)]">{row.department_name ?? '—'}</span>
+        <span className="text-xs font-normal text-[var(--color-text-primary)]">{row.department_name ?? '—'}</span>
       ),
     },
     {
@@ -1446,7 +1446,7 @@ export default function EmployeesAdminPage() {
       ),
       filterActive: lineFilter !== null,
       render: row => (
-        <span className="text-xs text-[var(--color-text-muted)]">{row.line_name ?? '—'}</span>
+        <span className="text-xs font-normal text-[var(--color-text-primary)]">{row.line_name ?? '—'}</span>
       ),
     },
 
@@ -1457,7 +1457,7 @@ export default function EmployeesAdminPage() {
       thClassName: 'hidden xl:table-cell',
       tdClassName: 'hidden xl:table-cell',
       render: row => (
-        <span className="text-xs text-[var(--color-text-muted)]">{row.employment_type_name ?? '—'}</span>
+        <span className="text-xs font-normal text-[var(--color-text-primary)]">{row.employment_type_name ?? '—'}</span>
       ),
     },
     {
@@ -1465,8 +1465,8 @@ export default function EmployeesAdminPage() {
       label:        'Status',
       sortField:    'active',
       width:        '140px',
-      thClassName:  'max-[480px]:hidden',
-      tdClassName:  'max-[480px]:hidden',
+      thClassName:  'max-[500px]:hidden',
+      tdClassName:  'max-[500px]:hidden',
       filterContent: (
         <FilterContentList
           options={STATUS_FILTER_OPTIONS}
@@ -1476,22 +1476,23 @@ export default function EmployeesAdminPage() {
       ),
       filterActive: statusFilter !== null,
       render: row => (
-        <div className="flex items-center gap-1.5 flex-wrap">
+        <div className="flex items-center gap-1">
           <StatusPill
-            status={row.active ? 'approved' : 'cancelled'}
+            className='text-[9px] rounded-full'
+            status={row.active ? 'approved' : 'disapproved'}
             label={row.active ? 'Active' : 'Inactive'}
           />
           {row.locked && (
-            <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium bg-yellow-100 text-yellow-700 dark:bg-yellow-950/40 dark:text-yellow-400">
-              Locked
-            </span>
-          )}
+            <StatusPill className='text-[9px]' status='pending' label='Locked' />
+          )}  
         </div>
       ),
     },
     {
       key:   'actions',
       label: 'Actions',
+      thClassName:  'flex justify-center',
+      tdClassName:  'flex justify-center',
       render: row => (
         <ActionCell
           row={row}
@@ -1523,14 +1524,14 @@ export default function EmployeesAdminPage() {
   // ── Main render ───────────────────────────────────────────────────────────────
   return (
     <>
-      <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6">
+      <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4">
 
         {/* Page header */}
         <div>
           <h1 className="text-lg font-bold text-[var(--color-text-primary)] flex items-center gap-2">
-            Employees
+            Manages Employees
           </h1>
-          <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
+          <p className="text-xs text-[var(--color-text-muted)]">
             Manage employee accounts, statuses, and work information.
           </p>
         </div>
@@ -1567,18 +1568,18 @@ export default function EmployeesAdminPage() {
               <button
                 type="button"
                 onClick={() => setShowImport(true)}
-                className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-lg text-sm font-medium border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-card)] transition-colors"
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-normal border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-card)] transition-colors"
               >
                 <Upload size={14} />
-                Import
+                Upload Users 
               </button>
               <button
                 type="button"
                 onClick={() => setShowExport(true)}
-                className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-lg text-sm font-medium bg-[#2845D6] text-white hover:bg-[#1e35b5] transition-colors"
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-normal bg-[#2845D6] text-white hover:bg-[#1e35b5] transition-colors"
               >
                 <Download size={14} />
-                Export
+                Export Report
               </button>
             </>
           }

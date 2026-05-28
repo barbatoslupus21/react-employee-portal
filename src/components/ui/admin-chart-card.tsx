@@ -46,6 +46,8 @@ export interface AdminChartCardProps {
   loading:      boolean;
   /** Show a soft overlay while new data loads in (filter/view changes). */
   transitioning?: boolean;
+  /** Optional wrapper class for layout-specific sizing. */
+  className?: string;
 
   // ── View toggle ────────────────────────────────────────────────────────────
   viewType:          ChartViewType;
@@ -94,6 +96,7 @@ export function AdminChartCard({
   data,
   loading,
   transitioning = false,
+  className,
   viewType,
   onViewTypeChange,
   chartType,
@@ -113,7 +116,7 @@ export function AdminChartCard({
   const pillId = `${id}-chart-view-pill`;
 
   return (
-    <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-sm)]">
+    <div className={cn('flex min-h-0 flex-col rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-sm)]', className)}>
 
       {/* ── Toolbar ─────────────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-center gap-3 px-5 pt-4 pb-3 border-b border-[var(--color-border)]">
@@ -246,7 +249,7 @@ export function AdminChartCard({
       </div>
 
       {/* ── Chart body ──────────────────────────────────────────────────── */}
-      <div className="px-4 pt-3 pb-5 h-[280px]">
+      <div className="h-[280px] px-4 pt-3 pb-5">
         {loading ? (
           <ChartSkeleton />
         ) : (

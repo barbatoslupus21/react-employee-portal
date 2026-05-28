@@ -8,6 +8,7 @@ import { AdminChartCard } from '@/components/ui/admin-chart-card';
 import type { ChartViewType, ChartDisplayType } from '@/components/ui/admin-chart-card';
 import { EmptyState } from '@/components/ui/interactive-empty-state';
 import SearchBar from '@/components/ui/searchbar';
+import { StatusPill } from '@/components/ui/status-pill';
 import {
   Pagination,
   PaginationContent,
@@ -932,7 +933,7 @@ function ImportModal({
                     'relative flex items-center gap-2.5 w-full text-left px-4 py-2.5 text-xs transition-colors',
                     isActive
                       ? 'text-[#2845D6] font-semibold'
-                      : 'text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] font-medium',
+                      : 'text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] font-normals',
                   )}
                 >
                   {isActive && (
@@ -965,15 +966,15 @@ function ImportModal({
                 >
                   <div className="min-w-0">
                     <p className="text-sm font-semibold text-green-900 dark:text-green-200">{section.label}</p>
-                    <p className="text-xs text-green-700 dark:text-green-400 mt-0.5 leading-relaxed">{section.description}</p>
+                    <p className="text-[12px] text-green-700 dark:text-green-400 leading-relaxed">{section.description}</p>
                   </div>
                   {!isPayslip && (
                     <button
                       type="button"
                       onClick={downloadTemplate}
-                      className="shrink-0 flex items-center gap-1.5 h-8 px-3 rounded-lg text-xs font-medium border border-green-400/70 dark:border-green-700 text-green-700 dark:text-green-300 hover:bg-green-100 dark:hover:bg-green-900/30 transition-colors"
+                      className="shrink-0 flex items-center gap-1.5 px-3 py-1 rounded-full text-[12px] font-normal border border-green-400/70 dark:border-green-700 text-green-700 dark:text-green-300 hover:bg-green-100 dark:hover:bg-green-900/30 transition-colors"
                     >
-                      <Download size={12} />
+                      <Download size={13} />
                       Download Template
                     </button>
                   )}
@@ -1093,7 +1094,6 @@ function ImportModal({
                       files={files}
                       onFilesChange={setFiles}
                       accept=".xlsx,.xls,.csv"
-                      multiple
                       label="Click to select or drag & drop"
                       helperText={section.acceptLabel}
                       disabled={phase === 'uploading'}
@@ -1120,8 +1120,8 @@ function ImportModal({
                           </li>
                         ))}
                       </ul>
-                      {allowanceNote && <p className="text-xs text-amber-600 dark:text-amber-400">{allowanceNote}</p>}
-                      {loanNote && <p className="text-xs text-amber-600 dark:text-amber-400">{loanNote}</p>}
+                      {allowanceNote && <p className="text-[12px] text-amber-600 dark:text-amber-400">Note: {allowanceNote}</p>}
+                      {loanNote && <p className="text-[12px] text-amber-600 dark:text-amber-400">Note: {loanNote}</p>}
                     </div>
 
                   </div>
@@ -1211,17 +1211,23 @@ function ImportModal({
           <button
             type="button"
             onClick={handleSubmit}
-            disabled={files.length === 0 || phase === 'uploading' || phase === 'validating' || (isPayslip && (!psType || !psPeriodStart || !psPeriodEnd))}
-            className="h-9 px-5 rounded-lg text-sm font-medium bg-[#2845D6] text-white hover:bg-[#1e35b5] transition-colors disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2"
+            disabled={
+              files.length === 0
+              || phase === 'uploading'
+              || phase === 'validating'
+              || (isPayslip && (!psType || !psPeriodStart || !psPeriodEnd))
+              || (!isPayslip && activeSection === 'deductions' && !dcCutoffDate)
+            }
+            className="h-9 px-4 py-2 rounded-lg text-xs font-normal bg-[#2845D6] text-white hover:bg-[#1e35b5] transition-colors disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2"
           >
             {phase === 'uploading' || phase === 'validating' ? (
               <TextShimmer
-                className="text-sm [--base-color:rgba(255,255,255,0.55)] [--base-gradient-color:#ffffff] dark:[--base-color:rgba(255,255,255,0.55)] dark:[--base-gradient-color:#ffffff]"
+                className="text-xs [--base-color:rgba(255,255,255,0.55)] [--base-gradient-color:#ffffff] dark:[--base-color:rgba(255,255,255,0.55)] dark:[--base-gradient-color:#ffffff]"
                 duration={1.2}
               >{phase === 'validating' ? 'Validating Data…' : 'Uploading Data…'}</TextShimmer>
             ) : (
               <>
-                <Upload size={15} />
+                <Upload size={14} />
                 Validate &amp; Upload
               </>
             )}
@@ -1299,12 +1305,12 @@ function ExportModal({ onClose }: { onClose: () => void }) {
           </button>
         </div>
 
-        <div className="px-6 py-5 space-y-4">
+        <div className="px-6 py-4 space-y-4">
           {/* Record type */}
           <div className="space-y-1.5">
             <label className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Record Type</label>
             <Select value={recordType} onValueChange={v => setRecordType(v as ExportType)}>
-              <SelectTrigger className="h-9 text-sm">
+              <SelectTrigger className="h-8 text-xs">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -1323,7 +1329,7 @@ function ExportModal({ onClose }: { onClose: () => void }) {
               type="date"
               value={dateFrom}
               onChange={e => setDateFrom(e.target.value)}
-              className="h-9 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-card)] px-3 text-sm text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[#2845D6]/30"
+              className="h-8 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-card)] px-3 text-xs text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[#2845D6]/30"
             />
           </div>
 
@@ -1334,7 +1340,7 @@ function ExportModal({ onClose }: { onClose: () => void }) {
               type="date"
               value={dateTo}
               onChange={e => setDateTo(e.target.value)}
-              className="h-9 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-card)] px-3 text-sm text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[#2845D6]/30"
+              className="h-8 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-card)] px-3 text-xs text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[#2845D6]/30"
             />
           </div>
         </div>
@@ -1342,18 +1348,18 @@ function ExportModal({ onClose }: { onClose: () => void }) {
         {/* Footer */}
         <div className="px-6 py-4 border-t border-[var(--color-border)] flex items-center justify-end gap-3">
           <button type="button" onClick={onClose} disabled={exporting}
-            className="h-9 px-5 rounded-lg text-sm font-medium border border-[var(--color-border)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-card)] transition-colors disabled:opacity-50">
+            className="rounded-lg text-xs font-normal py-2 px-4 border border-[var(--color-border)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-card)] transition-colors disabled:opacity-50">
             Cancel
           </button>
           <button
             type="button"
             onClick={handleExport}
             disabled={exporting || !dateFrom || !dateTo}
-            className="h-9 px-5 rounded-lg text-sm font-medium bg-[#2845D6] text-white hover:bg-[#1e35b5] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="inline-flex items-center gap-2 rounded-lg text-xs font-normal py-2 px-4 bg-[#2845D6] text-white hover:bg-[#1e35b5] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {exporting
-              ? <TextShimmer className="text-sm" duration={1.2}>Exporting…</TextShimmer>
-              : 'Export'}
+              ? <TextShimmer className="text-xs" duration={1.2}>Exporting…</TextShimmer>
+              : <><Download size={14} />Export Report</>}
           </button>
         </div>
       </motion.div>
@@ -1633,7 +1639,7 @@ function TypesManageModal({
                 transition={{ duration: 0.15 }}
                 className="space-y-4"
               >
-                <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-card)] px-4 py-4 space-y-4">
+                <div className="px-3 py-2 space-y-4">
                   <div>
                     <p className="text-xs font-semibold text-[var(--color-text-primary)]">Deduction Frequency</p>
                     <p className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
@@ -1644,7 +1650,7 @@ function TypesManageModal({
                     <div className="h-9 rounded-lg bg-[var(--color-skeleton)] animate-pulse w-full" />
                   ) : (
                     <Select value={lsFreq} onValueChange={setLsFreq}>
-                      <SelectTrigger className="w-full h-9 text-xs rounded-lg border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text-primary)]">
+                      <SelectTrigger className="w-full h-8 text-xs rounded-lg border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text-primary)]">
                         <SelectValue placeholder="Select frequency…" />
                       </SelectTrigger>
                       <SelectContent>
@@ -1662,7 +1668,7 @@ function TypesManageModal({
                     type="button"
                     onClick={handleSaveLoanSettings}
                     disabled={lsSaving || !lsLoaded}
-                    className="h-9 px-5 rounded-lg bg-[#2845D6] text-white text-xs font-medium hover:bg-[#1e35b5] transition-colors disabled:opacity-50 inline-flex items-center gap-2"
+                    className="px-4 py-2 rounded-lg bg-[#2845D6] text-white text-xs font-normal hover:bg-[#1e35b5] transition-colors disabled:opacity-50 inline-flex items-center gap-2"
                   >
                     {lsSaving
                       ? <TextShimmer className="text-xs" duration={1.2}>Saving…</TextShimmer>
@@ -1803,7 +1809,7 @@ function TypesManageModal({
                               className="shrink-0 flex h-6 w-6 items-center justify-center rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-bg-elevated)] hover:text-[#2845D6] transition-colors"
                               title="Edit"
                             >
-                              <Pencil size={12} />
+                              <Pencil size={13} />
                             </button>
                             <button
                               type="button"
@@ -1811,7 +1817,7 @@ function TypesManageModal({
                               className="shrink-0 flex h-6 w-6 items-center justify-center rounded-md text-[var(--color-text-muted)] hover:bg-red-50 dark:hover:bg-red-950/30 hover:text-red-500 transition-colors"
                               title="Delete"
                             >
-                              <Trash2 size={12} />
+                              <Trash2 size={13} />
                             </button>
                           </>
                         )}
@@ -1900,11 +1906,11 @@ function TypesManageModal({
                       type="button"
                       onClick={handleCreate}
                       disabled={saving || !newName.trim() || !!nameErr}
-                      className="shrink-0 mt-0 h-8 px-3 rounded-md bg-[#2845D6] text-white text-xs font-medium hover:bg-[#1e35b5] transition-colors disabled:opacity-50 inline-flex items-center gap-1"
+                      className="shrink-0 px-4 py-2 rounded-lg bg-[#2845D6] text-white text-xs font-normal hover:bg-[#1e35b5] transition-colors disabled:opacity-50 inline-flex items-center gap-1"
                     >
                       {saving
                         ? <div className="h-3 w-3 rounded-full border border-white/60 border-t-white animate-spin" />
-                        : <Plus size={13} />}
+                        : <Plus size={14} />}
                       Add
                     </button>
                   </div>
@@ -1928,7 +1934,8 @@ function TypesManageModal({
         <ConfirmationModal
           title="Delete Type"
           message={`Delete "${deleteConfirm.name}"? This cannot be undone.`}
-          confirmLabel="Delete"
+          confirmLabel="Yes, Delete It"
+          cancelLabel="No, Keep It"
           confirming={deleteConfirming}
           onConfirm={handleDeleteConfirmed}
           onCancel={() => setDeleteConfirm(null)}
@@ -2091,7 +2098,7 @@ function MultiSelectFilterPopover({
             placeholder={`Search ${label}…`}
             value={innerSearch}
             onChange={e => { setInnerSearch(e.target.value); setTimeout(checkScroll, 0); }}
-            className="mb-1.5 w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg-card)] px-2 py-1 text-xs text-[var(--color-text-primary)] placeholder:text-[var(--color-text-muted)] focus:outline-none focus:ring-1 focus:ring-[#2845D6]/40"
+            className="mb-1.5 w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2 py-1 text-xs text-[var(--color-text-primary)] placeholder:text-[var(--color-text-muted)] placeholder:italic focus:outline-none focus:ring-1 focus:ring-[#2845D6]/40"
           />
         )}
         {isActive && (
@@ -2106,7 +2113,7 @@ function MultiSelectFilterPopover({
         <div className="relative">
           {canScrollUp && (
             <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex justify-center bg-gradient-to-b from-[var(--color-bg-elevated)] pb-3 pt-0.5">
-              <ChevronUp size={12} className="text-[var(--color-text-muted)]" />
+              <ChevronUp size={13} className="text-[var(--color-text-muted)]" />
             </div>
           )}
           <div
@@ -2151,7 +2158,7 @@ function MultiSelectFilterPopover({
           </div>
           {canScrollDown && (
             <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex justify-center bg-gradient-to-t from-[var(--color-bg-elevated)] pb-0.5 pt-3">
-              <ChevronDown size={12} className="text-[var(--color-text-muted)]" />
+              <ChevronDown size={13} className="text-[var(--color-text-muted)]" />
             </div>
           )}
         </div>
@@ -2216,7 +2223,7 @@ function SingleSelectFilterPopover({
         <div className="relative">
           {canScrollUp && (
             <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex justify-center bg-gradient-to-b from-[var(--color-bg-elevated)] pb-3 pt-0.5">
-              <ChevronUp size={12} className="text-[var(--color-text-muted)]" />
+              <ChevronUp size={13} className="text-[var(--color-text-muted)]" />
             </div>
           )}
           <div
@@ -2254,7 +2261,7 @@ function SingleSelectFilterPopover({
           </div>
           {canScrollDown && (
             <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex justify-center bg-gradient-to-t from-[var(--color-bg-elevated)] pb-0.5 pt-3">
-              <ChevronDown size={12} className="text-[var(--color-text-muted)]" />
+              <ChevronDown size={13} className="text-[var(--color-text-muted)]" />
             </div>
           )}
         </div>
@@ -2487,14 +2494,7 @@ function TabContent({
                       <h3 className="text-lg font-semibold text-[var(--color-text-primary)] truncate">
                         {viewLoan.loan_type_name}
                       </h3>
-                      <span
-                        className="shrink-0 text-[9px] font-semibold px-1.5 py-0.5 rounded"
-                        style={isActive
-                          ? { backgroundColor: hexToRgba('#10B981', 0.12), color: '#10B981' }
-                          : { backgroundColor: hexToRgba('#6B7280', 0.12), color: '#6B7280' }}
-                      >
-                        {isActive ? 'Active' : 'Paid Off'}
-                      </span>
+                      <StatusPill className='text-[9px]' status={isActive ? 'approved' : 'disapproved'} label={isActive ? 'Approved' : 'Closed'} />
                     </div>
                     {viewLoan.reference_number && (
                       <p className="text-[10px] text-[var(--color-text-muted)] mt-0.5">
@@ -2504,9 +2504,9 @@ function TabContent({
                   </div>
                   <button
                     onClick={() => setViewLoan(null)}
-                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg)] transition-colors"
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-card)] transition-colors"
                   >
-                    <X size={14} />
+                    <X size={15} />
                   </button>
                 </div>
 
@@ -2516,7 +2516,7 @@ function TabContent({
                   {/* ── Repayment Progress ─────────────────────────────── */}
                   <div className="px-5 pt-4 pb-3">
                     <div className="flex items-center justify-between mb-2">
-                      <p className="text-[10px] font-semibold uppercase tracking-widest text-[var(--color-text-muted)]">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
                         Repayment Progress
                       </p>
                       <span className="text-xs font-bold text-[#2845D6]">{pctPaid}% repaid</span>
@@ -2526,7 +2526,7 @@ function TabContent({
                       className="relative h-4 w-full rounded-full"
                       style={{
                         background: 'var(--color-border)',
-                        boxShadow: 'inset 0 2px 5px rgba(0,0,0,0.22), inset 0 1px 2px rgba(0,0,0,0.14)',
+                        // boxShadow: 'inset 0 2px 5px rgba(0,0,0,0.22), inset 0 1px 2px rgba(0,0,0,0.14)',
                       }}
                     >
                       {/* Animated fill */}
@@ -2537,15 +2537,15 @@ function TabContent({
                         className="absolute inset-y-0 left-0 rounded-full"
                         style={{
                           background: 'linear-gradient(90deg, #1a35c5 0%, #2845D6 40%, #5B7FFF 100%)',
-                          boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.25)',
+                          // boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.25)',
                         }}
                       />
                     </div>
                     <div className="flex justify-between mt-1.5">
-                      <span className="text-[9px] text-[var(--color-text-muted)]">
+                      <span className="text-[10px] text-[var(--color-text-muted)]">
                         Paid: ₱{fmtCurrency(paidAmt.toFixed(2))}
                       </span>
-                      <span className="text-[9px] text-[var(--color-text-muted)]">
+                      <span className="text-[10px] text-[var(--color-text-muted)]">
                         Remaining: ₱{fmtCurrency(viewLoan.current_balance)}
                       </span>
                     </div>
@@ -2555,22 +2555,22 @@ function TabContent({
                   <div className="px-5 pt-3 pb-3 border-t border-[var(--color-border)]">
                     <div className="grid grid-cols-2 gap-x-4 gap-y-3">
                       <div className="pb-3">
-                        <p className="text-[10px] text-[var(--color-text-muted)]">Principal Amount</p>
-                        <p className="text-sm font-bold text-[var(--color-text-primary)] mt-0.5">
+                        <p className="text-[10px] text-[var(--color-text-muted)] uppercase tracking-wide">Principal Amount</p>
+                        <p className="text-xs font-bold text-[var(--color-text-primary)] mt-0.5">
                           ₱{fmtCurrency(viewLoan.principal_amount)}
                         </p>
                       </div>
                       <div className="pb-3">
-                        <p className="text-[10px] text-[var(--color-text-muted)]">Outstanding Balance</p>
+                        <p className="text-[10px] text-[var(--color-text-muted)] uppercase tracking-wide">Outstanding Balance</p>
                         <p className={cn(
-                          'text-sm font-bold mt-0.5',
+                          'text-xs font-bold mt-0.5',
                           isActive ? 'text-amber-500' : 'text-emerald-500',
                         )}>
                           ₱{fmtCurrency(viewLoan.current_balance)}
                         </p>
                       </div>
                       <div>
-                        <p className="text-[10px] text-[var(--color-text-muted)]">Deduction Frequency</p>
+                        <p className="text-[10px] text-[var(--color-text-muted)] uppercase tracking-wide">Deduction Frequency</p>
                         <p className="text-xs font-medium text-[var(--color-text-primary)] mt-0.5">
                           {loanSettings ? freqLabel(freq) : (
                             <span className="inline-block h-3 w-24 rounded bg-[var(--color-skeleton)] animate-pulse" />
@@ -2578,7 +2578,7 @@ function TabContent({
                         </p>
                       </div>
                       <div>
-                        <p className="text-[10px] text-[var(--color-text-muted)]">Per-Period Deduction</p>
+                        <p className="text-[10px] text-[var(--color-text-muted)] uppercase tracking-wide">Per-Period Deduction</p>
                         <p className="text-xs font-medium text-[var(--color-text-primary)] mt-0.5">
                           {deductAmt ? `₱${fmtCurrency(viewLoan.monthly_deduction!)}` : '—'}
                         </p>
@@ -2589,7 +2589,7 @@ function TabContent({
                   {/* ── Estimated Completion ──────────────────────────── */}
                   {isActive && (
                     <div className="px-5 py-3 border-t border-[var(--color-border)]">
-                      <p className="text-[10px] font-semibold uppercase tracking-widest text-[var(--color-text-muted)] mb-1.5">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)] mb-1.5">
                         Estimated Completion
                       </p>
                       <p className="text-sm font-semibold text-[var(--color-text-primary)]">
@@ -2607,7 +2607,7 @@ function TabContent({
 
                   {/* ── Deduction History ─────────────────────────────── */}
                   <div className="border-t border-[var(--color-border)]">
-                    <p className="px-5 py-2 text-[10px] font-semibold uppercase tracking-widest text-[var(--color-text-muted)]">
+                    <p className="px-5 py-2 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
                       Deduction History
                     </p>
                     {loadingDeducts ? (
@@ -2636,8 +2636,8 @@ function TabContent({
                       <Table>
                         <TableHeader>
                           <TableRow>
-                            <TableHead>Cut-off Date</TableHead>
-                            <TableHead className="text-right">Amount</TableHead>
+                            <TableHead className="text-[10px] uppercase tracking-wide">Cut-off Date</TableHead>
+                            <TableHead className="text-right text-[10px] uppercase tracking-wide">Amount</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -2652,7 +2652,7 @@ function TabContent({
                         </TableBody>
                         <TableFooter>
                           <TableRow>
-                            <TableCell className="text-xs font-medium text-[var(--color-text-muted)]">
+                            <TableCell className="text-[12px] font-normal text-[var(--color-text-muted)]">
                               Total Deductions
                             </TableCell>
                             <TableCell className="text-right text-xs font-bold text-[var(--color-text-primary)]">
@@ -2673,7 +2673,7 @@ function TabContent({
                 <div className="px-5 py-3 border-t border-[var(--color-border)] text-right shrink-0">
                   <button
                     onClick={() => setViewLoan(null)}
-                    className="px-4 py-1.5 text-xs rounded-lg border border-[var(--color-border)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg)] transition-colors"
+                    className="px-4 py-2 text-xs font-normal rounded-lg border border-[var(--color-border)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg)] transition-colors"
                   >
                     Close
                   </button>
@@ -2750,7 +2750,7 @@ function TabContent({
                             title="View Payslip"
                             className="flex h-6 w-6 items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[#2845D6] hover:bg-[#2845D6]/10 transition-colors"
                           >
-                            <Eye size={12} />
+                            <Eye size={13} />
                           </a>
                         )}
                         <button
@@ -2758,7 +2758,7 @@ function TabContent({
                           title="Delete Payslip"
                           className="flex h-6 w-6 items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-red-500 hover:bg-red-500/10 transition-colors"
                         >
-                          <Trash2 size={12} />
+                          <Trash2 size={13} />
                         </button>
                       </div>
                     </motion.li>
@@ -2822,7 +2822,7 @@ function TabContent({
                         title="View Deductions"
                         className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[#2845D6] hover:bg-[#2845D6]/10 transition-colors"
                       >
-                        <Eye size={12} />
+                        <Eye size={13} />
                       </button>
                     </motion.li>
                   );
@@ -2878,7 +2878,7 @@ function TabContent({
                       </div>
 
                       {/* Amount (right, larger) */}
-                      <span className="text-sm font-bold shrink-0" style={{ color: '#10B981' }}>
+                      <span className="text-xs font-bold shrink-0" style={{ color: '#10B981' }}>
                         ₱{fmtCurrency(a.amount)}
                       </span>
                     </motion.li>
@@ -2919,7 +2919,7 @@ function TabContent({
                           <p className="text-xs font-medium text-[var(--color-text-primary)] truncate">{s.savings_type_name}</p>
                           {s.withdraw && (
                             <span
-                              className="text-[9px] font-semibold px-1.5 py-0.5 rounded shrink-0"
+                              className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full shrink-0"
                               style={{ backgroundColor: hexToRgba('#F59E0B', 0.12), color: '#F59E0B' }}
                             >
                               Withdraw
@@ -2937,7 +2937,7 @@ function TabContent({
                           title="Record Withdrawal"
                           className="flex h-6 w-6 items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-amber-500 hover:bg-amber-500/10 transition-colors"
                         >
-                          <ArrowDownLeft size={12} />
+                          <ArrowDownLeft size={13} />
                         </button>
                       </div>
                     </motion.li>
@@ -2990,8 +2990,10 @@ function FinanceAccordionRow({
     if (prevRefreshKey.current !== refreshKey) {
       prevRefreshKey.current = refreshKey;
       hasFetchedRef.current  = false;
-      setRecords(null);
-      setFetchError(false);
+      queueMicrotask(() => {
+        setRecords(null);
+        setFetchError(false);
+      });
     }
   }, [refreshKey]);
 
@@ -2999,8 +3001,10 @@ function FinanceAccordionRow({
   useEffect(() => {
     if (!isExpanded || hasFetchedRef.current) return;
     hasFetchedRef.current = true;
-    setLoading(true);
-    setFetchError(false);
+    queueMicrotask(() => {
+      setLoading(true);
+      setFetchError(false);
+    });
     fetch(`/api/finance/admin/employees/${encodeURIComponent(emp.idnumber)}/records`, {
       credentials: 'include',
     })
@@ -3022,19 +3026,19 @@ function FinanceAccordionRow({
         )}
         onClick={onToggle}
       >
-        <td className="px-4 py-3.5 text-xs text-[var(--color-text-muted)]" style={{ width: 140 }}>
+        <td className="px-4 py-3.5 text-xs text-[var(--color-text-primary)]" style={{ width: 140 }}>
           {emp.idnumber}
         </td>
         <td className="px-4 py-3.5 text-xs font-medium text-[var(--color-text-primary)]" style={{ width: 220 }}>
           {fullName}
         </td>
-        <td className="px-4 py-3.5 text-xs text-[var(--color-text-muted)] hidden sm:table-cell" style={{ width: 160 }}>
+        <td className="px-4 py-3.5 text-xs text-[var(--color-text-primary)] hidden sm:table-cell" style={{ width: 160 }}>
           {emp.department || '—'}
         </td>
-        <td className="px-4 py-3.5 text-xs text-[var(--color-text-muted)] hidden lg:table-cell" style={{ width: 160 }}>
+        <td className="px-4 py-3.5 text-xs text-[var(--color-text-primary)] hidden lg:table-cell" style={{ width: 160 }}>
           {emp.line || '—'}
         </td>
-        <td className="py-3.5 pr-3 pl-2 text-[var(--color-text-muted)]" style={{ width: 1, whiteSpace: 'nowrap' }}>
+        <td className="py-3.5 pr-3 pl-2 text-[var(--color-text-primary)]" style={{ width: 1, whiteSpace: 'nowrap' }}>
           {isExpanded
             ? <ChevronDown  size={15} />
             : <ChevronRight size={15} />
@@ -3210,7 +3214,13 @@ export default function FinanceAdminPage() {
       const res = await fetch(url, { credentials: 'include' });
       if (!res.ok) return;
       const data: ChartResponse = await res.json();
-      setChartData(data.data);
+      const normalized = (Array.isArray(data.data) ? data.data : []).map((point) => ({
+        label: String(point.label ?? ''),
+        loans: Number((point as { loans?: number; loan?: number }).loans ?? (point as { loan?: number }).loan ?? 0),
+        allowances: Number((point as { allowances?: number; allowance?: number }).allowances ?? (point as { allowance?: number }).allowance ?? 0),
+        savings: Number(point.savings ?? 0),
+      }));
+      setChartData(normalized);
       chartInitialized.current = true;
     } finally {
       setChartLoading(false);
@@ -3354,7 +3364,6 @@ export default function FinanceAdminPage() {
           </button>
         </div>
 
-        {/* ── Chart card ──────────────────────────────────────────────────── */}
         <AdminChartCard
           id="finance"
           categories={CHART_CATEGORIES}
@@ -3395,18 +3404,18 @@ export default function FinanceAdminPage() {
             <button
               type="button"
               onClick={() => setShowImport(true)}
-              className="inline-flex items-center gap-2 rounded-lg border border-[var(--color-border)] px-4 py-1.5 text-xs font-medium text-[var(--color-text-primary)] hover:bg-[var(--color-bg-card)] transition-colors"
+              className="inline-flex items-center gap-2 rounded-lg border border-[var(--color-border)] px-4 py-2 text-xs font-normal text-[var(--color-text-primary)] hover:bg-[var(--color-bg-card)] transition-colors"
             >
               <Upload size={14} />
-              Import
+              Upload
             </button>
             <button
               type="button"
               onClick={() => setShowExport(true)}
-              className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-[#2845D6] text-white text-xs font-medium hover:bg-[#1f38c0] transition-colors"
+              className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#2845D6] text-white text-xs font-normal hover:bg-[#1f38c0] transition-colors"
             >
               <Download size={14} />
-              Export
+              Export Report
             </button>
           </div>
         </div>
@@ -3509,8 +3518,6 @@ export default function FinanceAdminPage() {
             </table>
           </div>
 
-          {/* Pagination — only shown when data spans more than one page */}
-          {totalPages > 1 && (
           <div className="flex items-center justify-between gap-3 flex-nowrap border-t border-[var(--color-border)] px-5 py-3">
             <div className="text-xs text-[var(--color-text-muted)] whitespace-nowrap">
               Showing{' '}
@@ -3521,35 +3528,36 @@ export default function FinanceAdminPage() {
               <span className="text-xs text-[var(--color-text-muted)]">{totalCount}</span>
             </div>
 
-            <Pagination>
-              <PaginationContent>
-                <PaginationItem>
-                  <PaginationPrevious
-                    onClick={() => setPage(p => Math.max(1, p - 1))}
-                    disabled={page === 1}
-                  />
-                </PaginationItem>
-                {buildPaginationRange(page, totalPages).map((p, i) => (
-                  <PaginationItem key={`${p}-${i}`}>
-                    {p === '...' ? (
-                      <PaginationEllipsis />
-                    ) : (
-                      <PaginationLink isActive={p === page} onClick={() => setPage(p as number)}>
-                        {p}
-                      </PaginationLink>
-                    )}
+            {totalPages > 1 && (
+              <Pagination className="flex justify-end">
+                <PaginationContent>
+                  <PaginationItem>
+                    <PaginationPrevious
+                      onClick={() => setPage(p => Math.max(1, p - 1))}
+                      disabled={page === 1}
+                    />
                   </PaginationItem>
-                ))}
-                <PaginationItem>
-                  <PaginationNext
-                    onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-                    disabled={page === totalPages}
-                  />
-                </PaginationItem>
-              </PaginationContent>
-            </Pagination>
+                  {buildPaginationRange(page, totalPages).map((p, i) => (
+                    <PaginationItem key={`${p}-${i}`}>
+                      {p === '...' ? (
+                        <PaginationEllipsis />
+                      ) : (
+                        <PaginationLink isActive={p === page} onClick={() => setPage(p as number)}>
+                          {p}
+                        </PaginationLink>
+                      )}
+                    </PaginationItem>
+                  ))}
+                  <PaginationItem>
+                    <PaginationNext
+                      onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                      disabled={page === totalPages}
+                    />
+                  </PaginationItem>
+                </PaginationContent>
+              </Pagination>
+            )}
           </div>
-          )}
         </div>
       </div>
 

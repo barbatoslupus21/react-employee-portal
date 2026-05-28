@@ -9,6 +9,8 @@ from training.views import (
     TrainingAdminResponsesView,
     TrainingAdminResponseDetailView,
     TrainingAdminExportView,
+    AdminTrainingEvaluationRoutingRuleListView,
+    AdminTrainingEvaluationRoutingRuleDetailView,
     MyTrainingsView,
     TrainingDetailUserView,
     TrainingAnswerSaveView,
@@ -25,6 +27,8 @@ from training.views import (
 urlpatterns = [
     # ── Admin / HR ──────────────────────────────────────────────────────────
     path('admin', TrainingAdminListCreateView.as_view(), name='training-admin-list-create'),
+    path('admin/routing-rules', AdminTrainingEvaluationRoutingRuleListView.as_view(), name='training-admin-routing-rules'),
+    path('admin/routing-rules/<int:pk>', AdminTrainingEvaluationRoutingRuleDetailView.as_view(), name='training-admin-routing-rule-detail'),
     path('admin/templates', TrainingAdminTemplatesView.as_view(), name='training-admin-templates'),
     # admin/responses/<id> must come before admin/<pk> to avoid mis-routing
     path('admin/responses/<int:submission_id>', TrainingAdminResponseDetailView.as_view(), name='training-admin-response-detail'),

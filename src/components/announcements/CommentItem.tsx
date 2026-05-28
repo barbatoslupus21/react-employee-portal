@@ -2,9 +2,11 @@
 
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Reply, Trash2, ChevronDown, ChevronUp } from 'lucide-react';
+import { Reply, Trash2, ChevronDown, ChevronUp, Send, Loader2 } from 'lucide-react';
 import { HashtagText } from './HashtagText';
 import { TextShimmer } from '@/components/ui/text-shimmer';
+import { UserAvatar } from './UserAvatar';
+import { toast } from '@/components/ui/toast';
 
 type CommentUser = {
   id: number;
@@ -60,9 +62,9 @@ export function CommentItem({
   const [replySubmitting, setReplySubmitting] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [showReplies, setShowReplies] = useState(true);
+  const [showReplies, setShowReplies] = useState(false);
 
-  const canDelete = comment.user === currentUserId || isAdminHrAccounting;
+  const canDelete = comment.user === currentUserId;
 
   async function handleReplySubmit() {
     const text = replyText.trim();
@@ -72,6 +74,8 @@ export function CommentItem({
       await onReply(comment.id, text);
       setReplyText('');
       setShowReplyInput(false);
+    } catch {
+      toast.error('Failed to send reply. Please try again.');
     } finally {
       setReplySubmitting(false);
     }
@@ -87,37 +91,25 @@ export function CommentItem({
     }
   }
 
-  const avatar = comment.user_avatar;
-  const initials = comment.user_name
-    ? comment.user_name.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase()
-    : '?';
-
   return (
-    <div className={depth > 0 ? 'ml-9 mt-2' : 'mt-3'}>
+    <div data-comment-item="true" className={depth > 0 ? 'ml-9 mt-2' : 'mt-3'}>
       <div className="flex gap-2">
         {/* Avatar */}
         <div className="flex-shrink-0">
-          {avatar ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={avatar}
-              alt={comment.user_name}
-              className="h-7 w-7 rounded-full object-cover"
-            />
-          ) : (
-            <div className="h-7 w-7 rounded-full bg-[#2845D6]/20 flex items-center justify-center text-[10px] font-semibold text-[#2845D6]">
-              {initials}
-            </div>
-          )}
+          <UserAvatar
+            src={comment.user_avatar}
+            alt={comment.user_name}
+            className="h-6 w-6"
+          />
         </div>
 
         <div className="flex-1 min-w-0">
           {/* Comment bubble */}
-          <div className="inline-block rounded-2xl bg-[var(--color-bg-subtle)] px-3 py-2 max-w-full">
+          <div className="inline-block bg-[var(--color-bg-subtle)] px-2 py-1 max-w-full">
             <p className="text-xs font-semibold text-[var(--color-text-primary)] mb-0.5">
               {comment.user_name}
             </p>
-            <p className="text-sm text-[var(--color-text-secondary)] break-words">
+            <p className="text-xs text-[var(--color-text-secondary)] break-words">
               <HashtagText text={comment.content} />
             </p>
           </div>
@@ -156,20 +148,20 @@ export function CommentItem({
                 exit={{ opacity: 0, height: 0 }}
                 className="flex items-center gap-2 mt-1 px-1 overflow-hidden"
               >
-                <span className="text-xs text-[var(--color-text-secondary)]">Delete comment?</span>
+                <span className="text-[12px] text-[var(--color-text-muted)]">Delete comment?</span>
                 <button
                   type="button"
                   onClick={handleDelete}
                   disabled={deleting}
-                  className="text-xs font-semibold text-red-500 hover:text-red-600 disabled:opacity-50 transition-colors"
+                  className="text-[12px] font-semibold text-red-500 hover:text-red-600 disabled:opacity-50 transition-colors"
                 >
-                  {deleting ? <TextShimmer className="text-xs">Deleting…</TextShimmer> : 'Confirm'}
+                  {deleting ? <TextShimmer className="text-[12px]">Deleting…</TextShimmer> : 'Confirm'}
                 </button>
                 <button
                   type="button"
                   onClick={() => setShowDeleteConfirm(false)}
                   disabled={deleting}
-                  className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] transition-colors"
+                  className="text-[12px] text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] transition-colors"
                 >
                   Cancel
                 </button>
@@ -177,42 +169,6 @@ export function CommentItem({
             )}
           </AnimatePresence>
 
-          {/* Reply input */}
-          <AnimatePresence>
-            {showReplyInput && (
-              <motion.div
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: 'auto' }}
-                exit={{ opacity: 0, height: 0 }}
-                className="mt-2 overflow-hidden"
-              >
-                <div className="flex gap-2 items-center">
-                  <input
-                    type="text"
-                    value={replyText}
-                    onChange={(e) => setReplyText(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && !e.shiftKey) {
-                        e.preventDefault();
-                        handleReplySubmit();
-                      }
-                    }}
-                    placeholder="Write a reply…"
-                    maxLength={1000}
-                    className="flex-1 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-[#2845D6] transition-all"
-                  />
-                  <button
-                    type="button"
-                    onClick={handleReplySubmit}
-                    disabled={replySubmitting || !replyText.trim()}
-                    className="text-xs font-semibold text-[#2845D6] hover:text-[#0D1A63] disabled:opacity-40 transition-colors"
-                  >
-                    {replySubmitting ? <TextShimmer className="text-xs">Sending…</TextShimmer> : 'Send'}
-                  </button>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
         </div>
       </div>
 
@@ -225,14 +181,18 @@ export function CommentItem({
             className="flex items-center gap-1 text-[11px] font-semibold text-[var(--color-text-secondary)] hover:text-[#2845D6] transition-colors mb-1"
           >
             {showReplies ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-            {comment.replies.length} {comment.replies.length === 1 ? 'reply' : 'replies'}
+            {showReplies
+              ? 'Hide replies'
+              : `View ${comment.replies.length} ${comment.replies.length === 1 ? 'reply' : 'replies'}`}
           </button>
           <AnimatePresence>
             {showReplies && (
               <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
+                initial={{ opacity: 0, height: 0, y: -6 }}
+                animate={{ opacity: 1, height: 'auto', y: 0 }}
+                exit={{ opacity: 0, height: 0, y: -6 }}
+                transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+                className="overflow-hidden"
               >
                 {comment.replies.map((reply) => (
                   <CommentItem
@@ -249,7 +209,95 @@ export function CommentItem({
               </motion.div>
             )}
           </AnimatePresence>
+
+          <AnimatePresence>
+            {showReplyInput && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={{ opacity: 0, height: 0 }}
+                className="mt-2 overflow-hidden"
+              >
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={replyText}
+                    onChange={(e) => setReplyText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        handleReplySubmit();
+                      }
+                    }}
+                    placeholder="Write a reply…"
+                    maxLength={1000}
+                    disabled={replySubmitting}
+                    className="w-full rounded-full border border-[var(--color-border)] bg-[var(--color-bg-subtle)] py-1.5 pl-3 pr-9 text-xs outline-none transition-colors focus:border-[#2845D6] disabled:opacity-60"
+                    style={{ outline: 'none', boxShadow: 'none' }}
+                  />
+                  <button
+                    type="button"
+                    onClick={handleReplySubmit}
+                    disabled={replySubmitting || !replyText.trim()}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full p-1 text-[#2845D6] transition-colors hover:bg-[#2845D6]/10 disabled:opacity-40"
+                    aria-label="Send reply"
+                  >
+                    {replySubmitting ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Send className="h-3.5 w-3.5" />
+                    )}
+                  </button>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
+      )}
+
+      {depth === 0 && comment.replies.length === 0 && (
+        <AnimatePresence>
+          {showReplyInput && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              className="mt-2 overflow-hidden"
+            >
+              <div className="relative">
+                <input
+                  type="text"
+                  value={replyText}
+                  onChange={(e) => setReplyText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      handleReplySubmit();
+                    }
+                  }}
+                  placeholder="Write a reply…"
+                  maxLength={1000}
+                  disabled={replySubmitting}
+                  className="w-full rounded-full border border-[var(--color-border)] bg-[var(--color-bg-subtle)] py-1.5 pl-3 pr-9 text-xs outline-none transition-colors focus:border-[#2845D6] disabled:opacity-60"
+                  style={{ outline: 'none', boxShadow: 'none' }}
+                />
+                <button
+                  type="button"
+                  onClick={handleReplySubmit}
+                  disabled={replySubmitting || !replyText.trim()}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full p-1 text-[#2845D6] transition-colors hover:bg-[#2845D6]/10 disabled:opacity-40"
+                  aria-label="Send reply"
+                >
+                  {replySubmitting ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Send className="h-3.5 w-3.5" />
+                  )}
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       )}
     </div>
   );

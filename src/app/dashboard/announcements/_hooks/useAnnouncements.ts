@@ -21,13 +21,18 @@ export type AnnouncementMedia = {
   order: number;
 };
 
-export type Reactor = { avatar: string | null };
+export type Reactor = {
+  avatar: string | null;
+  name: string;
+  emoji: string;
+};
 
 export type AnnouncementListItem = {
   id: number;
   title: string;
   caption: string;
   is_published: boolean;
+  created_by_id: number;
   created_by_name: string;
   created_by_avatar: string | null;
   created_at: string;
@@ -37,6 +42,7 @@ export type AnnouncementListItem = {
   comment_count: number;
   user_reaction: string | null;
   top_reactors: Reactor[];
+  reaction_emojis: string[];
 };
 
 export type AnnouncementsResponse = {
@@ -51,6 +57,7 @@ export type ReactionResponse = {
   emoji: string | null;
   reaction_count: number;
   top_reactors: Reactor[];
+  reaction_emojis?: string[];
 };
 
 export type ReactionItem = {
@@ -58,6 +65,17 @@ export type ReactionItem = {
   user_name: string;
   user_avatar: string | null;
   emoji: string;
+};
+
+export type ActivityItem = {
+  type: 'comment' | 'reaction';
+  user_name: string;
+  user_avatar: string | null;
+  announcement_id: number;
+  announcement_preview: string;
+  timestamp: string;
+  content: string | null;
+  emoji: string | null;
 };
 
 export type Comment = {
@@ -165,6 +183,14 @@ export function useAnnouncementReactions(announcementId: number | null, enabled:
     queryKey: ['announcement-reactions', announcementId],
     queryFn: () => apiFetch<ReactionItem[]>(`${BASE}/${announcementId}/reactions/`),
     enabled: enabled && announcementId !== null,
+  });
+}
+
+export function useAnnouncementActivity() {
+  return useQuery<ActivityItem[]>({
+    queryKey: ['announcement-activity'],
+    queryFn: () => apiFetch<ActivityItem[]>(`${BASE}/activity/`),
+    refetchInterval: 30_000,
   });
 }
 

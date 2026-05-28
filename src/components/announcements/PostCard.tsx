@@ -1,13 +1,15 @@
 'use client';
 
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Heart, MessageCircle, MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
+import { MessageCircle, Pencil, ThumbsUp, Trash2 } from 'lucide-react';
 import { MediaCarousel } from './MediaCarousel';
 import { HashtagText } from './HashtagText';
 import { ReactionPicker } from './ReactionPicker';
 import { CommentSection } from './CommentSection';
 import { ReactionsViewModal } from './ReactionsViewModal';
+import { UserAvatar } from './UserAvatar';
+import { ConfirmationModal } from '@/components/ui/confirmation-modal';
 import { TextShimmer } from '@/components/ui/text-shimmer';
 import { cn } from '@/lib/utils';
 import {
@@ -58,26 +60,32 @@ export function PostCard({
   isDeleting = false,
 }: PostCardProps) {
   const isPrivileged = currentUser.admin || currentUser.hr || currentUser.accounting;
+  const isCreator = currentUser.id === announcement.created_by_id;
 
   // Reaction state (optimistic)
   const [localReactionCount, setLocalReactionCount] = useState(announcement.reaction_count);
   const [localUserReaction, setLocalUserReaction] = useState(announcement.user_reaction);
   const [localTopReactors, setLocalTopReactors] = useState(announcement.top_reactors);
+  const [localReactionEmojis, setLocalReactionEmojis] = useState(announcement.reaction_emojis);
 
   useEffect(() => {
     setLocalReactionCount(announcement.reaction_count);
     setLocalUserReaction(announcement.user_reaction);
     setLocalTopReactors(announcement.top_reactors);
-  }, [announcement.reaction_count, announcement.user_reaction, announcement.top_reactors]);
+    setLocalReactionEmojis(announcement.reaction_emojis);
+  }, [announcement.reaction_count, announcement.user_reaction, announcement.top_reactors, announcement.reaction_emojis]);
 
   const toggleReaction = useToggleReaction(announcement.id);
 
   // Comment state (optimistic)
   const [commentCount, setCommentCount] = useState(announcement.comment_count);
   const [commentsOpen, setCommentsOpen] = useState(false);
-  const { data: comments = [] } = useAnnouncementComments(commentsOpen ? announcement.id : null);
+  const { data: comments = [], isLoading: isCommentsLoading } = useAnnouncementComments(commentsOpen ? announcement.id : null);
   const postComment = usePostComment(announcement.id);
   const deleteComment = useDeleteComment(announcement.id);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const commentsRegionRef = useRef<HTMLDivElement>(null);
+  const pendingCommentScrollRef = useRef(false);
 
   // Reaction picker
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -90,8 +98,10 @@ export function PostCard({
   // Admin delete confirm
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
-  // Admin dropdown
-  const [adminMenuOpen, setAdminMenuOpen] = useState(false);
+  // Card hover state for edit/delete controls
+  const [isHovered, setIsHovered] = useState(false);
+
+  // Admin dropdown — removed; controls now appear on hover
 
   function handleReactClick(emoji: string = '❤️') {
     setPickerOpen(false);
@@ -105,11 +115,14 @@ export function PostCard({
         setLocalReactionCount(data.reaction_count);
         setLocalUserReaction(data.emoji);
         setLocalTopReactors(data.top_reactors);
+        setLocalReactionEmojis(data.reaction_emojis ?? Array.from(new Set(data.top_reactors.map((r) => r.emoji))).slice(0, 3));
       },
       onError: () => {
         // Revert
         setLocalUserReaction(announcement.user_reaction);
         setLocalReactionCount(announcement.reaction_count);
+        setLocalTopReactors(announcement.top_reactors);
+        setLocalReactionEmojis(announcement.reaction_emojis);
       },
     });
   }
@@ -121,6 +134,40 @@ export function PostCard({
   function onLongPressEnd() {
     if (longPressTimer.current) clearTimeout(longPressTimer.current);
   }
+
+  function handleToggleComments() {
+    setCommentsOpen((isOpen) => {
+      const willOpen = !isOpen;
+      if (willOpen) {
+        pendingCommentScrollRef.current = true;
+      } else {
+        window.setTimeout(() => {
+          cardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 120);
+      }
+      return willOpen;
+    });
+  }
+
+  useEffect(() => {
+    if (!commentsOpen || !pendingCommentScrollRef.current || isCommentsLoading) return;
+
+    const timer = window.setTimeout(() => {
+      const container = commentsRegionRef.current;
+      if (!container) return;
+
+      const firstComment = container.querySelector('[data-comment-item="true"]') as HTMLElement | null;
+      const commentInput = container.querySelector('[data-comment-input="true"]') as HTMLElement | null;
+
+      (firstComment ?? commentInput ?? container).scrollIntoView({
+        behavior: 'smooth',
+        block: 'start',
+      });
+      pendingCommentScrollRef.current = false;
+    }, 150);
+
+    return () => window.clearTimeout(timer);
+  }, [commentsOpen, comments.length, isCommentsLoading]);
 
   async function handlePostComment(content: string, parentId?: number) {
     // Optimistic count
@@ -137,11 +184,20 @@ export function PostCard({
     setCommentCount((c) => Math.max(0, c - 1));
   }
 
-  const avatarInitials = announcement.created_by_name
-    ?.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase() ?? '?';
+  const topNames = localTopReactors.map((r) => r.name).filter(Boolean);
+  const shownNames = topNames.slice(0, 3);
+  const othersCount = Math.max(0, localReactionCount - shownNames.length);
+  const namesText = shownNames.length > 0
+    ? `${shownNames.join(', ')}${othersCount > 0 ? ` and ${othersCount} others` : ''}`
+    : 'Someone reacted';
 
   return (
-    <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] overflow-hidden">
+    <div
+      ref={cardRef}
+      className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] overflow-hidden"
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+    >
       {/* Draft badge */}
       {!announcement.is_published && (
         <div className="bg-amber-50 dark:bg-amber-900/20 border-b border-amber-200 dark:border-amber-700 px-4 py-1.5 flex items-center gap-2">
@@ -152,27 +208,20 @@ export function PostCard({
       <div className="p-4">
         {/* Header */}
         <div className="flex items-start justify-between mb-3">
-          <div className="flex items-center gap-3">
-            {announcement.created_by_avatar ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={announcement.created_by_avatar}
-                alt={announcement.created_by_name}
-                className="h-10 w-10 rounded-full object-cover"
-              />
-            ) : (
-              <div className="h-10 w-10 rounded-full bg-[#2845D6]/20 flex items-center justify-center text-sm font-semibold text-[#2845D6]">
-                {avatarInitials}
-              </div>
-            )}
+          <div className="flex items-center gap-2">
+            <UserAvatar
+              src={announcement.created_by_avatar}
+              alt={announcement.created_by_name}
+              className="h-8 w-8"
+            />
             <div>
-              <p className="text-sm font-semibold text-[var(--color-text-primary)]">
+              <p className="text-xs font-semibold text-[var(--color-text-primary)]">
                 {announcement.created_by_name}
               </p>
-              <p className="text-xs text-[var(--color-text-muted)]">
+              <p className="text-[10px] text-[var(--color-text-muted)]">
                 {formatRelativeTime(announcement.created_at)}
                 {announcement.title && (
-                  <span className="ml-1 font-medium text-[var(--color-text-secondary)]">
+                  <span className="ml-1 font-normal text-[var(--color-text-secondary)]">
                     · {announcement.title}
                   </span>
                 )}
@@ -180,146 +229,119 @@ export function PostCard({
             </div>
           </div>
 
-          {/* Admin actions */}
-          {isAdminManagePage && isPrivileged && (
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setAdminMenuOpen((v) => !v)}
-                className="rounded-full p-1.5 hover:bg-[var(--color-bg-subtle)] transition-colors"
-                aria-label="Options"
-              >
-                <MoreHorizontal className="h-4 w-4 text-[var(--color-text-muted)]" />
-              </button>
-              <AnimatePresence>
-                {adminMenuOpen && (
-                  <motion.div
-                    initial={{ opacity: 0, scale: 0.95, y: -4 }}
-                    animate={{ opacity: 1, scale: 1, y: 0 }}
-                    exit={{ opacity: 0, scale: 0.95, y: -4 }}
-                    transition={{ duration: 0.12 }}
-                    className="absolute right-0 top-full mt-1 w-36 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-lg z-10 overflow-hidden"
-                    onMouseLeave={() => setAdminMenuOpen(false)}
+          {/* Creator actions — visible on hover, only for the post creator */}
+          {isCreator && (
+            <AnimatePresence>
+              {isHovered && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.92 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.92 }}
+                  transition={{ duration: 0.12 }}
+                  className="flex items-center gap-1"
+                >
+                  <button
+                    type="button"
+                    onClick={() => onEdit?.(announcement)}
+                    className="rounded-full p-1.5 text-[var(--color-text-muted)] hover:text-[#2845D6] hover:bg-[#2845D6]/10 transition-colors"
+                    aria-label="Edit"
                   >
-                    <button
-                      type="button"
-                      onClick={() => { setAdminMenuOpen(false); onEdit?.(announcement); }}
-                      className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-subtle)] transition-colors"
-                    >
-                      <Pencil className="h-3.5 w-3.5" /> Edit
-                    </button>
-                    {!showDeleteConfirm ? (
-                      <button
-                        type="button"
-                        onClick={() => { setAdminMenuOpen(false); setShowDeleteConfirm(true); }}
-                        className="flex w-full items-center gap-2 px-3 py-2 text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" /> Delete
-                      </button>
-                    ) : null}
-                  </motion.div>
-                )}
-              </AnimatePresence>
-
-              {/* Inline delete confirmation */}
-              <AnimatePresence>
-                {showDeleteConfirm && (
-                  <motion.div
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: 'auto' }}
-                    exit={{ opacity: 0, height: 0 }}
-                    className="overflow-hidden"
+                    <Pencil className="h-3 w-3" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowDeleteConfirm(true)}
+                    className="rounded-full p-1.5 text-[var(--color-text-muted)] hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                    aria-label="Delete"
                   >
-                    <div className="mt-2 rounded-xl border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 px-3 py-2 text-right">
-                      <p className="text-xs text-red-700 dark:text-red-300 mb-2">Delete this announcement?</p>
-                      <div className="flex justify-end gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setShowDeleteConfirm(false)}
-                          className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] transition-colors"
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => onDelete?.(announcement.id)}
-                          disabled={isDeleting}
-                          className="text-xs font-semibold text-red-600 hover:text-red-700 disabled:opacity-50 transition-colors"
-                        >
-                          {isDeleting ? (
-                            <TextShimmer className="text-xs">Deleting…</TextShimmer>
-                          ) : (
-                            'Confirm Delete'
-                          )}
-                        </button>
-                      </div>
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
+                    <Trash2 className="h-3 w-3" />
+                  </button>
+                </motion.div>
+              )}
+            </AnimatePresence>
           )}
         </div>
 
-        {/* Media */}
-        {announcement.media.length > 0 && (
-          <div className="mb-3 -mx-4">
-            <MediaCarousel media={announcement.media} />
-          </div>
-        )}
+        {/* Inline delete confirmation (shown when creator clicks delete) */}
+        <AnimatePresence>
+          {showDeleteConfirm && (
+            <ConfirmationModal
+              title="Delete announcement?"
+              message="This action cannot be undone."
+              confirmLabel="Delete"
+              onConfirm={() => { onDelete?.(announcement.id); setShowDeleteConfirm(false); }}
+              onCancel={() => setShowDeleteConfirm(false)}
+              confirming={isDeleting}
+              // icon={<Trash2 size={20} className="text-red-600" />}
+              confirmVariant="danger"
+            />
+          )}
+        </AnimatePresence>
 
         {/* Caption */}
         {announcement.caption && (
-          <p className="text-sm text-[var(--color-text-primary)] leading-relaxed mb-3">
+          <p className="text-xs text-[var(--color-text-primary)] leading-relaxed mb-3 whitespace-pre-wrap">
             <HashtagText text={announcement.caption} />
           </p>
         )}
 
-        {/* Reaction summary */}
-        {localReactionCount > 0 && (
-          <div className="flex items-center gap-2 mb-2">
-            {/* Reactor avatars */}
-            <div className="flex -space-x-1.5">
-              {localTopReactors.slice(0, 5).map((r, i) =>
-                r.avatar ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    key={i}
-                    src={r.avatar}
-                    alt=""
-                    className="h-5 w-5 rounded-full border-2 border-[var(--color-bg-elevated)] object-cover"
-                  />
-                ) : (
-                  <div
-                    key={i}
-                    className="h-5 w-5 rounded-full border-2 border-[var(--color-bg-elevated)] bg-[#2845D6]/20 flex items-center justify-center text-[8px] font-semibold text-[#2845D6]"
-                  />
-                ),
-              )}
-            </div>
-            <button
-              type="button"
-              onClick={() => setReactionsModalOpen(true)}
-              className="text-xs text-[var(--color-text-secondary)] hover:text-[#2845D6] transition-colors"
-            >
-              {localReactionCount} {localReactionCount === 1 ? 'reaction' : 'reactions'}
-            </button>
+        {/* Media */}
+        {announcement.media.length > 0 && (
+          <div className="mb-3 -mx-4">
+            <MediaCarousel
+              media={announcement.media}
+              postContext={{
+                announcementId: announcement.id,
+                creatorName: announcement.created_by_name,
+                creatorAvatar: announcement.created_by_avatar,
+                caption: announcement.caption,
+              }}
+            />
           </div>
         )}
 
-        {/* Comment count row */}
-        {commentCount > 0 && (
-          <button
-            type="button"
-            onClick={() => setCommentsOpen((v) => !v)}
-            className="text-xs text-[var(--color-text-secondary)] hover:text-[#2845D6] transition-colors mb-2"
-          >
-            {commentCount} {commentCount === 1 ? 'comment' : 'comments'}
-          </button>
+        {/* Summary row (reactions + comments) */}
+        {(localReactionCount > 0 || commentCount > 0) && (
+          <div className="mb-2 flex items-center justify-between text-[11px] text-[var(--color-text-secondary)]">
+            {localReactionCount > 0 ? (
+              <button
+                type="button"
+                onClick={() => setReactionsModalOpen(true)}
+                className="inline-flex min-w-0 items-center hover:text-[#2845D6] transition-colors"
+              >
+                <span className="mr-2 inline-flex items-center">
+                  {localReactionEmojis.slice(0, 3).map((emoji, idx) => (
+                    <span
+                      key={`${emoji}-${idx}`}
+                      className={cn(
+                        'inline-flex h-5 w-5 items-center justify-center rounded-full border border-[var(--color-bg-elevated)] bg-[var(--color-bg-elevated)] text-lg leading-none',
+                        idx > 0 && '-ml-1.5',
+                      )}
+                    >
+                      {emoji}
+                    </span>
+                  ))}
+                </span>
+                <span className="text-[12px] truncate text-left leading-tight text-[var(--color-text-muted)]">{namesText}</span>
+              </button>
+            ) : (
+              <span />
+            )}
+
+            {commentCount > 0 && (
+              <button
+                type="button"
+                onClick={handleToggleComments}
+                className="hover:text-[#2845D6] transition-colors text-[var(--color-text-muted)] text-[12px]"
+              >
+                {commentCount} {commentCount === 1 ? 'comment' : 'comments'}
+              </button>
+            )}
+          </div>
         )}
 
         {/* Divider */}
-        <div className="border-t border-[var(--color-border)] my-2" />
+        <div className="border-t border-[var(--color-border)] my-1.5" />
 
         {/* Action buttons */}
         <div className="flex gap-1">
@@ -334,14 +356,14 @@ export function PostCard({
               onTouchEnd={onLongPressEnd}
               onClick={() => handleReactClick(localUserReaction ?? '❤️')}
               className={cn(
-                'flex w-full items-center justify-center gap-1.5 rounded-xl py-1.5 text-sm font-medium transition-colors',
+                'flex w-full items-center justify-center gap-1.5 rounded-md py-1.5 text-xs font-medium transition-colors',
                 localUserReaction
-                  ? 'text-[#2845D6] bg-[#2845D6]/10 hover:bg-[#2845D6]/15'
+                  ? 'text-[#2845D6] hover:bg-[var(--color-bg-subtle)]'
                   : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-subtle)]',
               )}
             >
-              <span className="text-base">{localUserReaction ?? '❤️'}</span>
-              <span>{localUserReaction ? 'Reacted' : 'React'}</span>
+              <ThumbsUp className="h-3.5 w-3.5" />
+              <span>{localUserReaction ? 'Liked' : 'Like'}</span>
             </button>
             <div onMouseEnter={() => setPickerOpen(true)} onMouseLeave={() => setPickerOpen(false)}>
               <ReactionPicker open={pickerOpen} onSelect={handleReactClick} />
@@ -351,10 +373,10 @@ export function PostCard({
           {/* Comment button */}
           <button
             type="button"
-            onClick={() => setCommentsOpen((v) => !v)}
-            className="flex flex-1 items-center justify-center gap-1.5 rounded-xl py-1.5 text-sm font-medium text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-subtle)] transition-colors"
+            onClick={handleToggleComments}
+            className="flex flex-1 items-center justify-center gap-1.5 rounded-md py-1.5 text-xs font-medium text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-subtle)] transition-colors"
           >
-            <MessageCircle className="h-4 w-4" />
+            <MessageCircle className="h-3.5 w-3.5" />
             Comment
           </button>
         </div>
@@ -367,6 +389,7 @@ export function PostCard({
               animate={{ opacity: 1, height: 'auto' }}
               exit={{ opacity: 0, height: 0 }}
               transition={{ duration: 0.2 }}
+              ref={commentsRegionRef}
               className="mt-3 overflow-hidden"
             >
               <CommentSection

@@ -9,6 +9,8 @@ from employee_evaluation.views import (
     AdminPeriodResultsView,
     AdminPeriodToggleStatusView,
     AdminPeriodExportView,
+    AdminEvaluationRoutingRuleListView,
+    AdminEvaluationRoutingRuleDetailView,
     AdminEntryListView,
     AdminEntryDetailView,
     AdminChartView,
@@ -41,6 +43,8 @@ urlpatterns = [
     path('active-period', ActivePeriodView.as_view(), name='ee-active-period'),
     # ── Admin / HR — Periods ─────────────────────────────────────────────────
     path('admin/periods', AdminPeriodListView.as_view(), name='ee-admin-periods'),
+    path('admin/routing-rules', AdminEvaluationRoutingRuleListView.as_view(), name='ee-admin-routing-rules'),
+    path('admin/routing-rules/<int:pk>', AdminEvaluationRoutingRuleDetailView.as_view(), name='ee-admin-routing-rule-detail'),
     path('admin/periods/<int:pk>', AdminPeriodDetailView.as_view(), name='ee-admin-period-detail'),
     path('admin/periods/<int:pk>/results', AdminPeriodResultsView.as_view(), name='ee-admin-period-results'),
     path('admin/periods/<int:pk>/toggle-status', AdminPeriodToggleStatusView.as_view(), name='ee-admin-period-toggle'),

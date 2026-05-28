@@ -25,11 +25,17 @@ Endpoint map
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
+import calendar as _cal_mod
+import datetime
 import uuid as _uuid_mod
+from typing import Any, cast
 
 from django.contrib.auth.hashers import make_password
 from django.core.cache import cache
 from django.db import transaction
+from django.db.models import Q
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -86,10 +92,18 @@ def _idempotency_guard(request) -> Response | None:
     return None
 
 
-def _cache_idempotency(request, data: dict) -> None:
+def _cache_idempotency(request, data: Any) -> None:
     key = request.headers.get('X-Idempotency-Key', '').strip()
     if key:
         cache.set(f'idem:{key}', data, timeout=60 * 60 * 24)
+
+
+def _normalize_idempotency_payload(data: Any) -> Any:
+    if isinstance(data, Mapping):
+        return dict(data)
+    if isinstance(data, Sequence) and not isinstance(data, (str, bytes, bytearray)):
+        return list(data)
+    return data
 
 
 def _assemble_profile(user) -> dict:
@@ -171,7 +185,7 @@ class PersonalInfoUpdateView(APIView):
         if not ser.is_valid():
             return Response(ser.errors, status=status.HTTP_400_BAD_REQUEST)
         ser.save()
-        _cache_idempotency(request, ser.data)
+        _cache_idempotency(request, _normalize_idempotency_payload(ser.data))
         return Response(ser.data)
 
 
@@ -191,7 +205,7 @@ class PresentAddressUpdateView(APIView):
         if not ser.is_valid():
             return Response(ser.errors, status=status.HTTP_400_BAD_REQUEST)
         ser.save()
-        _cache_idempotency(request, ser.data)
+        _cache_idempotency(request, _normalize_idempotency_payload(ser.data))
         return Response(ser.data)
 
 
@@ -211,7 +225,7 @@ class ProvincialAddressUpdateView(APIView):
         if not ser.is_valid():
             return Response(ser.errors, status=status.HTTP_400_BAD_REQUEST)
         ser.save()
-        _cache_idempotency(request, ser.data)
+        _cache_idempotency(request, _normalize_idempotency_payload(ser.data))
         return Response(ser.data)
 
 
@@ -231,7 +245,7 @@ class EmergencyContactUpdateView(APIView):
         if not ser.is_valid():
             return Response(ser.errors, status=status.HTTP_400_BAD_REQUEST)
         ser.save()
-        _cache_idempotency(request, ser.data)
+        _cache_idempotency(request, _normalize_idempotency_payload(ser.data))
         return Response(ser.data)
 
 
@@ -283,15 +297,16 @@ class ChildRecordsUpdateView(APIView):
             return Response(ser.errors, status=status.HTTP_400_BAD_REQUEST)
 
         ChildRecord.objects.filter(employee=request.user).delete()
+        validated_items = cast(list[dict[str, Any]], ser.validated_data)
         ChildRecord.objects.bulk_create([
             ChildRecord(employee=request.user, name=item['name'])
-            for item in ser.validated_data
+            for item in validated_items
         ])
 
         result = ChildRecordSerializer(
             ChildRecord.objects.filter(employee=request.user), many=True
         ).data
-        _cache_idempotency(request, list(result))
+        _cache_idempotency(request, _normalize_idempotency_payload(result))
         return Response(result)
 
 
@@ -320,6 +335,7 @@ class EducationRecordsUpdateView(APIView):
             return Response(ser.errors, status=status.HTTP_400_BAD_REQUEST)
 
         EducationRecord.objects.filter(employee=request.user).delete()
+        validated_items = cast(list[dict[str, Any]], ser.validated_data)
         EducationRecord.objects.bulk_create([
             EducationRecord(
                 employee=request.user,
@@ -328,13 +344,13 @@ class EducationRecordsUpdateView(APIView):
                 degree=item.get('degree', ''),
                 year_attended=item.get('year_attended'),
             )
-            for item in ser.validated_data
+            for item in validated_items
         ])
 
         result = EducationRecordSerializer(
             EducationRecord.objects.filter(employee=request.user), many=True
         ).data
-        _cache_idempotency(request, list(result))
+        _cache_idempotency(request, _normalize_idempotency_payload(result))
         return Response(result)
 
 
@@ -483,7 +499,7 @@ class ApproverListView(APIView):
             if emp.pk in seen:
                 continue
             seen.add(emp.pk)
-            name_parts = filter(None, [emp.firstname, emp.lastname])
+            name_parts = [part for part in [emp.firstname, emp.lastname] if part]
             results.append({
                 'id':       emp.pk,
                 'idnumber': emp.idnumber,
@@ -579,7 +595,7 @@ class AdminAllApproversView(APIView):
 
         results = []
         for emp in qs:
-            name_parts = list(filter(None, [emp.firstname, emp.lastname]))
+            name_parts = [part for part in [emp.firstname, emp.lastname] if part]
             results.append({
                 'id':       emp.pk,
                 'idnumber': emp.idnumber,
@@ -753,3 +769,952 @@ class EmployeeProfileAdminWorkInfoView(APIView):
             WorkInfoReadSerializer(obj, context={'request': request}).data,
             status=status.HTTP_201_CREATED if is_new else status.HTTP_200_OK,
         )
+
+
+# ── Dashboard Overview ────────────────────────────────────────────────────────
+
+class DashboardOverviewView(APIView):
+    """
+    GET /api/user-profile/dashboard-overview
+
+    Aggregated endpoint for the main overview dashboard page.
+    Returns in a single round-trip:
+      profile       – completion_pct, birth_date
+      notifications – missing_timelogs, upcoming_leaves, upcoming_events, unseen_certs
+            birthdays     – active employees celebrating birthdays today
+      calendar      – leave / event / holiday data for the mini calendar
+                      (previous month, current month, next month)
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    _HOLIDAY_TYPES = frozenset({'legal', 'special', 'day_off', 'company'})
+    _PERSONAL_EVENT_TYPES = frozenset({'important', 'meeting', 'task', 'reminder', 'deadline'})
+
+    def get(self, request):
+        # Lazy imports to avoid module-level circular-import risk
+        from systemCalendar.models import CalendarEvent, Timelogs
+        from systemCalendar.views import _pair_timelogs
+        from certification.models import Certificate, CertificateView
+        from leave.models import LeaveRequest
+
+        user = request.user
+        today = timezone.localdate()
+        tz_obj = timezone.get_current_timezone()
+
+        # ── 1. Profile completion & birth_date ───────────────────────────
+        try:
+            personal_info = user.personal_info
+        except PersonalInformation.DoesNotExist:
+            personal_info = None
+
+        try:
+            present_address = user.present_address
+        except PresentAddress.DoesNotExist:
+            present_address = None
+
+        try:
+            emergency_contact = user.emergency_contact
+        except EmergencyContact.DoesNotExist:
+            emergency_contact = None
+
+        birth_date_str: str | None = None
+        if personal_info and personal_info.birth_date:
+            birth_date_str = personal_info.birth_date.isoformat()
+
+        required_fields = [
+            (user.firstname or '').strip(),
+            (user.lastname or '').strip(),
+            getattr(personal_info, 'gender', ''),
+            getattr(personal_info, 'birth_date', None),
+            (getattr(personal_info, 'birth_place', '') or '').strip(),
+            (getattr(personal_info, 'contact_number', '') or '').strip(),
+            (getattr(present_address, 'country', '') or '').strip(),
+            (getattr(emergency_contact, 'name', '') or '').strip(),
+            (getattr(emergency_contact, 'relationship', '') or '').strip(),
+            (getattr(emergency_contact, 'contact_number', '') or '').strip(),
+            (getattr(emergency_contact, 'address', '') or '').strip(),
+        ]
+        filled = sum(1 for f in required_fields if f)
+        completion_pct = round(filled / len(required_fields) * 100)
+
+        # ── 2. Missing timelogs ──────────────────────────────────────────
+        # • Mon–Sat only, never today, never future dates.
+        # • Holiday: skip if user has no time-in that day (they didn't work).
+        #   If they clocked in despite the holiday, they're working → check for
+        #   a paired time-out.
+        # • "Absent" (no entries at all) is intentionally excluded per spec.
+        # • Admin / HR / HR-manager / Accounting are exempt.
+        missing_timelogs: list[dict] = []
+        is_exempt = (
+            getattr(user, 'admin', False)
+            or getattr(user, 'hr', False)
+            or getattr(user, 'hr_manager', False)
+            or getattr(user, 'accounting', False)
+        )
+
+        if not is_exempt:
+            lookback_start = today - datetime.timedelta(days=45)
+
+            tl_fetch_start = timezone.make_aware(
+                datetime.datetime.combine(
+                    lookback_start - datetime.timedelta(days=1),
+                    datetime.time.min,
+                ),
+                tz_obj,
+            )
+            # Exclude today — the employee may still be on shift
+            tl_fetch_end = timezone.make_aware(
+                datetime.datetime.combine(today, datetime.time.min),
+                tz_obj,
+            )
+
+            raw_logs = list(
+                Timelogs.objects
+                .filter(employee=user, time__range=(tl_fetch_start, tl_fetch_end))
+                .order_by('time')
+                .values('time', 'entry')
+            )
+            local_logs = [
+                {'dt': timezone.localtime(log['time'], tz_obj), 'entry': log['entry']}
+                for log in raw_logs
+            ]
+            work_days = _pair_timelogs(local_logs)
+
+            # Fetch holiday CalendarEvents visible to the user
+            # (recurring events may have base dates far in the past)
+            holiday_events = list(
+                CalendarEvent.objects.filter(
+                    Q(owner=user) | Q(members=user),
+                    event_type__in=self._HOLIDAY_TYPES,
+                    date__lte=today,
+                ).distinct()
+            )
+
+            # Expand holidays into concrete dates within the lookback window
+            holiday_dates: set[datetime.date] = set()
+            for ev in holiday_events:
+                d = lookback_start
+                while d < today:
+                    if d < ev.date:
+                        d += datetime.timedelta(days=1)
+                        continue
+                    rep = ev.repetition
+                    match = False
+                    if   rep == 'once':    match = (d == ev.date)
+                    elif rep == 'daily':   match = True
+                    elif rep == 'weekly':  match = (d.weekday() == ev.date.weekday())
+                    elif rep == 'monthly': match = (d.day == ev.date.day)
+                    elif rep == 'yearly':  match = (d.month == ev.date.month and d.day == ev.date.day)
+                    else:                  match = (d == ev.date)
+                    if match:
+                        holiday_dates.add(d)
+                    d += datetime.timedelta(days=1)
+
+            # Walk each past working day
+            d = lookback_start
+            while d < today:
+                if d.weekday() == 6:            # Skip Sunday
+                    d += datetime.timedelta(days=1)
+                    continue
+
+                slot = work_days.get(d)
+                has_in  = slot is not None and slot.get('in')  is not None
+                has_out = slot is not None and slot.get('out') is not None
+
+                # Holiday with no time-in → user did not work, skip
+                if d in holiday_dates and not has_in:
+                    d += datetime.timedelta(days=1)
+                    continue
+
+                # Complete or fully absent → skip
+                if (has_in and has_out) or (not has_in and not has_out):
+                    d += datetime.timedelta(days=1)
+                    continue
+
+                missing_timelogs.append({
+                    'date': d.isoformat(),
+                    'missing': 'time_out' if has_in else 'time_in',
+                })
+                d += datetime.timedelta(days=1)
+
+            # Keep only the 10 most recent (newest first)
+            missing_timelogs = list(reversed(missing_timelogs[-10:]))
+
+        # ── 3. Upcoming leaves (next 7 days, active status) ──────────────
+        upcoming_leave_qs = (
+            LeaveRequest.objects
+            .filter(
+                employee=user,
+                status__in=['pending', 'routing', 'approved'],
+                date_end__gte=today,
+                date_start__lte=today + datetime.timedelta(days=7),
+            )
+            .select_related('leave_type')
+            .order_by('date_start')[:10]
+        )
+        upcoming_leaves = [
+            {
+                'id': lr.pk,
+                'control_number': lr.control_number,
+                'leave_type_name': lr.leave_type.name,
+                'date_start': lr.date_start.isoformat(),
+                'date_end': lr.date_end.isoformat(),
+                'status': lr.status,
+                'status_display': lr.get_status_display(),
+            }
+            for lr in upcoming_leave_qs
+        ]
+
+        # ── 4. Upcoming personal calendar events (next 30 days) ──────────
+        upcoming_events_qs = (
+            CalendarEvent.objects
+            .filter(
+                Q(owner=user) | Q(members=user),
+                event_type__in=self._PERSONAL_EVENT_TYPES,
+                date__gte=today,
+                date__lte=today + datetime.timedelta(days=30),
+            )
+            .distinct()
+            .order_by('date')[:10]
+        )
+        upcoming_events = [
+            {
+                'id': ev.pk,
+                'title': ev.title,
+                'date': ev.date.isoformat(),
+                'event_type': ev.event_type,
+                'event_type_display': ev.get_event_type_display(),
+            }
+            for ev in upcoming_events_qs
+        ]
+
+        # ── 5. Unseen certificates ───────────────────────────────────────
+        viewed_cert_ids = set(
+            CertificateView.objects
+            .filter(viewer=user)
+            .values_list('certificate_id', flat=True)
+        )
+        unseen_certs_qs = (
+            Certificate.objects
+            .filter(employee=user)
+            .exclude(pk__in=viewed_cert_ids)
+            .select_related('category')
+            .order_by('-created_at')[:10]
+        )
+        unseen_certs = [
+            {
+                'id': cert.pk,
+                'title': cert.title,
+                'category_name': cert.category.name,
+                'created_at': cert.created_at.isoformat(),
+            }
+            for cert in unseen_certs_qs
+        ]
+
+        # ── 6. Birthdays today (active employees, excluding current user) ──
+        birthdays_today_qs = (
+            PersonalInformation.objects
+            .select_related('employee')
+            .filter(
+                birth_date__month=today.month,
+                birth_date__day=today.day,
+                employee__active=True,
+            )
+            .exclude(employee=user)
+            .order_by('employee__firstname', 'employee__lastname')[:10]
+        )
+        birthdays_today = []
+        for info in birthdays_today_qs:
+            employee = info.employee
+            full_name = ' '.join(
+                part for part in [employee.firstname, employee.lastname] if part
+            ).strip() or employee.username
+            birthdays_today.append({
+                'id': employee.pk,
+                'name': full_name,
+                'firstname': employee.firstname or full_name,
+            })
+
+        # ── 7. Calendar data: prev / current / next month ─────────────────
+        if today.month == 1:
+            prev_month_start = datetime.date(today.year - 1, 12, 1)
+        else:
+            prev_month_start = datetime.date(today.year, today.month - 1, 1)
+
+        if today.month == 12:
+            nm_year, nm = today.year + 1, 1
+        else:
+            nm_year, nm = today.year, today.month + 1
+        next_month_end = datetime.date(nm_year, nm, _cal_mod.monthrange(nm_year, nm)[1])
+
+        cal_start = prev_month_start
+        cal_end = next_month_end
+
+        # Leaves
+        cal_leaves = [
+            {
+                'date_start': lr.date_start.isoformat(),
+                'date_end': lr.date_end.isoformat(),
+                'status': lr.status,
+                'leave_type_name': lr.leave_type.name,
+            }
+            for lr in LeaveRequest.objects.filter(
+                employee=user,
+                status__in=['pending', 'routing', 'approved'],
+                date_end__gte=cal_start,
+                date_start__lte=cal_end,
+            ).select_related('leave_type')
+        ]
+
+        # Personal events for calendar dots
+        cal_events_qs = CalendarEvent.objects.filter(
+            Q(owner=user) | Q(members=user),
+            event_type__in=self._PERSONAL_EVENT_TYPES,
+        ).filter(
+            Q(date__range=(cal_start, cal_end)) |
+            (~Q(repetition='once') & Q(date__lte=cal_end))
+        ).distinct()
+        cal_events = [
+            {
+                'id': ev.pk,
+                'date': ev.date.isoformat(),
+                'event_type': ev.event_type,
+                'title': ev.title,
+                'repetition': ev.repetition,
+            }
+            for ev in cal_events_qs
+        ]
+
+        # Holidays for calendar dots
+        cal_holidays_qs = CalendarEvent.objects.filter(
+            Q(owner=user) | Q(members=user),
+            event_type__in=self._HOLIDAY_TYPES,
+        ).filter(
+            Q(date__range=(cal_start, cal_end)) |
+            (~Q(repetition='once') & Q(date__lte=cal_end))
+        ).distinct()
+        cal_holidays = [
+            {
+                'id': ev.pk,
+                'date': ev.date.isoformat(),
+                'title': ev.title,
+                'event_type': ev.event_type,
+                'repetition': ev.repetition,
+            }
+            for ev in cal_holidays_qs
+        ]
+
+        # ── 8. is_approver flag ───────────────────────────────────────────
+        is_approver = (
+            workInformation.objects
+            .filter(approver=user, employee__active=True)
+            .exclude(employee=user)
+            .exists()
+        )
+
+        return Response({
+            'is_approver': is_approver,
+            'profile': {
+                'birth_date': birth_date_str,
+                'completion_pct': completion_pct,
+            },
+            'notifications': {
+                'missing_timelogs': missing_timelogs,
+                'upcoming_leaves': upcoming_leaves,
+                'upcoming_events': upcoming_events,
+                'unseen_certs': unseen_certs,
+            },
+            'birthdays_today': birthdays_today,
+            'calendar': {
+                'leaves': cal_leaves,
+                'events': cal_events,
+                'holidays': cal_holidays,
+            },
+        })
+
+
+# ── Approver Overview ─────────────────────────────────────────────────────────
+
+class ApproverOverviewView(APIView):
+    """
+    GET /api/user-profile/approver-overview
+
+    Aggregated dashboard data for line managers / approvers.
+    Scoped entirely to the requesting user's active direct reports.
+    Returns 403 if the user has no active direct reports.
+
+    Sections returned:
+      summary         – stat card values (current + prev-month)
+      timelog_anomalies – subordinates with missing time-in/out THIS WEEK (Mon–yesterday)
+      pending_leaves  – leave steps awaiting THIS user's approval (activated, manager role)
+      upcoming_leaves – approved leaves for subordinates in the next 30 days
+      evaluation      – current evaluation period progress for subordinates
+      open_tickets    – subordinate MIS tickets that are OPEN or IN_PROGRESS
+      subordinates    – flat list of all direct reports
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        # Lazy imports to avoid circular-import risk
+        from systemCalendar.models import Timelogs
+        from systemCalendar.views import _pair_timelogs
+        from leave.models import LeaveRequest, LeaveApprovalStep
+        from certification.models import Certificate
+        from mis_ticket.models import MISTicket
+        from employee_evaluation.models import EvaluationEntry, EvaluationPeriod
+        from training.models import TrainingSubmission
+
+        user = request.user
+        today = timezone.localdate()
+        tz_obj = timezone.get_current_timezone()
+
+        # ── Guard: caller must have at least one active direct report ────
+        sub_work_infos = list(
+            workInformation.objects
+            .filter(approver=user, employee__active=True)
+            .exclude(employee=user)
+            .select_related('employee')
+        )
+        if not sub_work_infos:
+            return Response(
+                {'detail': 'You have no active direct reports.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        sub_ids: list[int] = [wi.employee_id for wi in sub_work_infos]
+
+        # Build name map and exempt set in one pass (select_related already hit)
+        emp_name_map: dict[int, str] = {}
+        work_info_by_employee: dict[int, object] = {}
+        exempt_sub_ids: set[int] = set()
+        for wi in sub_work_infos:
+            emp = wi.employee
+            work_info_by_employee[wi.employee_id] = wi
+            full_name = ' '.join(
+                part for part in [emp.firstname, emp.lastname] if part
+            ).strip() or emp.username
+            emp_name_map[emp.pk] = full_name
+            if (
+                getattr(emp, 'admin', False)
+                or getattr(emp, 'hr', False)
+                or getattr(emp, 'hr_manager', False)
+                or getattr(emp, 'accounting', False)
+            ):
+                exempt_sub_ids.add(emp.pk)
+
+        # Date helpers
+        month_start = today.replace(day=1)
+        if today.month == 1:
+            prev_month_start = datetime.date(today.year - 1, 12, 1)
+            prev_month_end = datetime.date(today.year - 1, 12, 31)
+        else:
+            prev_last = _cal_mod.monthrange(today.year, today.month - 1)[1]
+            prev_month_start = datetime.date(today.year, today.month - 1, 1)
+            prev_month_end = datetime.date(today.year, today.month - 1, prev_last)
+
+        week_labels = ['Wk1', 'Wk2', 'Wk3', 'Wk4']
+
+        def _week_of_month(d: datetime.date) -> int:
+            return min((d.day - 1) // 7, 3)
+
+        def _empty_week_counts() -> list[int]:
+            return [0, 0, 0, 0]
+
+        # ── 1. Summary stat cards ────────────────────────────────────────
+        pending_leave_count = LeaveApprovalStep.objects.filter(
+            approver=user,
+            role_group='manager',
+            status='pending',
+            activated_at__isnull=False,
+        ).count()
+
+        eval_this_month = EvaluationEntry.objects.filter(
+            employee__in=sub_ids,
+            submitted_at__date__gte=month_start,
+        ).count()
+        eval_prev_month = EvaluationEntry.objects.filter(
+            employee__in=sub_ids,
+            submitted_at__date__range=(prev_month_start, prev_month_end),
+        ).count()
+
+        trainings_this_month = TrainingSubmission.objects.filter(
+            submitted_by__in=sub_ids,
+            status='completed',
+            confirmed_at__date__gte=month_start,
+            confirmed_at__isnull=False,
+        ).count()
+        trainings_prev_month = TrainingSubmission.objects.filter(
+            submitted_by__in=sub_ids,
+            status='completed',
+            confirmed_at__date__range=(prev_month_start, prev_month_end),
+            confirmed_at__isnull=False,
+        ).count()
+
+        certs_this_month = Certificate.objects.filter(
+            employee__in=sub_ids,
+            created_at__date__gte=month_start,
+        ).count()
+        certs_prev_month = Certificate.objects.filter(
+            employee__in=sub_ids,
+            created_at__date__range=(prev_month_start, prev_month_end),
+        ).count()
+
+        eval_weekly = _empty_week_counts()
+        for row in EvaluationEntry.objects.filter(
+            employee__in=sub_ids,
+            submitted_at__date__gte=month_start,
+            submitted_at__date__lte=today,
+        ).values('submitted_at'):
+            submitted_at = row['submitted_at']
+            if submitted_at is None:
+                continue
+            eval_weekly[_week_of_month(timezone.localtime(submitted_at, tz_obj).date())] += 1
+
+        training_weekly = _empty_week_counts()
+        for row in TrainingSubmission.objects.filter(
+            submitted_by__in=sub_ids,
+            status='completed',
+            confirmed_at__isnull=False,
+            confirmed_at__date__gte=month_start,
+            confirmed_at__date__lte=today,
+        ).values('confirmed_at'):
+            confirmed_at = row['confirmed_at']
+            if confirmed_at is None:
+                continue
+            training_weekly[_week_of_month(timezone.localtime(confirmed_at, tz_obj).date())] += 1
+
+        cert_weekly = _empty_week_counts()
+        for row in Certificate.objects.filter(
+            employee__in=sub_ids,
+            created_at__date__gte=month_start,
+            created_at__date__lte=today,
+        ).values('created_at'):
+            created_at = row['created_at']
+            if created_at is None:
+                continue
+            cert_weekly[_week_of_month(timezone.localtime(created_at, tz_obj).date())] += 1
+
+        pending_approval_weekly = _empty_week_counts()
+        for row in LeaveApprovalStep.objects.filter(
+            approver=user,
+            role_group='manager',
+            status='pending',
+            activated_at__isnull=False,
+            activated_at__date__gte=month_start,
+            activated_at__date__lte=today,
+        ).values('activated_at'):
+            activated_at = row['activated_at']
+            if activated_at is None:
+                continue
+            pending_approval_weekly[_week_of_month(timezone.localtime(activated_at, tz_obj).date())] += 1
+
+        # ── 2. Timelog anomalies (current week: Mon → yesterday) ────────
+        # today.weekday() == 0 on Monday, so week_start = Monday
+        week_start = today - datetime.timedelta(days=today.weekday())
+        timelog_anomalies: list[dict] = []
+        non_exempt_ids = [eid for eid in sub_ids if eid not in exempt_sub_ids]
+
+        if week_start < today and non_exempt_ids:
+            tl_fetch_start = timezone.make_aware(
+                datetime.datetime.combine(week_start, datetime.time.min), tz_obj
+            )
+            tl_fetch_end = timezone.make_aware(
+                datetime.datetime.combine(today, datetime.time.min), tz_obj
+            )
+            # Single batch query — no N+1 per employee
+            all_week_logs = list(
+                Timelogs.objects.filter(
+                    employee__in=non_exempt_ids,
+                    time__range=(tl_fetch_start, tl_fetch_end),
+                ).order_by('employee_id', 'time').values('employee_id', 'time', 'entry')
+            )
+            # Group by employee
+            logs_by_employee: dict[int, list[dict]] = {}
+            for log in all_week_logs:
+                eid = log['employee_id']
+                logs_by_employee.setdefault(eid, []).append({
+                    'dt': timezone.localtime(log['time'], tz_obj),
+                    'entry': log['entry'],
+                })
+
+            for emp_id in non_exempt_ids:
+                work_days = _pair_timelogs(logs_by_employee.get(emp_id, []))
+                emp_anomalies: list[dict] = []
+                d = week_start
+                while d < today:
+                    if d.weekday() == 6:       # Skip Sunday
+                        d += datetime.timedelta(days=1)
+                        continue
+                    slot = work_days.get(d)
+                    has_in  = slot is not None and slot.get('in')  is not None
+                    has_out = slot is not None and slot.get('out') is not None
+                    # Fully paired or fully absent → skip
+                    if (has_in and has_out) or (not has_in and not has_out):
+                        d += datetime.timedelta(days=1)
+                        continue
+                    emp_anomalies.append({
+                        'date': d.isoformat(),
+                        'missing': 'time_out' if has_in else 'time_in',
+                    })
+                    d += datetime.timedelta(days=1)
+                if emp_anomalies:
+                    timelog_anomalies.append({
+                        'employee_id': emp_id,
+                        'employee_name': emp_name_map.get(emp_id, str(emp_id)),
+                        'anomalies': emp_anomalies,
+                    })
+
+        lacking_timelog_count = len(timelog_anomalies)
+
+        timelog_weekly = _empty_week_counts()
+        if non_exempt_ids:
+            month_log_start = timezone.make_aware(
+                datetime.datetime.combine(month_start, datetime.time.min), tz_obj
+            )
+            month_log_end = timezone.make_aware(
+                datetime.datetime.combine(today + datetime.timedelta(days=1), datetime.time.min), tz_obj
+            )
+            all_month_logs = list(
+                Timelogs.objects.filter(
+                    employee__in=non_exempt_ids,
+                    time__range=(month_log_start, month_log_end),
+                ).order_by('employee_id', 'time').values('employee_id', 'time', 'entry')
+            )
+            month_logs_by_employee: dict[int, list[dict]] = {}
+            for log in all_month_logs:
+                eid = log['employee_id']
+                month_logs_by_employee.setdefault(eid, []).append({
+                    'dt': timezone.localtime(log['time'], tz_obj),
+                    'entry': log['entry'],
+                })
+            for emp_id in non_exempt_ids:
+                work_days = _pair_timelogs(month_logs_by_employee.get(emp_id, []))
+                d = month_start
+                while d < today:
+                    if d.weekday() == 6:
+                        d += datetime.timedelta(days=1)
+                        continue
+                    slot = work_days.get(d)
+                    has_in = slot is not None and slot.get('in') is not None
+                    has_out = slot is not None and slot.get('out') is not None
+                    if not ((has_in and has_out) or (not has_in and not has_out)):
+                        timelog_weekly[_week_of_month(d)] += 1
+                    d += datetime.timedelta(days=1)
+
+        summary_trends = {
+            'weeks': week_labels,
+            'total_subordinates': [len(sub_ids)] * 4,
+            'pending_leave_approvals': pending_approval_weekly,
+            'lacking_timelogs': timelog_weekly,
+            'evaluations_submitted': eval_weekly,
+            'trainings_completed': training_weekly,
+            'certs_issued': cert_weekly,
+        }
+
+        # ── A. Timelog chart: last-week vs this-week anomaly count per day ─
+        _day_labels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+        curr_week_counts = [0] * 6
+        for _anomaly in timelog_anomalies:
+            for _a in _anomaly['anomalies']:
+                _dw = datetime.date.fromisoformat(_a['date']).weekday()
+                if 0 <= _dw <= 5:
+                    curr_week_counts[_dw] += 1
+        last_week_counts = [0] * 6
+        if non_exempt_ids:
+            lw_start = week_start - datetime.timedelta(days=7)
+            lw_fetch_start = timezone.make_aware(
+                datetime.datetime.combine(lw_start, datetime.time.min), tz_obj
+            )
+            lw_fetch_end = timezone.make_aware(
+                datetime.datetime.combine(week_start, datetime.time.min), tz_obj
+            )
+            all_lw_logs = list(
+                Timelogs.objects.filter(
+                    employee__in=non_exempt_ids,
+                    time__range=(lw_fetch_start, lw_fetch_end),
+                ).order_by('employee_id', 'time').values('employee_id', 'time', 'entry')
+            )
+            lw_logs_by_emp: dict[int, list[dict]] = {}
+            for _log in all_lw_logs:
+                _eid = _log['employee_id']
+                lw_logs_by_emp.setdefault(_eid, []).append({
+                    'dt': timezone.localtime(_log['time'], tz_obj),
+                    'entry': _log['entry'],
+                })
+            for _emp_id in non_exempt_ids:
+                _work_days = _pair_timelogs(lw_logs_by_emp.get(_emp_id, []))
+                for _day_offset in range(6):
+                    _d = lw_start + datetime.timedelta(days=_day_offset)
+                    _slot = _work_days.get(_d)
+                    _has_in  = _slot is not None and _slot.get('in')  is not None
+                    _has_out = _slot is not None and _slot.get('out') is not None
+                    if not ((_has_in and _has_out) or (not _has_in and not _has_out)):
+                        last_week_counts[_day_offset] += 1
+        timelog_chart = {
+            'days': _day_labels,
+            'last_week': last_week_counts,
+            'current_week': curr_week_counts,
+        }
+
+        # ── 3. Pending leave steps awaiting this user's approval ─────────
+        pending_steps_qs = (
+            LeaveApprovalStep.objects.filter(
+                approver=user,
+                role_group='manager',
+                status='pending',
+                activated_at__isnull=False,
+            )
+            .select_related(
+                'leave_request',
+                'leave_request__employee',
+                'leave_request__leave_type',
+            )
+            .order_by('leave_request__date_start')[:20]
+        )
+        pending_leaves: list[dict] = []
+        for step in pending_steps_qs:
+            lr = step.leave_request
+            emp = lr.employee
+            full_name = emp_name_map.get(emp.pk) or (
+                ' '.join(p for p in [emp.firstname, emp.lastname] if p).strip()
+                or emp.username
+            )
+            pending_leaves.append({
+                'id': lr.pk,
+                'control_number': lr.control_number,
+                'employee_name': full_name,
+                'leave_type': lr.leave_type.name,
+                'date_start': lr.date_start.isoformat(),
+                'date_end': lr.date_end.isoformat(),
+                'days_count': lr.days_count,
+                'days_pending': (
+                    (today - step.activated_at.date()).days
+                    if step.activated_at else None
+                ),
+            })
+
+        # ── 4. Upcoming approved leaves for subordinates (next 30 days) ──
+        upcoming_leaves_qs = (
+            LeaveRequest.objects.filter(
+                employee__in=sub_ids,
+                status='approved',
+                date_start__gte=today,
+                date_start__lte=today + datetime.timedelta(days=30),
+            )
+            .select_related('employee', 'leave_type', 'reason', 'subreason')
+            .order_by('date_start')[:20]
+        )
+        upcoming_leaves: list[dict] = []
+        for lr in upcoming_leaves_qs:
+            emp = lr.employee
+            work_info = work_info_by_employee.get(emp.pk)
+            full_name = emp_name_map.get(emp.pk) or (
+                ' '.join(p for p in [emp.firstname, emp.lastname] if p).strip()
+                or emp.username
+            )
+            upcoming_leaves.append({
+                'id': lr.pk,
+                'employee_name': full_name,
+                'department_name': (
+                    getattr(getattr(work_info, 'department', None), 'name', None)
+                ),
+                'line_name': getattr(getattr(work_info, 'line', None), 'name', None),
+                'leave_type': lr.leave_type.name,
+                'leave_category': getattr(lr.reason, 'title', ''),
+                'leave_reason': getattr(lr.subreason, 'title', ''),
+                'date_start': lr.date_start.isoformat(),
+                'date_end': lr.date_end.isoformat(),
+                'days_count': lr.days_count,
+            })
+
+        # ── B. Leave chart: subordinate leaves by start-date per week ────
+        from collections import defaultdict as _dd
+
+        _curr_leave_wk = [0, 0, 0, 0, 0]
+        _prev_leave_wk = [0, 0, 0, 0, 0]
+        for _lr_v in LeaveRequest.objects.filter(
+            employee__in=sub_ids,
+            date_start__gte=month_start,
+            date_start__lte=today,
+        ).values('date_start'):
+            _curr_leave_wk[_week_of_month(_lr_v['date_start'])] += 1
+        for _lr_v in LeaveRequest.objects.filter(
+            employee__in=sub_ids,
+            date_start__range=(prev_month_start, prev_month_end),
+        ).values('date_start'):
+            _prev_leave_wk[_week_of_month(_lr_v['date_start'])] += 1
+        _max_wk = max(_week_of_month(today), _week_of_month(prev_month_end))
+        leave_chart = {
+            'weeks': [f'Wk {i + 1}' for i in range(_max_wk + 1)],
+            'current_month': _curr_leave_wk[:_max_wk + 1],
+            'previous_month': _prev_leave_wk[:_max_wk + 1],
+        }
+
+        # ── C. Pending leave chart: approval steps activated per month ───
+        pending_prev_total = LeaveApprovalStep.objects.filter(
+            approver=user,
+            role_group='manager',
+            activated_at__isnull=False,
+            activated_at__date__range=(prev_month_start, prev_month_end),
+        ).count()
+        pending_curr_total = LeaveApprovalStep.objects.filter(
+            approver=user,
+            role_group='manager',
+            activated_at__isnull=False,
+            activated_at__date__gte=month_start,
+            activated_at__date__lte=today,
+        ).count()
+        pending_leave_chart = {
+            'months': [prev_month_start.strftime('%b'), month_start.strftime('%b')],
+            'current_month': [0, pending_curr_total],
+            'previous_month': [pending_prev_total, 0],
+        }
+
+        # ── D. MIS ticket chart: tickets created per month ───────────────
+        mis_prev_total = MISTicket.objects.filter(
+            employee__in=sub_ids,
+            created_at__date__range=(prev_month_start, prev_month_end),
+        ).count()
+        mis_curr_total = MISTicket.objects.filter(
+            employee__in=sub_ids,
+            created_at__date__gte=month_start,
+            created_at__date__lte=today,
+        ).count()
+        mis_chart = {
+            'months': [prev_month_start.strftime('%b'), month_start.strftime('%b')],
+            'current_month': [0, mis_curr_total],
+            'previous_month': [mis_prev_total, 0],
+        }
+
+        # ── 5. Evaluation progress for the active period ─────────────────
+        current_period = (
+            EvaluationPeriod.objects.filter(status='active')
+            .order_by('-start_date')
+            .first()
+        )
+        evaluation: dict | None = None
+        if current_period:
+            status_label_map = {
+                'pending': 'Pending',
+                'supervisor_review': 'Supervisor Review',
+                'user_confirmation': 'User Confirmation',
+                'final_approval': 'Final Approval',
+                'second_final_approval': 'Second Final Approval',
+                'returned': 'Returned',
+                'completed': 'Completed',
+                'disapproved': 'Disapproved',
+            }
+            entry_status_map = {
+                row['employee_id']: row['status']
+                for row in EvaluationEntry.objects.filter(
+                    employee__in=sub_ids,
+                    evaluation_period=current_period,
+                ).values('employee_id', 'status')
+            }
+            status_counts = {key: 0 for key in status_label_map}
+            submitted_ids: set[int] = set()
+            for wi in sub_work_infos:
+                status_value = entry_status_map.get(wi.employee_id, 'pending')
+                status_counts[status_value] = status_counts.get(status_value, 0) + 1
+                if status_value != 'pending':
+                    submitted_ids.add(wi.employee_id)
+            not_submitted = [
+                {
+                    'employee_id': wi.employee_id,
+                    'employee_name': emp_name_map[wi.employee_id],
+                }
+                for wi in sub_work_infos
+                if wi.employee_id not in submitted_ids
+            ]
+            days_remaining = max((current_period.end_date - today).days, 0)
+            evaluation = {
+                'period_title': current_period.title,
+                'period_start': current_period.start_date.isoformat(),
+                'period_end': current_period.end_date.isoformat(),
+                'frequency': current_period.frequency,
+                'submitted_count': len(submitted_ids),
+                'total_count': len(sub_ids),
+                'not_submitted': not_submitted,
+                'days_remaining': days_remaining,
+                'status_breakdown': [
+                    {
+                        'key': key,
+                        'label': label,
+                        'count': status_counts[key],
+                    }
+                    for key, label in status_label_map.items()
+                ],
+            }
+
+        # ── 6. Open MIS tickets for subordinates ─────────────────────────
+        open_tickets_qs = (
+            MISTicket.objects.filter(
+                employee__in=sub_ids,
+                status__in=['OPEN', 'IN_PROGRESS'],
+            )
+            .select_related('employee')
+            .order_by('-created_at')[:20]
+        )
+        open_tickets: list[dict] = []
+        for ticket in open_tickets_qs:
+            emp = ticket.employee
+            full_name = emp_name_map.get(emp.pk) or (
+                ' '.join(p for p in [emp.firstname, emp.lastname] if p).strip()
+                or emp.username
+            )
+            open_tickets.append({
+                'id': ticket.pk,
+                'ticket_number': ticket.ticket_number,
+                'employee_name': full_name,
+                'subject': ticket.subject,
+                'category': ticket.category,
+                'priority': ticket.priority,
+                'status': ticket.status,
+                'days_open': (
+                    (today - ticket.created_at.date()).days
+                    if ticket.created_at else None
+                ),
+            })
+
+        # ── 7. Subordinate list ───────────────────────────────────────────
+        subordinates = [
+            {
+                'employee_id': wi.employee_id,
+                'employee_name': emp_name_map[wi.employee_id],
+            }
+            for wi in sub_work_infos
+        ]
+
+        return Response({
+            'is_empty': len(sub_ids) == 0,
+            'summary': {
+                'total_subordinates': len(sub_ids),
+                'pending_leave_approvals': {'current': pending_leave_count},
+                'lacking_timelogs': {'current': lacking_timelog_count},
+                'evaluations_submitted': {
+                    'current': eval_this_month,
+                    'previous': eval_prev_month,
+                },
+                'trainings_completed': {
+                    'current': trainings_this_month,
+                    'previous': trainings_prev_month,
+                },
+                'certs_issued': {
+                    'current': certs_this_month,
+                    'previous': certs_prev_month,
+                },
+                'trends': summary_trends,
+            },
+            'timelog_anomalies': timelog_anomalies,
+            'pending_leaves': pending_leaves,
+            'upcoming_leaves': upcoming_leaves,
+            'evaluation': evaluation,
+            'open_tickets': open_tickets,
+            'subordinates': subordinates,
+            'timelog_chart': timelog_chart,
+            'leave_chart': leave_chart,
+            'pending_leave_chart': pending_leave_chart,
+            'mis_chart': mis_chart,
+        })

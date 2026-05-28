@@ -56,9 +56,9 @@ export function AdminTableSection<TRow>({
   ...tableProps
 }: AdminTableSectionProps<TRow>) {
   return (
-    <>
+    <div className="flex flex-col gap-2">
       {/* Controls row — search left, actions right */}
-      <div className="flex flex-wrap items-center justify-between mb-3 gap-2 max-[480px]:flex-col max-[480px]:items-stretch">
+      <div className="flex flex-wrap items-center justify-between gap-2 max-[480px]:flex-col max-[480px]:items-stretch">
         <div className="min-w-[200px] max-w-sm flex-1 max-[480px]:w-full">
           <SearchBar
             value={search}
@@ -74,7 +74,9 @@ export function AdminTableSection<TRow>({
       </div>
 
       {/* DataTable — handles skeleton, pagination, sorting, empty state */}
-      <DataTable<TRow> {...tableProps} />
-    </>
+      <div className="[&_tbody_tr:last-child_td]:border-b-0">
+        <DataTable<TRow> {...tableProps} />
+      </div>
+    </div>
   );
 }

@@ -1764,7 +1764,7 @@ function EvalApprovalView() {
         )}
         <div>
           <h1 className="text-lg font-bold text-[var(--color-text-primary)]">Employee Evaluation</h1>
-          <p className="text-xs text-[var(--color-text-muted)] mt-0.5">Review and approve employee evaluations.</p>
+          <p className="text-xs text-[var(--color-text-muted)]">Review and approve employee evaluations.</p>
         </div>
       </div>
 

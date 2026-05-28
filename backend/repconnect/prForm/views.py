@@ -1017,7 +1017,10 @@ class PRFAdminExportView(APIView):
                     if s_color:
                         cell.font = Font(color=s_color)
                 elif col == 10:
-                    cell.font = Font(color='FFFF0000')
+                    if prf.status == 'disapproved':
+                        cell.font = Font(color='FFFF0000')
+                    else:
+                        cell.font = Font(color='FF000000')
 
         # ── Column widths ─────────────────────────────────────────────
         col_widths = [18, 18, 15, 28, 26, 30, 20, 50, 18, 35]

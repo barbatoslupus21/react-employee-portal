@@ -1,7 +1,9 @@
 from django.conf import settings
 from django.conf.urls.static import static
 from django.contrib import admin
-from django.urls import include, path
+from django.urls import include, path, re_path
+
+from feedback import views as feedback_views
 
 urlpatterns = [
     path('admin', admin.site.urls),
@@ -18,5 +20,9 @@ urlpatterns = [
     path('api/survey/', include('survey.urls')),
     path('api/training/', include('training.urls')),
     path('api/employee-eval/', include('employee_evaluation.urls')),
-    path('api/announcements/', include('announcement.urls')),
+    re_path(r'^api/announcements/?', include('announcement.urls')),
+    path('api/mis/', include('mis_ticket.urls')),
+    path('api/feedback/settings', feedback_views.FeedbackSettingsView.as_view()),
+    path('api/feedback/settings/', feedback_views.FeedbackSettingsView.as_view()),
+    path('api/feedback/', include('feedback.urls')),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

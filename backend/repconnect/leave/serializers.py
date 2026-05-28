@@ -1,7 +1,16 @@
 import re
-from decimal import Decimal
+from datetime import timedelta
+from decimal import Decimal, ROUND_HALF_UP
 
 from rest_framework import serializers
+
+from generalsettings.workdays import (
+    get_configured_weekday_durations,
+    get_configured_hours_per_day,
+    get_configured_workdays,
+    is_configured_workday,
+)
+from systemCalendar.models import CalendarEvent
 
 from .models import (
     LeaveApprovalStep,
@@ -9,6 +18,7 @@ from .models import (
     LeaveReason,
     LeaveRequest,
     LeaveSubreason,
+    SundayExemption,
     LeaveType,
 )
 
@@ -141,10 +151,14 @@ class LeaveSubreasonAdminSerializer(serializers.ModelSerializer):
 class LeaveBalanceSerializer(serializers.ModelSerializer):
     leave_type = serializers.CharField(source='leave_type.name', read_only=True)
     leave_type_id = serializers.IntegerField(read_only=True)
-    remaining_leave = serializers.DecimalField(
-        max_digits=6, decimal_places=1, read_only=True,
-    )
+    entitled_leave = serializers.SerializerMethodField()
+    used_leave = serializers.SerializerMethodField()
+    remaining_leave = serializers.SerializerMethodField()
+    entitled_leave_hours = serializers.SerializerMethodField()
+    used_leave_hours = serializers.SerializerMethodField()
+    remaining_leave_hours = serializers.SerializerMethodField()
     pending_leave = serializers.SerializerMethodField()
+    pending_leave_hours = serializers.SerializerMethodField()
 
     class Meta:
         model = LeaveBalance
@@ -152,8 +166,44 @@ class LeaveBalanceSerializer(serializers.ModelSerializer):
             'id', 'leave_type', 'leave_type_id',
             'period_start', 'period_end',
             'entitled_leave', 'used_leave', 'remaining_leave',
-            'pending_leave',
+            'entitled_leave_hours', 'used_leave_hours', 'remaining_leave_hours',
+            'pending_leave', 'pending_leave_hours',
         ]
+
+    def _to_display_days(self, hours: Decimal) -> str:
+        hours_per_day = get_configured_hours_per_day()
+        days = (hours / hours_per_day).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        return str(days)
+
+    def get_entitled_leave(self, obj):
+        if not getattr(obj, 'employee', None) or not getattr(obj, 'leave_type', None):
+            return '0'
+        return self._to_display_days(Decimal(str(obj.entitled_leave)))
+
+    def get_used_leave(self, obj):
+        if not getattr(obj, 'employee', None) or not getattr(obj, 'leave_type', None):
+            return '0'
+        return self._to_display_days(Decimal(str(obj.used_leave)))
+
+    def get_remaining_leave(self, obj):
+        if not getattr(obj, 'employee', None) or not getattr(obj, 'leave_type', None):
+            return '0'
+        return self._to_display_days(Decimal(str(obj.remaining_leave)))
+
+    def get_entitled_leave_hours(self, obj):
+        if not getattr(obj, 'employee', None) or not getattr(obj, 'leave_type', None):
+            return '0.0'
+        return str(Decimal(str(obj.entitled_leave)).quantize(Decimal('0.1')))
+
+    def get_used_leave_hours(self, obj):
+        if not getattr(obj, 'employee', None) or not getattr(obj, 'leave_type', None):
+            return '0.0'
+        return str(Decimal(str(obj.used_leave)).quantize(Decimal('0.1')))
+
+    def get_remaining_leave_hours(self, obj):
+        if not getattr(obj, 'employee', None) or not getattr(obj, 'leave_type', None):
+            return '0.0'
+        return str(Decimal(str(obj.remaining_leave)).quantize(Decimal('0.1')))
 
     def get_pending_leave(self, obj):
         """
@@ -162,9 +212,14 @@ class LeaveBalanceSerializer(serializers.ModelSerializer):
         period.  For requests that span a period boundary, only the portion
         that falls inside the period is counted (prorated by calendar days).
         """
+        employee = getattr(obj, 'employee', None)
+        leave_type = getattr(obj, 'leave_type', None)
+        if not employee or not leave_type:
+            return '0'
+
         pending_qs = LeaveRequest.objects.filter(
-            employee=obj.employee,
-            leave_type=obj.leave_type,
+            employee=employee,
+            leave_type=leave_type,
             status='pending',
             is_deductible=True,
             date_start__lte=obj.period_end,
@@ -177,9 +232,61 @@ class LeaveBalanceSerializer(serializers.ModelSerializer):
             total_cal = (req.date_end - req.date_start).days + 1
             overlap_cal = (overlap_end - overlap_start).days + 1
             if total_cal > 0:
-                prorated = Decimal(str(req.days_count)) * Decimal(overlap_cal) / Decimal(total_cal)
+                base_hours = Decimal(str(getattr(req, 'total_hours', req.hours)))
+                prorated = base_hours * Decimal(overlap_cal) / Decimal(total_cal)
+                total += prorated
+
+        return self._to_display_days(total)
+
+    def get_pending_leave_hours(self, obj):
+        employee = getattr(obj, 'employee', None)
+        leave_type = getattr(obj, 'leave_type', None)
+        if not employee or not leave_type:
+            return '0.0'
+
+        pending_qs = LeaveRequest.objects.filter(
+            employee=employee,
+            leave_type=leave_type,
+            status='pending',
+            is_deductible=True,
+            date_start__lte=obj.period_end,
+            date_end__gte=obj.period_start,
+        )
+        total = Decimal('0')
+        for req in pending_qs:
+            overlap_start = max(req.date_start, obj.period_start)
+            overlap_end = min(req.date_end, obj.period_end)
+            total_cal = (req.date_end - req.date_start).days + 1
+            overlap_cal = (overlap_end - overlap_start).days + 1
+            if total_cal > 0:
+                base_hours = Decimal(str(getattr(req, 'total_hours', req.hours)))
+                prorated = base_hours * Decimal(overlap_cal) / Decimal(total_cal)
                 total += prorated
         return str(total.quantize(Decimal('0.1')))
+
+
+class LeaveBalanceAdminUpdateSerializer(serializers.Serializer):
+    leave_type_id = serializers.IntegerField()
+    period_start = serializers.DateField()
+    period_end = serializers.DateField()
+    balance_hours = serializers.DecimalField(max_digits=6, decimal_places=1)
+    used_hours = serializers.DecimalField(max_digits=6, decimal_places=1)
+
+    def validate_leave_type_id(self, value):
+        if not LeaveType.objects.filter(pk=value).exists():
+            raise serializers.ValidationError('Selected leave type does not exist.')
+        return value
+
+    def validate(self, attrs):
+        if attrs['balance_hours'] < Decimal('0'):
+            raise serializers.ValidationError({'balance_hours': 'Entitled hours must be zero or greater.'})
+        if attrs['used_hours'] < Decimal('0'):
+            raise serializers.ValidationError({'used_hours': 'Used hours must be zero or greater.'})
+        if attrs['used_hours'] > attrs['balance_hours']:
+            raise serializers.ValidationError({'used_hours': 'Used hours cannot exceed entitled hours.'})
+        if attrs['period_end'] < attrs['period_start']:
+            raise serializers.ValidationError({'period_end': 'Period end must be the same as or after period start.'})
+        return attrs
 
 
 # ── Approval step serializer ───────────────────────────────────────────────────
@@ -249,6 +356,8 @@ class LeaveRequestListSerializer(serializers.ModelSerializer):
     employee_name = serializers.SerializerMethodField()
     employee_id_number = serializers.SerializerMethodField()
     can_review = serializers.SerializerMethodField()
+    total_hours = serializers.DecimalField(max_digits=6, decimal_places=1, read_only=True)
+    total_days = serializers.DecimalField(max_digits=6, decimal_places=2, read_only=True)
 
     class Meta:
         model = LeaveRequest
@@ -256,16 +365,16 @@ class LeaveRequestListSerializer(serializers.ModelSerializer):
             'id', 'control_number', 'leave_type', 'leave_type_name',
             'reason_id', 'reason_title', 'subreason_id', 'subreason_title',
             'status', 'status_display',
-            'date_start', 'date_end', 'days_count', 'hours',
+            'date_start', 'date_end', 'days_count', 'hours', 'total_hours', 'total_days',
             'duration_display', 'date_prepared', 'date_prepared_display',
             'remarks', 'hr_approved_at', 'can_cancel', 'created_at',
-            'employee_name', 'employee_id_number', 'can_review',
+            'employee_name', 'employee_id_number', 'can_review', 'seen',
         ]
 
     def get_duration_display(self, obj):
-        if obj.days_count == 1:
-            return f'{int(obj.hours)}h (1 day)'
-        return f'{obj.days_count} days'
+        total_days = Decimal(str(getattr(obj, 'total_days', obj.days_count))).quantize(Decimal('0.01'))
+        total_hours = Decimal(str(getattr(obj, 'total_hours', obj.hours))).quantize(Decimal('0.1'))
+        return f'{total_days} day(s) / {total_hours} hour(s)'
 
     def get_date_prepared_display(self, obj):
         return obj.date_prepared.strftime('%B %d, %Y')
@@ -280,11 +389,13 @@ class LeaveRequestListSerializer(serializers.ModelSerializer):
 
     def get_can_cancel(self, obj):
         """Evaluate cancellation eligibility for the requesting user context."""
+        if obj.status not in ('pending', 'approved'):
+            return False
         request = self.context.get('request')
         if not request:
             return False
         user = request.user
-        # HR always can cancel
+        # HR always can cancel when the request is still cancellable
         if getattr(user, 'hr', False):
             return True
         # Owner rules
@@ -381,7 +492,12 @@ class LeaveRequestCreateSerializer(serializers.Serializer):
     subreason = LeaveSubreasonOrTextField(required=False, allow_null=True)
     date_start = serializers.DateField()
     date_end = serializers.DateField()
-    hours = serializers.DecimalField(max_digits=4, decimal_places=1)
+    hours = serializers.DecimalField(max_digits=6, decimal_places=1, required=False)
+    per_date_hours = serializers.DictField(
+        child=serializers.DecimalField(max_digits=4, decimal_places=1),
+        required=False,
+        default=dict,
+    )
     remarks = serializers.CharField(max_length=500, required=False, allow_blank=True, default='')
 
     def validate_remarks(self, value: str) -> str:
@@ -395,7 +511,9 @@ class LeaveRequestCreateSerializer(serializers.Serializer):
         subreason = attrs.get('subreason')
         date_start = attrs['date_start']
         date_end = attrs['date_end']
-        hours = attrs['hours']
+        per_date_hours = attrs.get('per_date_hours') or {}
+        hours_per_day = get_configured_hours_per_day()
+        weekday_durations = get_configured_weekday_durations()
 
         # Reason must belong to leave_type
         if not reason.leave_types.filter(pk=leave_type.pk).exists():
@@ -415,21 +533,60 @@ class LeaveRequestCreateSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 {'date_end': 'End date cannot be earlier than start date.'}
             )
-        days_count = (date_end - date_start).days + 1
-        attrs['days_count'] = days_count
+        holiday_dates = set(
+            CalendarEvent.objects
+            .filter(
+                event_type__in=['legal', 'special', 'day_off', 'company'],
+                date__range=[date_start, date_end],
+            )
+            .values_list('date', flat=True)
+        )
+        sunday_exemptions = set(
+            SundayExemption.objects
+            .filter(date__range=[date_start, date_end])
+            .values_list('date', flat=True)
+        )
+        configured_workdays = get_configured_workdays()
 
-        # Hours validation
-        if days_count == 1:
-            if hours < Decimal('1') or hours > Decimal('8'):
-                raise serializers.ValidationError(
-                    {'hours': 'For a single-day leave, hours must be between 1 and 8.'}
-                )
-        else:
-            max_hours = Decimal(str(days_count * 8))
-            if hours < Decimal('1') or hours > max_hours:
-                raise serializers.ValidationError(
-                    {'hours': f'Hours must be between 1 and {days_count * 8} for this date range.'}
-                )
+        days_count = 0
+        total_hours = Decimal('0')
+        total_days_equivalent = Decimal('0')
+        day = date_start
+        while day <= date_end:
+            if day not in holiday_dates and is_configured_workday(
+                day,
+                configured_workdays=configured_workdays,
+                sunday_exemptions=sunday_exemptions,
+            ):
+                days_count += 1
+                iso = day.isoformat()
+                day_hours = weekday_durations.get(day.weekday(), hours_per_day)
+                if day_hours <= Decimal('0'):
+                    day_hours = hours_per_day
+                selected = per_date_hours.get(iso, day_hours)
+                selected_hours = Decimal(str(selected)).quantize(Decimal('0.1'))
+                if selected_hours < Decimal('1') or selected_hours > day_hours:
+                    raise serializers.ValidationError(
+                        {
+                            'per_date_hours': (
+                                f'Duration for {iso} must be between 1 and {day_hours} hours.'
+                            )
+                        }
+                    )
+                total_hours += selected_hours
+                total_days_equivalent += (selected_hours / day_hours)
+            day += timedelta(days=1)
+
+        if days_count == 0:
+            raise serializers.ValidationError(
+                {'date_start': 'Selected date range has no working days after holidays and non-working days are excluded.'}
+            )
+
+        attrs['days_count'] = days_count
+        attrs['total_hours'] = total_hours.quantize(Decimal('0.1'))
+        attrs['total_days'] = total_days_equivalent.quantize(Decimal('0.01'))
+        # Keep legacy field populated for backward-compatible consumers.
+        attrs['hours'] = attrs['total_hours']
 
         return attrs
 

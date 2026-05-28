@@ -18,11 +18,13 @@ import {
   ChevronDown,
 } from 'lucide-react';
 import { EmptyState } from '@/components/ui/interactive-empty-state';
-import { ConfirmationModal } from '@/components/ui/confirmation-modal';
 import { TextShimmer } from '@/components/ui/text-shimmer';
 import { toast } from '@/components/ui/toast';
 import { getCsrfToken } from '@/lib/csrf';
 import { cn } from '@/lib/utils';
+import { StatusPill } from '@/components/ui/status-pill';
+import { ChoiceboxGroup } from '@/components/ui/choicebox-1';
+import { Modal, ModalBody, ModalContent, ModalFooter, ModalHeader, ModalTitle } from '@/components/ui/modal';
 import {
   Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
@@ -33,6 +35,7 @@ import {
 interface UserData {
   id:          number;
   idnumber:    string;
+  email:       string;
   firstname:   string | null;
   lastname:    string | null;
   admin:       boolean;
@@ -43,6 +46,7 @@ interface LoanRecord {
   id:                number;
   loan_type_name:    string;
   loan_type_color:   string;
+  seen:              boolean;
   principal_amount:  string;
   current_balance:   string;
   monthly_deduction: string | null;
@@ -193,10 +197,13 @@ function SummaryCard({
   loading:       boolean;
 }) {
   return (
-    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4 flex items-center justify-between gap-3 shadow-sm">
-      <div className="flex-1 min-w-0">
+    <div className="relative overflow-hidden rounded-lg border border-[var(--color-border)] p-4 flex items-center justify-between gap-3 bg-[var(--color-bg-elevated)]">
+      <div className="pointer-events-none absolute -right-5 -bottom-8 opacity-15">
+        <span style={{ color: iconColor }}><Icon size={120} /></span>
+      </div>
+      <div className="relative z-10 flex-1 min-w-0">
         {loading ? (
-          <div className="h-8 w-24 rounded-md bg-[var(--color-border)] animate-pulse" />
+          <div className="h-8 w-24 rounded-md bg-white/20 animate-pulse" />
         ) : (
           <div className="h-8 flex items-center">
             <AnimatePresence mode="wait" initial={false}>
@@ -207,7 +214,7 @@ function SummaryCard({
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
                   transition={{ duration: 0.18 }}
-                  className="text-xl font-bold text-[var(--color-text-muted)] tracking-widest select-none"
+                  className="text-xl font-bold text-[var(--color-text-muted)] tracking-wide select-none"
                 >
                   ● ● ● ●
                 </motion.p>
@@ -227,7 +234,7 @@ function SummaryCard({
           </div>
         )}
         <div className="flex items-center gap-1 mt-0.5">
-          <p className="text-xs text-[var(--color-text-muted)]">{label}</p>
+          <p className="text-[12px] text-[var(--color-text-muted)]">{label}</p>
           {onToggleMask && !loading && (
             <button
               onClick={onToggleMask}
@@ -238,14 +245,9 @@ function SummaryCard({
           )}
         </div>
       </div>
-      <div
-        className="shrink-0 w-11 h-11 rounded-xl flex items-center justify-center"
-        style={{ backgroundColor: hexToRgba(iconColor, 0.15) }}
-      >
-        <div style={{ color: iconColor }}>
-          <Icon size={18} />
-        </div>
-      </div>
+      {/* <div className="relative z-10 shrink-0 w-10 h-10 rounded-xl flex items-center justify-center border border-white/25 bg-white/10">
+        <div style={{ color: iconColor }}><Icon size={18} /></div>
+      </div> */}
     </div>
   );
 }
@@ -309,14 +311,21 @@ function LoanCard({
           <h3 className="text-sm font-bold text-[var(--color-text-primary)] leading-snug line-clamp-2 flex-1">
             {loan.loan_type_name}
           </h3>
-          <span
-            className="text-[9px] font-semibold px-1.5 py-0.5 rounded shrink-0"
-            style={isActive
-              ? { backgroundColor: hexToRgba('#10B981', 0.12), color: '#10B981' }
-              : { backgroundColor: hexToRgba('#EF4444', 0.12), color: '#EF4444' }}
-          >
-            {isActive ? 'Active' : 'Paid Off'}
-          </span>
+          <div className="flex items-center gap-1.5 shrink-0">
+            {!loan.seen && (
+              <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-[#2845D6]/10 text-[#2845D6]">
+                New
+              </span>
+            )}
+            <span
+              className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full"
+              style={isActive
+                ? { backgroundColor: hexToRgba('#10B981', 0.12), color: '#10B981' }
+                : { backgroundColor: hexToRgba('#EF4444', 0.12), color: '#EF4444' }}
+            >
+              {isActive ? 'Active' : 'Paid Off'}
+            </span>
+          </div>
         </div>
 
         {/* Balance */}
@@ -327,7 +336,7 @@ function LoanCard({
 
         {/* Progress bar */}
         <div>
-          <div className="flex items-center justify-between text-[10px] mb-1.5">
+          <div className="flex items-center justify-between text-[10px] mb-1">
             <span className="font-semibold" style={{ color: color.hex }}>{pctPaid}% paid</span>
           </div>
           <div className="relative h-1.5 rounded-full" style={{ background: 'var(--color-border)' }}>
@@ -488,6 +497,7 @@ export default function MyFinancePage() {
   // ── Auth ────────────────────────────────────────────────────────────────────
   const [authPhase, setAuthPhase] = useState<'spinner' | 'checking' | 'done'>('spinner');
   const [user,      setUser]      = useState<UserData | null>(null);
+  const [workEmail, setWorkEmail] = useState('');
   const authTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -500,6 +510,12 @@ export default function MyFinancePage() {
         if (!data) { router.replace('/'); return; }
         if (data.accounting) { router.replace('/dashboard/finance/admin'); return; }
         setUser(data);
+        fetch('/api/user-profile/me', { credentials: 'include' })
+          .then((r) => (r.ok ? r.json() : null))
+          .then((profile: { personal_info?: { work_email?: string } } | null) => {
+            setWorkEmail((profile?.personal_info?.work_email ?? '').trim());
+          })
+          .catch(() => setWorkEmail(''));
         setAuthPhase('done');
       })
       .catch(() => {
@@ -521,7 +537,11 @@ export default function MyFinancePage() {
       fetch('/api/finance/my/records',      { credentials: 'include' }).then(r => r.json() as Promise<UserFinanceRecords>),
       fetch('/api/finance/my/loan-settings', { credentials: 'include' }).then(r => r.json() as Promise<LoanSettingsConfig>),
     ])
-      .then(([recs, ls]) => { setRecords(recs); setLoanSettings(ls); })
+      .then(([recs, ls]) => {
+        setRecords(recs);
+        setLoanSettings(ls);
+        window.dispatchEvent(new Event('finance-badge-refresh'));
+      })
       .catch(() => toast.error('Failed to load finance data.'))
       .finally(() => setLoading(false));
   }, []);
@@ -567,26 +587,46 @@ export default function MyFinancePage() {
   // ── Send payslip email ────────────────────────────────────────────────────
   const [sendPayslip,  setSendPayslip ] = useState<PayslipRecord | null>(null);
   const [sendingEmail, setSendingEmail] = useState(false);
+  const [sendChoice,   setSendChoice  ] = useState<'personal' | 'work' | ''>('');
+
+  const personalEmail = (user?.email ?? '').trim();
+  const workEmailValue = workEmail.trim();
+
+  const selectedRecipient = (() => {
+    if (sendChoice === 'personal') return personalEmail.toLowerCase();
+    if (sendChoice === 'work') return workEmailValue.toLowerCase();
+    return '';
+  })();
+
+  function handleRecipientChoiceChange(value: string) {
+    setSendChoice(value as 'personal' | 'work' | '');
+  }
 
   async function handleSendPayslipEmail() {
-    if (!sendPayslip) return;
+    if (!sendPayslip || !selectedRecipient) return;
     setSendingEmail(true);
     try {
       const [res] = await Promise.all([
         fetch(`/api/finance/my/payslips/${sendPayslip.id}/send-email`, {
           method: 'POST', credentials: 'include',
-          headers: { 'X-CSRFToken': getCsrfToken() },
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCsrfToken(),
+          },
+          body: JSON.stringify({ recipient_email: selectedRecipient }),
         }),
         new Promise<void>(r => setTimeout(r, 1000)),
       ]);
       if ((res as Response).ok) {
-        toast.success('Payslip sent to your email successfully.');
+        toast.success('Payslip sent to your selected email successfully.');
         const id = sendPayslip.id;
         setRecords(prev => prev ? {
           ...prev,
           payslips: prev.payslips.map(p => p.id === id ? { ...p, sent: true } : p),
         } : prev);
         setSendPayslip(null);
+        setSendChoice('');
+        window.dispatchEvent(new Event('finance-badge-refresh'));
       } else {
         const err = await (res as Response).json().catch(() => ({})) as { detail?: string };
         toast.error(err.detail ?? 'Failed to send email.');
@@ -657,12 +697,12 @@ export default function MyFinancePage() {
 
   // ── Full page render ──────────────────────────────────────────────────────
   return (
-    <div className="w-full p-4 sm:p-6 space-y-6">
+    <div className="w-full p-4 sm:p-6 space-y-4">
 
       {/* ── Page header ─────────────────────────────────────────────────── */}
-      <div>
-        <h1 className="text-xl font-bold text-[var(--color-text-primary)]">My Finance</h1>
-        <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+      <div className="pb-2">
+        <h1 className="text-lg font-bold text-[var(--color-text-primary)]">My Finance</h1>
+        <p className="text-xs text-[var(--color-text-muted)]">
           Track your payslips, allowances, savings, and loans.
         </p>
       </div>
@@ -709,12 +749,12 @@ export default function MyFinancePage() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
 
         {/* ── Payslips ──────────────────────────────────────────────────── */}
-        <div className="flex flex-col rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-sm md:h-[500px]" style={{ minHeight: '200px', maxHeight: '500px', overflow: 'hidden' }}>
+        <div className="flex flex-col rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] md:h-[500px]" style={{ minHeight: '200px', maxHeight: '500px', overflow: 'hidden' }}>
           {/* Card header */}
-          <div className="flex items-center px-4 py-3 border-b border-[var(--color-border)] shrink-0">
-            <div>
-              <p className="text-md pb-1.5 pt-1 font-semibold text-[var(--color-text-secondary)] leading-none">Payslips</p>
-              <p className="text-[11px] text-[var(--color-text-muted)] mt-0.5">Your salary statements</p>
+          <div className="flex items-center p-4 border-b border-[var(--color-border)] shrink-0">
+            <div className="space-y-0.5">
+              <p className="text-md font-semibold text-[var(--color-text-primary)] leading-none">My Payslips</p>
+              <p className="text-[11px] text-[var(--color-text-muted)]">Your salary statements</p>
             </div>
           </div>
 
@@ -739,8 +779,8 @@ export default function MyFinancePage() {
                     className="flex items-center gap-3 px-4 py-3"
                   >
                     {/* Icon */}
-                    <div className="w-7 h-7 rounded-lg shrink-0 flex items-center justify-center" style={{ backgroundColor: hexToRgba('#8B5CF6', 0.12) }}>
-                      <FileText size={13} style={{ color: '#8B5CF6' }} />
+                    <div className="w-7 h-7 rounded-lg shrink-0 flex items-start justify-center">
+                      <FileText size={20} style={{ color: '#8B5CF6' }} />
                     </div>
                     {/* Info */}
                     <div className="flex-1 min-w-0">
@@ -753,17 +793,10 @@ export default function MyFinancePage() {
                     </div>
                     {/* Status + email button */}
                     <div className="flex items-center gap-2 shrink-0">
-                      <span
-                        className="text-[9px] font-semibold px-1.5 py-0.5 rounded"
-                        style={p.sent
-                          ? { backgroundColor: hexToRgba('#10B981', 0.12), color: '#10B981' }
-                          : { backgroundColor: hexToRgba('#6B7280', 0.10), color: '#6B7280' }}
-                      >
-                        {p.sent ? 'Sent' : 'For Sending'}
-                      </span>
+                      <StatusPill className='text-[9px]' status={p.sent ? 'sent' : 'for_sending'} label={p.sent ? 'Sent' : 'For Sending'} />
                       {hasFile && (
                         <button
-                          onClick={() => setSendPayslip(p)}
+                          onClick={() => { setSendPayslip(p); setSendChoice(''); }}
                           title="Send to Email"
                           className="flex h-6 w-6 items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[#2845D6] hover:bg-[#2845D6]/10 transition-colors"
                         >
@@ -779,11 +812,11 @@ export default function MyFinancePage() {
         </div>
 
         {/* ── Benefits (Allowances) ─────────────────────────────────────── */}
-        <div className="flex flex-col rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-sm md:h-[500px]" style={{ minHeight: '200px', maxHeight: '500px', overflow: 'hidden' }}>
-          <div className="flex items-center px-4 py-3 border-b border-[var(--color-border)] shrink-0">
-            <div>
-              <p className="text-md pb-1.5 pt-1 font-semibold text-[var(--color-text-secondary)] leading-none">Benefits</p>
-              <p className="text-[11px] text-[var(--color-text-muted)] mt-0.5">Allowances, Benefits, and Bonuses</p>
+        <div className="flex flex-col rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)]  md:h-[500px]" style={{ minHeight: '200px', maxHeight: '500px', overflow: 'hidden' }}>
+          <div className="flex items-center p-4 border-b border-[var(--color-border)] shrink-0">
+            <div className="space-y-0.5">
+              <p className="text-md font-semibold text-[var(--color-text-secondary)] leading-none">My Benefits</p>
+              <p className="text-[11px] text-[var(--color-text-muted)]">Allowances, Benefits, and Bonuses</p>
             </div>
           </div>
 
@@ -823,7 +856,7 @@ export default function MyFinancePage() {
                       </p>
                     )}
                   </div>
-                  <p className="shrink-0 text-sm font-bold" style={{ color: '#F59E0B' }}>
+                  <p className="shrink-0 text-xs font-bold" style={{ color: '#F59E0B' }}>
                     {a.is_percentage
                       ? `${parseFloat(a.amount)}%`
                       : `₱${fmtCurrency(a.amount)}`}
@@ -835,11 +868,11 @@ export default function MyFinancePage() {
         </div>
 
         {/* ── Savings ──────────────────────────────────────────────────── */}
-        <div className="flex flex-col rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-sm md:h-[500px]" style={{ minHeight: '200px', maxHeight: '500px', overflow: 'hidden' }}>
-          <div className="flex items-center px-4 py-3 border-b border-[var(--color-border)] shrink-0">
-            <div>
-              <p className="text-md pb-1.5 pt-1 font-semibold text-[var(--color-text-secondary)] leading-none">Savings</p>
-              <p className="text-[11px] text-[var(--color-text-muted)] mt-0.5">Your financial growth</p>
+        <div className="flex flex-col rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)]  md:h-[500px]" style={{ minHeight: '200px', maxHeight: '500px', overflow: 'hidden' }}>
+          <div className="flex items-center p-4 border-b border-[var(--color-border)] shrink-0">
+            <div className="space-y-0.5">
+              <p className="text-md font-semibold text-[var(--color-text-secondary)] leading-none">My Savings</p>
+              <p className="text-[11px] text-[var(--color-text-muted)]">Your financial growth</p>
             </div>
           </div>
 
@@ -864,23 +897,20 @@ export default function MyFinancePage() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <p className="text-xs font-medium text-[var(--color-text-primary)] truncate">{sv.savings_type_name}</p>
-                      {sv.withdraw && (
-                        <span
-                          className="text-[9px] font-semibold px-1.5 py-0.5 rounded shrink-0"
-                          style={{ backgroundColor: hexToRgba('#EF4444', 0.10), color: '#EF4444' }}
-                        >
-                          Withdraw
-                        </span>
-                      )}
+                      
                     </div>
                     <p className="text-[10px] text-[var(--color-text-muted)] mt-0.5">{fmtMonthYear(sv.created_at)}</p>
                   </div>
-                  <p
-                    className="shrink-0 text-xs font-bold"
-                    style={{ color: sv.withdraw ? '#EF4444' : '#10B981' }}
-                  >
-                    ₱{fmtCurrency(sv.amount)}
-                  </p>
+                  <div className="flex items-center gap-2">
+                    <StatusPill className='text-[9px]' status={sv.withdraw ? 'disapproved' : 'approved'} label={sv.withdraw ? 'Withdraw' : 'Active'} />
+                    <p
+                      className="shrink-0 text-xs font-bold"
+                      style={{ color: sv.withdraw ? '#EF4444' : '#10B981' }}
+                    >
+                      ₱{fmtCurrency(sv.amount)}
+                    </p>
+                    
+                  </div>
                 </motion.li>
               ))}
             </ScrollList>
@@ -889,12 +919,12 @@ export default function MyFinancePage() {
       </div>
 
       {/* ── Loans section ────────────────────────────────────────────────── */}
-      <div className="relative rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-sm min-h-[200px] overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden max-h-[760px] sm:max-h-[520px] lg:max-h-[570px]">
+      <div className="relative rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)]  min-h-[200px] overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden max-h-[760px] sm:max-h-[520px] lg:max-h-[570px]">
 
         {/* Section header — sticky, paints above cards during scroll */}
         <div className="sticky top-0 z-10 bg-[var(--color-bg-elevated)] flex items-center justify-between gap-3 px-4 pt-4 pb-3 border-b border-[var(--color-border)]">
-          <div>
-            <p className="text-md font-semibold text-[var(--color-text-primary)] leading-none">Loans</p>
+          <div className="space-y-0.5">
+            <p className="text-md font-semibold text-[var(--color-text-primary)] leading-none">My Loans</p>
             <p className="text-[10px] text-[var(--color-text-muted)] mt-1">as of {todayRef}</p>
           </div>
           {/* Active / All filter pill — hidden when all loans are active */}
@@ -910,7 +940,7 @@ export default function MyFinancePage() {
                   {(activeOnly ? 'active' : 'all') === opt && (
                     <motion.div
                       layoutId="loans-filter-pill"
-                      className="absolute inset-0 rounded-lg bg-[var(--color-bg-elevated)] shadow-sm"
+                      className="absolute inset-0 rounded-lg bg-[var(--color-bg-elevated)] "
                       transition={{ type: 'spring', stiffness: 500, damping: 30 }}
                     />
                   )}
@@ -989,14 +1019,7 @@ export default function MyFinancePage() {
                       <h3 className="text-lg font-semibold text-[var(--color-text-primary)] truncate">
                         {viewLoan.loan_type_name}
                       </h3>
-                      <span
-                        className="shrink-0 text-[9px] font-semibold px-1.5 py-0.5 rounded"
-                        style={isActive
-                          ? { backgroundColor: hexToRgba('#10B981', 0.12), color: '#10B981' }
-                          : { backgroundColor: hexToRgba('#6B7280', 0.12), color: '#6B7280' }}
-                      >
-                        {isActive ? 'Active' : 'Paid Off'}
-                      </span>
+                      <StatusPill className='text-[9px]' status={isActive ? 'approved' : 'disapproved'} label={isActive ? 'Approved' : 'Closed'} />
                     </div>
                     {viewLoan.reference_number && (
                       <p className="text-[10px] text-[var(--color-text-muted)] mt-0.5">
@@ -1006,9 +1029,9 @@ export default function MyFinancePage() {
                   </div>
                   <button
                     onClick={() => setViewLoan(null)}
-                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg)] transition-colors"
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-card)] transition-colors"
                   >
-                    <X size={14} />
+                    <X size={15} />
                   </button>
                 </div>
 
@@ -1017,8 +1040,8 @@ export default function MyFinancePage() {
 
                   {/* Repayment Progress */}
                   <div className="px-5 pt-4 pb-3">
-                    <div className="flex items-center justify-between mb-2.5">
-                      <p className="text-[10px] font-semibold uppercase tracking-widest text-[var(--color-text-muted)]">
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
                         Repayment Progress
                       </p>
                       <span className="text-xs font-bold text-[#2845D6]">{pctPaid}% repaid</span>
@@ -1027,7 +1050,7 @@ export default function MyFinancePage() {
                       className="relative h-4 w-full rounded-full"
                       style={{
                         background: 'var(--color-border)',
-                        boxShadow: 'inset 0 2px 5px rgba(0,0,0,0.22), inset 0 1px 2px rgba(0,0,0,0.14)',
+                        // boxShadow: 'inset 0 2px 5px rgba(0,0,0,0.22), inset 0 1px 2px rgba(0,0,0,0.14)',
                       }}
                     >
                       <motion.div
@@ -1037,15 +1060,15 @@ export default function MyFinancePage() {
                         className="absolute inset-y-0 left-0 rounded-full"
                         style={{
                           background: 'linear-gradient(90deg, #1a35c5 0%, #2845D6 40%, #5B7FFF 100%)',
-                          boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.25)',
+                          // boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.25)',
                         }}
                       />
                     </div>
                     <div className="flex justify-between mt-1.5">
-                      <span className="text-[9px] text-[var(--color-text-muted)]">
+                      <span className="text-[10px] text-[var(--color-text-muted)]">
                         Paid: ₱{fmtCurrency(paidAmt.toFixed(2))}
                       </span>
-                      <span className="text-[9px] text-[var(--color-text-muted)]">
+                      <span className="text-[10px] text-[var(--color-text-muted)]">
                         Remaining: ₱{fmtCurrency(viewLoan.current_balance)}
                       </span>
                     </div>
@@ -1055,19 +1078,19 @@ export default function MyFinancePage() {
                   <div className="px-5 pt-3 pb-3 border-t border-[var(--color-border)]">
                     <div className="grid grid-cols-2 gap-x-4 gap-y-3">
                       <div className="pb-3">
-                        <p className="text-[10px] text-[var(--color-text-muted)]">Principal Amount</p>
-                        <p className="text-sm font-bold text-[var(--color-text-primary)] mt-0.5">
+                        <p className="text-[10px] text-[var(--color-text-muted)] uppercase tracking-wide">Principal Amount</p>
+                        <p className="text-xs font-bold text-[var(--color-text-primary)] mt-0.5">
                           ₱{fmtCurrency(viewLoan.principal_amount)}
                         </p>
                       </div>
                       <div className="pb-3">
-                        <p className="text-[10px] text-[var(--color-text-muted)]">Outstanding Balance</p>
-                        <p className={cn('text-sm font-bold mt-0.5', isActive ? 'text-amber-500' : 'text-emerald-500')}>
+                        <p className="text-[10px] text-[var(--color-text-muted)] uppercase tracking-wide">Outstanding Balance</p>
+                        <p className={cn('text-xs font-bold mt-0.5', isActive ? 'text-amber-500' : 'text-emerald-500')}>
                           ₱{fmtCurrency(viewLoan.current_balance)}
                         </p>
                       </div>
                       <div>
-                        <p className="text-[10px] text-[var(--color-text-muted)]">Deduction Frequency</p>
+                        <p className="text-[10px] text-[var(--color-text-muted)] uppercase tracking-wide">Deduction Frequency</p>
                         <p className="text-xs font-medium text-[var(--color-text-primary)] mt-0.5">
                           {loanSettings ? freqLabel(freq) : (
                             <span className="inline-block h-3 w-24 rounded bg-[var(--color-border)] animate-pulse" />
@@ -1075,7 +1098,7 @@ export default function MyFinancePage() {
                         </p>
                       </div>
                       <div>
-                        <p className="text-[10px] text-[var(--color-text-muted)]">Per-Period Deduction</p>
+                        <p className="text-[10px] text-[var(--color-text-muted)] uppercase tracking-wide">Per-Period Deduction</p>
                         <p className="text-xs font-medium text-[var(--color-text-primary)] mt-0.5">
                           {deductAmt ? `₱${fmtCurrency(viewLoan.monthly_deduction!)}` : '—'}
                         </p>
@@ -1086,7 +1109,7 @@ export default function MyFinancePage() {
                   {/* Estimated Completion */}
                   {isActive && (
                     <div className="px-5 py-3 border-t border-[var(--color-border)]">
-                      <p className="text-[10px] font-semibold uppercase tracking-widest text-[var(--color-text-muted)] mb-1.5">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)] mb-1.5">
                         Estimated Completion
                       </p>
                       <p className="text-sm font-semibold text-[var(--color-text-primary)]">
@@ -1104,7 +1127,7 @@ export default function MyFinancePage() {
 
                   {/* Deduction History */}
                   <div className="border-t border-[var(--color-border)]">
-                    <p className="px-5 py-3 text-[10px] font-semibold uppercase tracking-widest text-[var(--color-text-muted)]">
+                    <p className="px-5 py-3 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
                       Deduction History
                     </p>
                     {loadingDeducts ? (
@@ -1127,8 +1150,8 @@ export default function MyFinancePage() {
                       <Table>
                         <TableHeader>
                           <TableRow>
-                            <TableHead>Cut-off Date</TableHead>
-                            <TableHead className="text-right">Amount</TableHead>
+                            <TableHead className="text-[10px] uppercase tracking-wide">Cut-off Date</TableHead>
+                            <TableHead className="text-right text-[10px] uppercase tracking-wide">Amount</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -1141,7 +1164,7 @@ export default function MyFinancePage() {
                         </TableBody>
                         <TableFooter>
                           <TableRow>
-                            <TableCell className="text-xs font-medium text-[var(--color-text-muted)]">Total Deductions</TableCell>
+                            <TableCell className="text-[12px] font-normal text-[var(--color-text-muted)]">Total Deductions</TableCell>
                             <TableCell className="text-right text-xs font-bold text-[var(--color-text-primary)]">
                               ₱{fmtCurrency(
                                 loanDetail.deductions
@@ -1174,16 +1197,70 @@ export default function MyFinancePage() {
       {/* ── Send payslip email modal ──────────────────────────────────────── */}
       <AnimatePresence>
         {sendPayslip && (
-          <ConfirmationModal
-            title="Send Payslip to Email"
-            message={`Your payslip for ${fmtDateFull(sendPayslip.period_start)} – ${fmtDateFull(sendPayslip.period_end)} will be sent as a PDF attachment to your registered email address on file. This is a system-generated email — please do not reply to it.`}
-            confirmLabel="Send Email"
-            cancelLabel="Cancel"
-            confirmVariant="success"
-            confirming={sendingEmail}
-            onConfirm={handleSendPayslipEmail}
-            onCancel={() => { if (!sendingEmail) setSendPayslip(null); }}
-          />
+          <Modal
+            open
+            onOpenChange={(open) => {
+              if (!open && !sendingEmail) {
+                setSendPayslip(null);
+                setSendChoice('');
+              }
+            }}
+          >
+            <ModalContent className="max-w-sm">
+              <ModalHeader>
+                <ModalTitle>Select recipient email</ModalTitle>
+              </ModalHeader>
+              <ModalBody className="space-y-4">
+                <p className="text-xs text-[var(--color-text-muted)] leading-relaxed">
+                  Your payslip for {fmtDateFull(sendPayslip.period_start)} - {fmtDateFull(sendPayslip.period_end)} will be sent as a PDF attachment.
+                </p>
+                <ChoiceboxGroup
+                  direction="column"
+                  type="radio"
+                  value={sendChoice}
+                  onChange={handleRecipientChoiceChange}
+                >
+                  <ChoiceboxGroup.Item
+                    value="personal"
+                    title="Personal Email"
+                    description={personalEmail || 'No personal email on file'}
+                    disabled={!personalEmail}
+                  />
+                  <ChoiceboxGroup.Item
+                    value="work"
+                    title="Work Email"
+                    description={workEmailValue || 'No work email on file'}
+                    disabled={!workEmailValue}
+                  />
+                </ChoiceboxGroup>
+              </ModalBody>
+              <ModalFooter className="flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => { if (!sendingEmail) { setSendPayslip(null); setSendChoice(''); } }}
+                  disabled={sendingEmail}
+                  className="rounded-lg border border-[var(--color-border)] px-4 py-2 text-xs font-normal text-[var(--color-text-muted)] hover:bg-[var(--color-bg-card)] transition-colors disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleSendPayslipEmail()}
+                  disabled={sendingEmail || !selectedRecipient}
+                  className="rounded-lg bg-[#2845D6] px-4 py-2 text-xs font-normal text-white hover:bg-[#1f35b0] transition-colors disabled:opacity-50 disabled:pointer-events-none"
+                >
+                  {sendingEmail ? (
+                    <TextShimmer className="text-xs" duration={1.2}>Sending Email...</TextShimmer>
+                    ) : (
+                    <span className="inline-flex items-center gap-2">
+                      <Mail size={14} />
+                      Send Email
+                    </span>
+                  )}
+                </button>
+              </ModalFooter>
+            </ModalContent>
+          </Modal>
         )}
       </AnimatePresence>
 

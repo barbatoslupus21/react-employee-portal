@@ -167,15 +167,16 @@ class AnnouncementListSerializer(serializers.ModelSerializer):
     comment_count = serializers.IntegerField(read_only=True)
     user_reaction = serializers.CharField(allow_null=True, read_only=True)
     top_reactors = serializers.SerializerMethodField()
+    reaction_emojis = serializers.SerializerMethodField()
 
     class Meta:
         model = Announcement
         fields = [
             'id', 'title', 'caption', 'is_published',
-            'created_by_name', 'created_by_avatar',
+            'created_by_id', 'created_by_name', 'created_by_avatar',
             'created_at', 'updated_at',
             'media', 'reaction_count', 'comment_count',
-            'user_reaction', 'top_reactors',
+            'user_reaction', 'top_reactors', 'reaction_emojis',
         ]
 
     def get_created_by_name(self, obj):
@@ -196,8 +197,19 @@ class AnnouncementListSerializer(serializers.ModelSerializer):
             avatar = None
             if reaction.user.avatar and request:
                 avatar = request.build_absolute_uri(reaction.user.avatar.url)
-            reactors.append({'avatar': avatar})
+            parts = [reaction.user.firstname or '', reaction.user.lastname or '']
+            user_name = ' '.join(p for p in parts if p).strip() or reaction.user.email
+            reactors.append({'avatar': avatar, 'name': user_name, 'emoji': reaction.emoji})
         return reactors
+
+    def get_reaction_emojis(self, obj):
+        emojis = []
+        for emoji in obj.reactions.order_by('created_at').values_list('emoji', flat=True):
+            if emoji and emoji not in emojis:
+                emojis.append(emoji)
+            if len(emojis) >= 3:
+                break
+        return emojis
 
 
 # --------------------------------------------------------------------------- #

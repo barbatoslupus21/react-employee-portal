@@ -98,7 +98,7 @@ class LoanSerializer(serializers.ModelSerializer):
             'id', 'employee_idnumber', 'employee_firstname', 'employee_lastname',
             'loan_type', 'loan_type_name', 'loan_type_color',
             'principal_amount', 'current_balance',
-            'monthly_deduction',
+            'monthly_deduction', 'seen',
             'description', 'reference_number',
             'created_at', 'updated_at',
         )

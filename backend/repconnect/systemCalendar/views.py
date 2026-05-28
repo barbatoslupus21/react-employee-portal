@@ -21,11 +21,114 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import CalendarEvent, Timelogs
+from activityLog.models import Notification
+from generalsettings.workdays import get_configured_workdays, is_configured_workday
+from leave.models import SundayExemption
+from userProfile.models import workInformation
+
+from .models import CalendarEvent, EventParticipantSeen, Timelogs
 from .serializers import CalendarEventSerializer
 from userLogin.models import loginCredentials
 
 logger = logging.getLogger(__name__)
+
+_NOTIFICATION_SKIP_EVENT_TYPES = {'legal', 'special', 'day_off', 'company'}
+
+
+def _display_name(user: loginCredentials) -> str:
+    return f"{(user.firstname or '').strip()} {(user.lastname or '').strip()}".strip() or user.idnumber
+
+
+def _sync_participant_seen(event: CalendarEvent, owner_id: int | None = None) -> None:
+    """Ensure one seen record per participant; owner is always marked seen."""
+    participant_ids = set(event.members.values_list('id', flat=True))
+    if owner_id is None:
+        owner_id = event.owner_id
+
+    if owner_id:
+        participant_ids.add(owner_id)
+
+    existing = {
+        rec.user_id: rec
+        for rec in EventParticipantSeen.objects.filter(event=event)
+    }
+
+    to_create: list[EventParticipantSeen] = []
+    for uid in participant_ids:
+        rec = existing.get(uid)
+        if rec:
+            if uid == owner_id and not rec.seen:
+                rec.seen = True
+                rec.seen_at = timezone.now()
+                rec.save(update_fields=['seen', 'seen_at', 'updated_at'])
+            continue
+        to_create.append(
+            EventParticipantSeen(
+                event=event,
+                user_id=uid,
+                seen=(uid == owner_id),
+                seen_at=timezone.now() if uid == owner_id else None,
+            )
+        )
+
+    if to_create:
+        EventParticipantSeen.objects.bulk_create(to_create)
+
+    EventParticipantSeen.objects.filter(event=event).exclude(user_id__in=participant_ids).delete()
+
+
+def _create_event_notifications(
+    *,
+    event: CalendarEvent,
+    creator: loginCredentials,
+    member_scope: str,
+    member_ids: list[int],
+) -> None:
+    """Create event notifications according to participant scope and creator role."""
+    if event.event_type in _NOTIFICATION_SKIP_EVENT_TYPES:
+        return
+
+    creator_name = _display_name(creator)
+    pretty_date = event.date.strftime('%B %d, %Y')
+    title = 'Calendar Event'
+
+    is_admin_creator = bool(getattr(creator, 'admin', False))
+    if is_admin_creator and member_scope == 'all':
+        Notification.objects.create(
+            notification_scope='general',
+            notification_type='calendar_event',
+            title=title,
+            message=(
+                f"{creator_name} created an event for all users: "
+                f"{event.title} on {pretty_date}."
+            ),
+            module='calendar',
+            related_object_id=event.id,
+        )
+        return
+
+    unique_member_ids = sorted(set(member_ids))
+    if not unique_member_ids:
+        return
+
+    notifications = [
+        Notification(
+            recipient_id=uid,
+            notification_scope='specific_user',
+            notification_type='calendar_event',
+            title=title,
+            message=(
+                f"{creator_name} invited you to an event: "
+                f"{event.title} on {pretty_date}."
+            ),
+            module='calendar',
+            related_object_id=event.id,
+        )
+        for uid in unique_member_ids
+        if uid != creator.id
+    ]
+    if notifications:
+        Notification.objects.bulk_create(notifications)
 
 # ── Shared styling helpers ────────────────────────────────────────────────────
 
@@ -160,7 +263,7 @@ class TimelogsCompletenessView(APIView):
     Only accessible by HR, HR managers, or admins.
 
     Completeness = (days with both Time-In and Time-Out) / (working days in
-    the current week up to today, Mon–Sat excluding Sun) × 100.
+    the current week up to today based on configured company workdays) × 100.
     """
     permission_classes = [IsAuthenticated]
 
@@ -173,11 +276,22 @@ class TimelogsCompletenessView(APIView):
         # Monday of the current week
         week_start = today - datetime.timedelta(days=today.weekday())
 
-        # Working days in the current week up to today (Mon–Sat, no Sunday)
+        configured_workdays = get_configured_workdays()
+        sunday_exemptions = set(
+            SundayExemption.objects
+            .filter(date__range=[week_start, today])
+            .values_list('date', flat=True)
+        )
+
+        # Working days in the current week up to today (config-driven)
         working_days: list[datetime.date] = []
         d = week_start
         while d <= today:
-            if d.weekday() != 6:
+            if is_configured_workday(
+                d,
+                configured_workdays=configured_workdays,
+                sunday_exemptions=sunday_exemptions,
+            ):
                 working_days.append(d)
             d += datetime.timedelta(days=1)
 
@@ -187,14 +301,19 @@ class TimelogsCompletenessView(APIView):
             .order_by('lastname', 'firstname')
         )
 
+        work_info_map = {
+            wi.employee_id: wi
+            for wi in workInformation.objects.select_related('department', 'line').filter(employee__in=employees)
+        }
+
         if not working_days:
             data = [
                 {
                     'idnumber': e.idnumber,
                     'firstname': e.firstname or '',
                     'lastname': e.lastname or '',
-                    'department': '',
-                    'line': '',
+                    'department': (work_info_map.get(e.pk).department.name if work_info_map.get(e.pk) and work_info_map.get(e.pk).department else ''),
+                    'line': (work_info_map.get(e.pk).line.name if work_info_map.get(e.pk) and work_info_map.get(e.pk).line else ''),
                     'completeness': 100,
                 }
                 for e in employees
@@ -231,8 +350,8 @@ class TimelogsCompletenessView(APIView):
                 'idnumber': emp.idnumber,
                 'firstname': emp.firstname or '',
                 'lastname': emp.lastname or '',
-                'department': '',
-                'line': '',
+                'department': (work_info_map.get(emp.pk).department.name if work_info_map.get(emp.pk) and work_info_map.get(emp.pk).department else ''),
+                'line': (work_info_map.get(emp.pk).line.name if work_info_map.get(emp.pk) and work_info_map.get(emp.pk).line else ''),
                 'completeness': completeness,
             })
         return Response(data)
@@ -243,7 +362,8 @@ class UserTimelogsView(APIView):
     GET /api/timelogs/user-logs?idnumber=<idnumber>
     Returns the current week's daily timelog summary for a specific employee.
     Response: list of { date, time_in, time_out, is_complete } for each
-    working day (Mon–Sat, no Sunday) in the current week up to today.
+    working day (based on configured company weekdays) in the current week up
+    to today.
     Only accessible by HR, HR managers, or admins.
     """
     permission_classes = [IsAuthenticated]
@@ -265,10 +385,21 @@ class UserTimelogsView(APIView):
         today = timezone.localdate()
         week_start = today - datetime.timedelta(days=today.weekday())
 
+        configured_workdays = get_configured_workdays()
+        sunday_exemptions = set(
+            SundayExemption.objects
+            .filter(date__range=[week_start, today])
+            .values_list('date', flat=True)
+        )
+
         working_days: list[datetime.date] = []
         d = week_start
         while d <= today:
-            if d.weekday() != 6:
+            if is_configured_workday(
+                d,
+                configured_workdays=configured_workdays,
+                sunday_exemptions=sunday_exemptions,
+            ):
                 working_days.append(d)
             d += datetime.timedelta(days=1)
 
@@ -292,16 +423,28 @@ class UserTimelogsView(APIView):
 
         work_days = _pair_timelogs(local_logs)
 
+        outs_by_date: dict[datetime.date, datetime.datetime] = {}
+        for slot in work_days.values():
+            out_dt = slot.get('out')
+            if out_dt is not None:
+                outs_by_date.setdefault(out_dt.date(), out_dt)
+
         result = []
         for day in working_days:
             slot = work_days.get(day, {})
             time_in_dt = slot.get('in')
             time_out_dt = slot.get('out')
+            # Cross-midnight fallback: preserve visible time-out when its date
+            # differs from the shift's primary (time-in) date.
+            if time_out_dt is None:
+                time_out_dt = outs_by_date.get(day)
             is_complete = time_in_dt is not None and time_out_dt is not None
             result.append({
                 'date': day.isoformat(),
                 'time_in': time_in_dt.strftime('%I:%M %p') if time_in_dt else None,
                 'time_out': time_out_dt.strftime('%I:%M %p') if time_out_dt else None,
+                'time_in_date': time_in_dt.date().isoformat() if time_in_dt else None,
+                'time_out_date': time_out_dt.date().isoformat() if time_out_dt else None,
                 'is_complete': is_complete,
             })
 
@@ -524,7 +667,7 @@ class TimelogDailyStatusView(APIView):
     Statuses:
         no_time_out  — IN exists but no paired OUT
         no_time_in   — OUT exists but no paired IN
-        absent       — no records (and not a holiday / Sunday / future date)
+        absent       — no records (and not a holiday / non-working day / future date)
 
     Excluded users (returns {} immediately):
         admin, hr, accounting
@@ -563,6 +706,13 @@ class TimelogDailyStatusView(APIView):
         if first_day > today:
             return Response({})
 
+        configured_workdays = get_configured_workdays()
+        sunday_exemptions = set(
+            SundayExemption.objects
+            .filter(date__range=[first_day, last_day])
+            .values_list('date', flat=True)
+        )
+
         # ── Fetch timelogs ──────────────────────────────────────────────────
         # Extend range by 1 day on each side so night-shift OUTs that fall
         # just after midnight on the first/last day of the month are captured.
@@ -591,13 +741,14 @@ class TimelogDailyStatusView(APIView):
         # The work-day date is anchored to the IN record's local date.
         MAX_PAIR_HOURS = 16
         work_days: dict[datetime.date, dict] = {}
+        nightshift_dates: set[datetime.date] = set()
         used = [False] * len(local_logs)
 
         for i, rec in enumerate(local_logs):
             if rec['entry'] != 'IN' or used[i]:
                 continue
             work_date = rec['dt'].date()
-            slot = work_days.setdefault(work_date, {'in': False, 'out': False})
+            slot = work_days.setdefault(work_date, {'in': False, 'out': False, 'night_shift': False})
             slot['in'] = True
             used[i] = True
             # Find the next unused OUT within MAX_PAIR_HOURS
@@ -608,6 +759,11 @@ class TimelogDailyStatusView(APIView):
                 if gap_h > MAX_PAIR_HOURS:
                     break  # logs are chronological — no closer OUT exists
                 work_days[work_date]['out'] = True
+                out_date = local_logs[j]['dt'].date()
+                if out_date != work_date:
+                    work_days[work_date]['night_shift'] = True
+                    nightshift_dates.add(work_date)
+                    nightshift_dates.add(out_date)
                 used[j] = True
                 break
 
@@ -622,7 +778,7 @@ class TimelogDailyStatusView(APIView):
                 work_date = rec['dt'].date() - datetime.timedelta(days=1)
             else:
                 work_date = rec['dt'].date()
-            slot = work_days.setdefault(work_date, {'in': False, 'out': False})
+            slot = work_days.setdefault(work_date, {'in': False, 'out': False, 'night_shift': False})
             slot['out'] = True
             used[i] = True
 
@@ -645,7 +801,12 @@ class TimelogDailyStatusView(APIView):
                 match = False
                 rep = ev.repetition
                 if   rep == 'once':    match = (d == ev_date)
-                elif rep == 'daily':   match = (d.weekday() != 6)
+                elif rep == 'daily':
+                    match = is_configured_workday(
+                        d,
+                        configured_workdays=configured_workdays,
+                        sunday_exemptions=sunday_exemptions,
+                    )
                 elif rep == 'weekly':  match = (d.weekday() == ev_date.weekday())
                 elif rep == 'monthly': match = (d.day == ev_date.day)
                 elif rep == 'yearly':  match = (d.month == ev_date.month and d.day == ev_date.day)
@@ -659,8 +820,12 @@ class TimelogDailyStatusView(APIView):
 
         d = first_day
         while d <= last_day:
-            # Skip Sunday
-            if d.weekday() == 6:
+            # Skip non-working days from configuration
+            if not is_configured_workday(
+                d,
+                configured_workdays=configured_workdays,
+                sunday_exemptions=sunday_exemptions,
+            ):
                 d += datetime.timedelta(days=1)
                 continue
             # Skip holidays
@@ -669,10 +834,16 @@ class TimelogDailyStatusView(APIView):
                 continue
 
             slot = work_days.get(d)
+            if d in nightshift_dates:
+                result[d.isoformat()] = 'night_shift'
+                d += datetime.timedelta(days=1)
+                continue
             if slot is None or (not slot['in'] and not slot['out']):
                 result[d.isoformat()] = 'absent'
             elif slot['in'] and slot['out']:
-                pass  # complete — no pill
+                if slot.get('night_shift'):
+                    result[d.isoformat()] = 'night_shift'
+                # complete regular day — no pill
             elif slot['in']:
                 result[d.isoformat()] = 'no_time_out'
             else:
@@ -734,7 +905,18 @@ class CalendarEventListCreateView(APIView):
         elif month_int is not None:
             qs = qs.filter(Q(date__month=month_int) | ~Q(repetition='once'))
 
-        serializer = CalendarEventSerializer(qs, many=True)
+        seen_map = {
+            rec.event_id: rec.seen
+            for rec in EventParticipantSeen.objects.filter(
+                user=request.user,
+                event_id__in=qs.values_list('id', flat=True),
+            )
+        }
+        serializer = CalendarEventSerializer(
+            qs,
+            many=True,
+            context={'request': request, 'seen_map': seen_map},
+        )
         return Response(serializer.data)
 
     @transaction.atomic
@@ -742,14 +924,26 @@ class CalendarEventListCreateView(APIView):
         serializer = CalendarEventSerializer(data=request.data)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        member_scope = serializer.validated_data.pop('member_scope', 'selected')
+        member_ids = [member.id for member in serializer.validated_data.get('members', [])]
         # serializer.save() returns CalendarEvent instance; ignore uncertain return type
         event = serializer.save(owner=request.user)  # type: ignore[assignment]
+        _sync_participant_seen(cast(CalendarEvent, event), owner_id=request.user.id)
+        _create_event_notifications(
+            event=cast(CalendarEvent, event),
+            creator=request.user,
+            member_scope=member_scope,
+            member_ids=member_ids,
+        )
         logger.info(
             'CalendarEvent created id=%d by user=%s',
             cast(CalendarEvent, event).pk,
             request.user.pk,
         )
-        return Response(CalendarEventSerializer(event).data, status=status.HTTP_201_CREATED)
+        return Response(
+            CalendarEventSerializer(event, context={'request': request}).data,
+            status=status.HTTP_201_CREATED,
+        )
 
 
 @method_decorator(csrf_protect, name='dispatch')
@@ -762,9 +956,12 @@ class CalendarEventDetailView(APIView):
     """
     permission_classes = [IsAuthenticated]
 
-    def _get_object(self, pk: int, user):
+    def _get_object(self, pk: int, user, for_write: bool = False):
         try:
-            return CalendarEvent.objects.select_related('owner').prefetch_related('members').get(pk=pk, owner=user)
+            qs = CalendarEvent.objects.select_related('owner').prefetch_related('members')
+            if for_write:
+                return qs.get(pk=pk, owner=user)
+            return qs.get(pk=pk)
         except CalendarEvent.DoesNotExist:
             return None
 
@@ -772,35 +969,85 @@ class CalendarEventDetailView(APIView):
         event = self._get_object(pk, request.user)
         if not event:
             return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
-        return Response(CalendarEventSerializer(event).data)
+        if event.owner_id != request.user.id and not event.members.filter(pk=request.user.id).exists():
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+        seen_map = {
+            rec.event_id: rec.seen
+            for rec in EventParticipantSeen.objects.filter(user=request.user, event_id=event.id)
+        }
+        return Response(CalendarEventSerializer(event, context={'request': request, 'seen_map': seen_map}).data)
 
     @transaction.atomic
     def put(self, request, pk: int):
-        event = self._get_object(pk, request.user)
+        event = self._get_object(pk, request.user, for_write=True)
         if not event:
             return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
         serializer = CalendarEventSerializer(event, data=request.data)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.validated_data.pop('member_scope', None)
         serializer.save()
-        return Response(serializer.data)
+        _sync_participant_seen(event, owner_id=request.user.id)
+        return Response(CalendarEventSerializer(event, context={'request': request}).data)
 
     @transaction.atomic
     def patch(self, request, pk: int):
-        event = self._get_object(pk, request.user)
+        event = self._get_object(pk, request.user, for_write=True)
         if not event:
             return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
         serializer = CalendarEventSerializer(event, data=request.data, partial=True)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.validated_data.pop('member_scope', None)
         serializer.save()
-        return Response(serializer.data)
+        _sync_participant_seen(event, owner_id=request.user.id)
+        return Response(CalendarEventSerializer(event, context={'request': request}).data)
 
     @transaction.atomic
     def delete(self, request, pk: int):
-        event = self._get_object(pk, request.user)
+        event = self._get_object(pk, request.user, for_write=True)
         if not event:
             return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
         event.delete()
         logger.info('CalendarEvent deleted id=%d by user=%s', pk, request.user.pk)
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+@method_decorator(csrf_protect, name='dispatch')
+class CalendarEventSeenView(APIView):
+    """POST /api/calendar/events/<pk>/seen — marks current user's event as seen."""
+
+    permission_classes = [IsAuthenticated]
+
+    @transaction.atomic
+    def post(self, request, pk: int):
+        try:
+            event = CalendarEvent.objects.prefetch_related('members').get(pk=pk)
+        except CalendarEvent.DoesNotExist:
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        user = request.user
+        if event.owner_id != user.id and not event.members.filter(pk=user.id).exists():
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        rec, _ = EventParticipantSeen.objects.get_or_create(
+            event=event,
+            user=user,
+            defaults={'seen': True, 'seen_at': timezone.now()},
+        )
+        if not rec.seen:
+            rec.seen = True
+            rec.seen_at = timezone.now()
+            rec.save(update_fields=['seen', 'seen_at', 'updated_at'])
+
+        return Response({'detail': 'Event marked as seen.'}, status=status.HTTP_200_OK)
+
+
+class CalendarEventUnseenCountView(APIView):
+    """GET /api/calendar/events/unseen-count — sidebar badge count for current user."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        unseen_count = EventParticipantSeen.objects.filter(user=request.user, seen=False).count()
+        return Response({'count': unseen_count})

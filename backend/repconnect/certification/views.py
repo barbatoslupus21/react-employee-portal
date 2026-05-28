@@ -98,12 +98,71 @@ def _build_error_excel(failures: list[dict]) -> str:
 # ── Views ─────────────────────────────────────────────────────────────────────
 
 class CertificateCategoryListView(APIView):
-    """GET /api/certificates/categories — list all categories (auth required)."""
+    """Certificate category CRUD.
+
+    GET    /api/certificates/categories
+    POST   /api/certificates/categories
+    PUT    /api/certificates/categories/<pk>
+    DELETE /api/certificates/categories/<pk>
+    """
     permission_classes = [IsAuthenticated]
 
-    def get(self, request) -> Response:
-        qs = CertificateCategory.objects.all()
+    def get(self, request, pk: int | None = None) -> Response:
+        if pk:
+            try:
+                obj = CertificateCategory.objects.get(pk=pk)
+            except CertificateCategory.DoesNotExist:
+                return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+            return Response(CertificateCategorySerializer(obj).data)
+
+        qs = CertificateCategory.objects.all().order_by('name')
         return Response(CertificateCategorySerializer(qs, many=True).data)
+
+    def post(self, request) -> Response:
+        err = _require_hr_admin(request)
+        if err:
+            return err
+
+        ser = CertificateCategorySerializer(data=request.data)
+        if not ser.is_valid():
+            return Response(ser.errors, status=status.HTTP_400_BAD_REQUEST)
+        obj = ser.save()
+        return Response(CertificateCategorySerializer(obj).data, status=status.HTTP_201_CREATED)
+
+    def put(self, request, pk: int) -> Response:
+        err = _require_hr_admin(request)
+        if err:
+            return err
+
+        try:
+            obj = CertificateCategory.objects.get(pk=pk)
+        except CertificateCategory.DoesNotExist:
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        ser = CertificateCategorySerializer(obj, data=request.data)
+        if not ser.is_valid():
+            return Response(ser.errors, status=status.HTTP_400_BAD_REQUEST)
+        obj = ser.save()
+        return Response(CertificateCategorySerializer(obj).data)
+
+    def delete(self, request, pk: int) -> Response:
+        err = _require_hr_admin(request)
+        if err:
+            return err
+
+        try:
+            obj = CertificateCategory.objects.get(pk=pk)
+        except CertificateCategory.DoesNotExist:
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if Certificate.objects.filter(category=obj).exists():
+            return Response(
+                {'detail': 'Cannot delete a category that is already used by certificates.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        obj.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class CertificateUploadView(APIView):
@@ -443,7 +502,7 @@ def _build_cert_email(cert) -> tuple[str, str]:
 
 
 class CertificateSendEmailView(APIView):
-    """POST /api/certificates/<pk>/send-email — send this certificate PDF to the employee."""
+    """POST /api/certificates/<pk>/send-email — send this certificate PDF to an allowed employee email."""
     permission_classes = [IsAuthenticated]
 
     def post(self, request, pk: int) -> Response:
@@ -465,9 +524,28 @@ class CertificateSendEmailView(APIView):
         except EmailConfiguration.DoesNotExist:
             return Response({'detail': 'Email configuration not set.'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
-        recipient_email = cert.employee.email
-        if not recipient_email:
+        personal_email = (getattr(cert.employee, 'email', '') or '').strip()
+        work_email = ''
+        personal_info = getattr(cert.employee, 'personal_info', None)
+        if personal_info is not None:
+            work_email = (getattr(personal_info, 'work_email', '') or '').strip()
+
+        allowed_recipients: dict[str, str] = {}
+        if personal_email:
+            allowed_recipients[personal_email.lower()] = personal_email
+        if work_email:
+            allowed_recipients[work_email.lower()] = work_email
+
+        if not allowed_recipients:
             return Response({'detail': 'Employee has no email address.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        requested_email = (request.data.get('recipient_email') or '').strip().lower()
+        if requested_email:
+            if requested_email not in allowed_recipients:
+                return Response({'detail': 'Invalid recipient email selection.'}, status=status.HTTP_400_BAD_REQUEST)
+            recipient_email = allowed_recipients[requested_email]
+        else:
+            recipient_email = personal_email or work_email
 
         _default_subject, _default_body = _build_cert_email(cert)
         subject = request.data.get('subject', _default_subject)

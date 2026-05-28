@@ -81,6 +81,7 @@ class LeaveBalance(models.Model):
     period_end = models.DateField()
     entitled_leave = models.DecimalField(max_digits=6, decimal_places=1)
     used_leave = models.DecimalField(max_digits=6, decimal_places=1, default=Decimal('0'))
+    created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ['-period_start']
@@ -124,6 +125,8 @@ class LeaveRequest(models.Model):
 
     date_start = models.DateField()
     date_end = models.DateField()
+    total_hours = models.DecimalField(max_digits=6, decimal_places=1, default=Decimal('0'))
+    total_days = models.DecimalField(max_digits=6, decimal_places=2, default=Decimal('0'))
     hours = models.DecimalField(max_digits=4, decimal_places=1)
     days_count = models.PositiveSmallIntegerField()
 
@@ -134,6 +137,7 @@ class LeaveRequest(models.Model):
     control_number = models.CharField(max_length=20, unique=True, blank=True)
     date_prepared = models.DateField(default=current_date)
     remarks = models.TextField(blank=True)
+    seen = models.BooleanField(default=True)
 
     # ── Approval tracking ────────────────────────────────────────────────
     # Set to True immediately when any manager-level approver disapproves.

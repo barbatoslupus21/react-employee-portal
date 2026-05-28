@@ -1209,7 +1209,7 @@ function TrainingApprovalView() {
         )}
         <div>
           <h1 className="text-lg font-bold text-[var(--color-text-primary)]">Training Approval</h1>
-          <p className="text-xs text-[var(--color-text-muted)] mt-0.5">Review and approve employee training evaluations.</p>
+          <p className="text-xs text-[var(--color-text-muted)]">Review and approve employee training evaluations.</p>
         </div>
       </div>
 

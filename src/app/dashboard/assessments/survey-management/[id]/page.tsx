@@ -928,10 +928,10 @@ function SurveyViewContent({ surveyId, user }: { surveyId: number; user: UserDat
         </div>
         <button
           onClick={() => window.open(`/api/survey/admin/surveys/${surveyId}/export`, '_blank')}
-          className="flex items-center gap-1.5 rounded-md bg-[#2845D6] px-3 py-1.5 text-xs font-normal text-white shadow-sm shadow-[#2845D6]/20 hover:bg-[#1d3fae] transition-colors"
+          className="flex items-center gap-1.5 rounded-lg bg-[#2845D6] px-4 py-2 text-xs font-normal text-white shadow-sm shadow-[#2845D6]/20 hover:bg-[#1d3fae] transition-colors"
         >
-          <Download size={13} />
-          Export
+          <Download size={14} />
+          Export Report
         </button>
       </div>
 

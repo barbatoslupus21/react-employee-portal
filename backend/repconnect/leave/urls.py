@@ -2,6 +2,9 @@ from django.urls import path
 
 from .views import (
     AdminBulkBalanceUploadView,
+    AdminLeaveBalanceDetailView,
+    AdminLeaveBalanceListView,
+    AdminLeaveBalanceTemplateView,
     AdminLeaveRequestExportView,
     AdminLeaveRequestListView,
     AdminLeaveReasonView,
@@ -19,7 +22,11 @@ from .views import (
     LeaveRequestDetailView,
     LeaveRequestEditView,
     LeaveRequestListCreateView,
+    LeaveRequestMarkSeenView,
     LeaveTypeListView,
+    LeaveMyPendingApprovalCountView,
+    LeaveMyUnseenCountView,
+    LeaveRoutingRuleListView,
 )
 
 urlpatterns = [
@@ -31,9 +38,12 @@ urlpatterns = [
     path('requests', LeaveRequestListCreateView.as_view()),
     path('requests/calendar', LeaveRequestCalendarView.as_view()),
     path('requests/<int:pk>', LeaveRequestDetailView.as_view()),
+    path('requests/unseen-count', LeaveMyUnseenCountView.as_view()),
     path('requests/<int:pk>/cancel', LeaveRequestCancelView.as_view()),
     path('requests/<int:pk>/edit', LeaveRequestEditView.as_view()),
+    path('requests/<int:pk>/mark-seen', LeaveRequestMarkSeenView.as_view()),
     path('requests/<int:pk>/action', LeaveApprovalView.as_view()),
+    path('approval/pending-count', LeaveMyPendingApprovalCountView.as_view()),
     path('approval-queue/chart', ApprovalQueueChartView.as_view()),
     path('approval-queue/export', ApprovalQueueExportView.as_view()),
     path('approval-queue', ApprovalQueueView.as_view()),
@@ -45,6 +55,12 @@ urlpatterns = [
     path('admin/reasons/<int:pk>', AdminLeaveReasonView.as_view()),
     path('admin/subreasons', AdminLeaveSubreasonView.as_view()),
     path('admin/subreasons/<int:pk>', AdminLeaveSubreasonView.as_view()),
+    path('admin/routing-rules', LeaveRoutingRuleListView.as_view()),
+    path('admin/routing-rules/<int:pk>', LeaveRoutingRuleListView.as_view()),
+    path('admin/balances', AdminLeaveBalanceListView.as_view()),
+    path('admin/balances/template', AdminLeaveBalanceTemplateView.as_view()),
+    path('admin/balances/template/', AdminLeaveBalanceTemplateView.as_view()),
+    path('admin/balances/<int:pk>', AdminLeaveBalanceDetailView.as_view()),
     path('admin/balance-upload', AdminBulkBalanceUploadView.as_view()),
     path('admin/export', AdminLeaveRequestExportView.as_view()),
 ]

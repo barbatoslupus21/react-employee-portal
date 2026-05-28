@@ -1689,22 +1689,22 @@ function TemplateBuilderContent({ templateId }: { templateId: number }) {
               <button
                 onClick={handleSaveMeta}
                 disabled={saving}
-                className="w-full flex items-center justify-center gap-2 rounded-lg bg-[#2845D6] px-4 py-2.5 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-60 transition-opacity"
+                className="w-full flex items-center justify-center gap-2 rounded-lg bg-[#2845D6] px-4 py-2.5 text-xs font-normal text-white hover:opacity-90 disabled:opacity-60 transition-opacity"
               >
                 {saving ? (
-                  <TextShimmer duration={1} className="text-xs font-semibold text-white [--base-color:#a5b4fc] [--base-gradient-color:#ffffff]">
+                  <TextShimmer duration={1} className="text-xs font-normal text-white [--base-color:#a5b4fc] [--base-gradient-color:#ffffff]">
                     Saving…
                   </TextShimmer>
                 ) : (
                   <>
-                    <Save className="size-3.5" />
+                    <Save className="size-3" />
                     Save Template
                   </>
                 )}
               </button>
               <button
                 onClick={() => router.push('/dashboard/assessments/survey-templates')}
-                className="w-full flex items-center justify-center gap-2 rounded-lg border border-[var(--color-border)] px-4 py-2 text-xs font-medium text-[var(--color-text-primary)] hover:bg-[var(--color-bg-card)] transition-colors"
+                className="w-full flex items-center justify-center gap-2 rounded-lg border border-[var(--color-border)] px-4 py-2 text-xs font-normal text-[var(--color-text-primary)] hover:bg-[var(--color-bg-card)] transition-colors"
               >
                 Back to Templates
               </button>

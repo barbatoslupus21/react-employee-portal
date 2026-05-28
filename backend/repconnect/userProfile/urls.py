@@ -3,10 +3,12 @@ from django.urls import path
 from .views import (
     AdminAllApproversView,
     ApproverListView,
+    ApproverOverviewView,
     AvatarUpdateView,
     BasicInfoUpdateView,
     ChangePasswordView,
     ChildRecordsUpdateView,
+    DashboardOverviewView,
     EducationRecordsUpdateView,
     EmergencyContactUpdateView,
     EmployeeProfileAdminView,
@@ -19,10 +21,26 @@ from .views import (
     SkillsUpdateView,
     WorkInfoUserUpdateView,
 )
+from .admin_views import (
+    AdminOverviewView,
+    SystemErrorLogListView,
+    SystemErrorLogResolveView,
+)
+from .hr_views import HROverviewView
+from .accounting_views import AccountingOverviewView
 
 urlpatterns = [
     # ── Read ──────────────────────────────────────────────────────────────────
-    path('me',                 ProfileGetView.as_view(),              name='profile-me'),
+    path('me',                   ProfileGetView.as_view(),              name='profile-me'),
+    path('dashboard-overview',   DashboardOverviewView.as_view(),       name='profile-dashboard-overview'),
+    path('approver-overview',    ApproverOverviewView.as_view(),        name='profile-approver-overview'),
+    # ── Role dashboards ───────────────────────────────────────────────────────
+    path('admin-overview',       AdminOverviewView.as_view(),           name='profile-admin-overview'),
+    path('hr-overview',          HROverviewView.as_view(),              name='profile-hr-overview'),
+    path('accounting-overview',  AccountingOverviewView.as_view(),      name='profile-accounting-overview'),
+    # ── System error log ──────────────────────────────────────────────────────
+    path('system-errors',                    SystemErrorLogListView.as_view(),    name='system-errors-list'),
+    path('system-errors/<int:pk>/resolve',   SystemErrorLogResolveView.as_view(), name='system-errors-resolve'),
 
     # ── Personal information ───────────────────────────────────────────────────
     path('basic-info',         BasicInfoUpdateView.as_view(),         name='profile-basic-info'),
@@ -48,6 +66,7 @@ urlpatterns = [
     path('avatar',             AvatarUpdateView.as_view(),            name='profile-avatar'),
     path('change-password',    ChangePasswordView.as_view(),          name='profile-change-password'),
     # ── Admin read-only employee profile ──────────────────────────────────────
-    path('<str:idnumber>/admin', EmployeeProfileAdminView.as_view(),          name='profile-admin-view'),
-    path('<str:idnumber>/admin/work-info', EmployeeProfileAdminWorkInfoView.as_view(), name='profile-admin-work-info'),]
+    path('<str:idnumber>/admin',           EmployeeProfileAdminView.as_view(),         name='profile-admin-view'),
+    path('<str:idnumber>/admin/work-info', EmployeeProfileAdminWorkInfoView.as_view(), name='profile-admin-work-info'),
+]
 

@@ -29,6 +29,7 @@ from .serializers import (
     AnnouncementWriteSerializer,
     _resolve_media_type,
 )
+from activityLog.models import Notification
 
 PAGE_SIZE = 10
 
@@ -88,6 +89,7 @@ class AnnouncementListCreateView(APIView):
         elif tab == 'drafts' and is_privileged:
             qs = qs.filter(is_published=False)
 
+        qs = qs.order_by('-created_at')
         qs = _annotate_announcements(qs, user)
 
         try:
@@ -112,6 +114,17 @@ class AnnouncementListCreateView(APIView):
         write_ser.is_valid(raise_exception=True)
 
         announcement = write_ser.save(created_by=request.user)
+
+        # Notify all users about the new announcement (general scope — no loop needed)
+        if announcement.is_published:
+            Notification.objects.create(
+                notification_scope='general',
+                notification_type='announcement',
+                title=announcement.title or 'New Announcement',
+                message='A new announcement has been posted.',
+                module='announcements',
+                related_object_id=announcement.pk,
+            )
 
         # Process uploaded media files
         files = request.FILES.getlist('media')
@@ -409,3 +422,68 @@ class AnnouncementCommentDeleteView(APIView):
 
         comment.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# --------------------------------------------------------------------------- #
+#  Activity Feed                                                               #
+# --------------------------------------------------------------------------- #
+
+class AnnouncementActivityView(APIView):
+    """GET /api/announcements/activity/  — recent reactions + comments."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        def _name(u):
+            parts = [u.firstname or '', u.lastname or '']
+            return ' '.join(p for p in parts if p).strip() or u.email
+
+        def _avatar(u):
+            if u.avatar:
+                return request.build_absolute_uri(u.avatar.url)
+            return None
+
+        def _preview(ann):
+            if ann.title:
+                return ann.title
+            return (ann.caption or '')[:80]
+
+        activities = []
+
+        comments = (
+            AnnouncementComment.objects
+            .filter(announcement__is_published=True)
+            .select_related('user', 'announcement')
+            .order_by('-created_at')[:15]
+        )
+        for c in comments:
+            activities.append({
+                'type': 'comment',
+                'user_name': _name(c.user),
+                'user_avatar': _avatar(c.user),
+                'announcement_id': c.announcement_id,
+                'announcement_preview': _preview(c.announcement),
+                'timestamp': c.created_at.isoformat(),
+                'content': c.content[:120],
+                'emoji': None,
+            })
+
+        reactions = (
+            AnnouncementReaction.objects
+            .filter(announcement__is_published=True)
+            .select_related('user', 'announcement')
+            .order_by('-created_at')[:15]
+        )
+        for r in reactions:
+            activities.append({
+                'type': 'reaction',
+                'user_name': _name(r.user),
+                'user_avatar': _avatar(r.user),
+                'announcement_id': r.announcement_id,
+                'announcement_preview': _preview(r.announcement),
+                'timestamp': r.created_at.isoformat(),
+                'content': None,
+                'emoji': r.emoji,
+            })
+
+        activities.sort(key=lambda x: x['timestamp'], reverse=True)
+        return Response(activities[:20])

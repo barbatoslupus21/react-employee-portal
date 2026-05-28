@@ -40,6 +40,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { LeaveRangePicker } from '@/components/ui/leave-range-picker';
 import { TextareaWithCharactersLeft } from '@/components/ui/textarea-with-characters-left';
 
 
@@ -219,7 +220,7 @@ function DetailField({ label, value, mono }: { label: string; value: string; mon
   return (
     <div>
       <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">{label}</p>
-      <p className={cn('text-sm text-[var(--color-text-primary)] mt-0.5', mono ? 'font-mono text-xs' : '')}>
+      <p className={cn('text-xs text-[var(--color-text-primary)] mt-0.5', mono ? 'font-mono text-xs' : '')}>
         {value || '—'}
       </p>
     </div>
@@ -347,9 +348,9 @@ function ReviewPRFModal({
             )}
           </div>
 
-          <div className="mt-4">
+          <div className="mt-4 space-y-1">
             <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Purpose of Request:</p>
-            <p className="text-sm text-[var(--color-text-primary)] leading-relaxed whitespace-pre-wrap">{item.purpose}</p>
+            <p className="text-xs text-[var(--color-text-primary)] leading-relaxed whitespace-pre-wrap">{item.purpose}</p>
           </div>
 
           {/* Emergency Loan details */}
@@ -402,7 +403,7 @@ function ReviewPRFModal({
           })()}
 
           {/* Section: Approval */}
-          <div className="flex items-center gap-3 pt-5 pb-3">
+          <div className="flex items-center gap-3 pt-5">
             <p className="text-xs font-bold text-[var(--color-text-primary)] whitespace-nowrap">Request Approval</p>
             <div className="flex-1 h-px bg-[var(--color-border)]" />
           </div>
@@ -421,7 +422,7 @@ function ReviewPRFModal({
               placeholder="Enter remarks…"
               maxLength={300}
               error={remarksErr}
-              className="text-sm resize-none"
+              className="text-xs resize-none"
               disabled={busy}
             />
           </div>
@@ -433,27 +434,27 @@ function ReviewPRFModal({
             type="button"
             onClick={() => handleAction('disapproved')}
             disabled={busy || !!remarksErr}
-            className="flex-1 h-9 inline-flex items-center justify-center gap-1.5 rounded-lg text-sm font-medium
+            className="flex-1 h-9 inline-flex items-center justify-center gap-1.5 rounded-lg text-xs font-normal px-4 py-2
               bg-[var(--btn-danger-bg)] text-[var(--btn-danger-text)]
               hover:bg-[var(--btn-danger-hover)]
               transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {disapproving
-              ? <TextShimmer className="text-sm" duration={1.2}>Disapproving…</TextShimmer>
-              : <><Ban size={13} /><span>Disapprove</span></>}
+              ? <TextShimmer className="text-xs" duration={1.2}>Disapproving…</TextShimmer>
+              : <><Ban size={14} /><span>Disapprove</span></>}
           </button>
           <button
             type="button"
             onClick={() => handleAction('approved')}
             disabled={busy || !!remarksErr}
-            className="flex-1 h-9 inline-flex items-center justify-center gap-1.5 rounded-lg text-sm font-medium
+            className="flex-1 h-9 inline-flex items-center justify-center gap-1.5 rounded-lg text-xs font-normal px-4 py-2
               bg-[var(--btn-success-bg)] text-[var(--btn-success-text)]
               hover:bg-[var(--btn-success-hover)]
               transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {approving
-              ? <TextShimmer className="text-sm" duration={1.2}>Approving…</TextShimmer>
-              : <><Check size={13} /><span>Approve</span></>}
+              ? <TextShimmer className="text-xs" duration={1.2}>Approving…</TextShimmer>
+              : <><Check size={14} /><span>Approve</span></>}
           </button>
         </div>
       </motion.div>
@@ -529,9 +530,9 @@ function AdminViewPRFModal({
             )}
           </div>
 
-          <div className="mt-4">
+          <div className="mt-4 space-y-1">
             <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Purpose of Request:</p>
-            <p className="text-sm text-[var(--color-text-primary)] leading-relaxed whitespace-pre-wrap">{item.purpose}</p>
+            <p className="text-xs text-[var(--color-text-primary)] leading-relaxed whitespace-pre-wrap">{item.purpose}</p>
           </div>
 
           {/* Emergency Loan details */}
@@ -544,7 +545,7 @@ function AdminViewPRFModal({
             const fmtAmt = (v: string | number) =>
               '₱' + Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
             return (
-              <div className="mt-4 pt-4">
+              <div className="mt-4">
                 <div className="flex items-center gap-3 mb-3">
                   <p className="text-xs font-bold text-[var(--color-text-primary)] whitespace-nowrap">Emergency Loan Details</p>
                   <div className="flex-1 h-px bg-[var(--color-border)]" />
@@ -569,7 +570,7 @@ function AdminViewPRFModal({
               return new Date(y, m - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
             }
             return (
-              <div className="mt-4 pt-4">
+              <div className="mt-4">
                 <div className="flex items-center gap-3 mb-3">
                   <p className="text-xs font-bold text-[var(--color-text-primary)] whitespace-nowrap">Medicine Allowance Details</p>
                   <div className="flex-1 h-px bg-[var(--color-border)]" />
@@ -586,7 +587,7 @@ function AdminViewPRFModal({
           {item.admin_remarks && (
             <div className="mt-4 pt-4 border-t border-[var(--color-border)]">
               <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)] mb-1">Admin Remarks:</p>
-              <p className="text-sm text-[var(--color-text-primary)] leading-relaxed whitespace-pre-wrap">{item.admin_remarks}</p>
+              <p className="text-xs text-[var(--color-text-primary)] leading-relaxed whitespace-pre-wrap">{item.admin_remarks}</p>
             </div>
           )}
         </div>
@@ -594,7 +595,8 @@ function AdminViewPRFModal({
         {/* Footer */}
         <div className="px-6 py-4 flex justify-end border-t border-[var(--color-border)]">
           <button type="button" onClick={onClose}
-            className="px-4 py-2 rounded-lg text-sm font-medium border border-[var(--color-border)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-card)] transition-colors">
+            className="px-4 py-2 rounded-lg text-xs font-normal text-[var(--color-text-muted)]
+             border border-[var(--color-border)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-card)] transition-colors">
             Close
           </button>
         </div>
@@ -642,12 +644,12 @@ function AdminCancelConfirmModal({
     <ConfirmationModal
       title="Cancel PRF Request"
       message={`Are you sure you want to cancel PRF request ${item.prf_control_number}? This action cannot be undone.`}
-      confirmLabel="Yes, cancel it"
-      cancelLabel="No, keep it"
+      confirmLabel="Yes, Cancel It"
+      cancelLabel="No, Keep It"
       confirming={confirming}
       onConfirm={handleConfirm}
       onCancel={onClose}
-      icon={<X size={0} className="text-red-600" />}
+      // icon={<X size={0} className="text-red-600" />}
     />
   );
 }
@@ -736,19 +738,31 @@ const PRF_CATEGORIES_FLAT = [
 
 // ── Export Modal ───────────────────────────────────────────────────────────────
 function ExportModal({ onClose }: { onClose: () => void }) {
-  const today = new Date().toISOString().slice(0, 10);
-  const [dateFrom,    setDateFrom]    = useState(today);
-  const [dateTo,      setDateTo]      = useState(today);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const [dateFrom,    setDateFrom]    = useState<Date | undefined>(today);
+  const [dateTo,      setDateTo]      = useState<Date | undefined>(today);
   const [category,    setCategory]    = useState('all');
   const [prfType,     setPrfType]     = useState('all');
   const [status,      setStatus]      = useState('all');
   const [generating,  setGenerating]  = useState(false);
 
+  function localDateStr(d: Date) {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }
+
+  const canGenerate = Boolean(dateFrom && dateTo) && !generating;
+
   async function handleGenerate() {
-    if (generating) return;
+    if (!dateFrom || !dateTo || generating) return;
     setGenerating(true);
     try {
-      const p = new URLSearchParams({ date_from: dateFrom, date_to: dateTo });
+      const from = localDateStr(dateFrom);
+      const to = localDateStr(dateTo);
+      const p = new URLSearchParams({ date_from: from, date_to: to });
       if (category && category !== 'all') p.set('prf_category', category);
       if (prfType  && prfType  !== 'all') p.set('prf_type',     prfType);
       if (status   && status   !== 'all') p.set('status',       status);
@@ -769,7 +783,7 @@ function ExportModal({ onClose }: { onClose: () => void }) {
       const url  = URL.createObjectURL(blob);
       const a    = document.createElement('a');
       a.href          = url;
-      a.download      = `prf-requests-${dateFrom}-to-${dateTo}.xlsx`;
+      a.download      = `prf-requests-${from}-to-${to}.xlsx`;
       a.style.display = 'none';
       document.body.appendChild(a);
       a.click();
@@ -790,14 +804,14 @@ function ExportModal({ onClose }: { onClose: () => void }) {
     >
       <div className="absolute inset-0 bg-black/50" onClick={onClose} />
       <motion.div
-        className="relative z-10 w-full max-w-md rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-xl p-6 flex flex-col gap-5"
+        className="relative z-10 w-full max-w-sm rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-xl flex flex-col gap-5"
         initial={{ opacity: 0, scale: 0.95, y: 12 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.95, y: 12 }}
         transition={{ duration: 0.18 }}
       >
         {/* Header */}
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between border-b border-[var(--color-border)] px-6 py-4">
           <h2 className="text-base font-semibold text-[var(--color-text-primary)]">Export PRF Requests</h2>
           <button onClick={onClose} className="p-1 rounded-lg hover:bg-[var(--color-bg-card)] transition-colors">
             <X size={16} className="text-[var(--color-text-muted)]" />
@@ -805,122 +819,112 @@ function ExportModal({ onClose }: { onClose: () => void }) {
         </div>
 
         {/* Date range */}
-        <div className="flex flex-col gap-3">
-          <div className="grid grid-cols-2 gap-3">
-            <label className="flex flex-col gap-1">
-              <span className="text-xs text-[var(--color-text-muted)]">From</span>
-              <input
-                type="date" value={dateFrom}
-                onChange={e => setDateFrom(e.target.value)}
-                className="h-9 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-2 text-sm text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
-              />
-            </label>
-            <label className="flex flex-col gap-1">
-              <span className="text-xs text-[var(--color-text-muted)]">To</span>
-              <input
-                type="date" value={dateTo}
-                onChange={e => setDateTo(e.target.value)}
-                className="h-9 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-2 text-sm text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
-              />
-            </label>
-          </div>
-        </div>
+        <div className="space-y-3 px-6 py-4 max-h-[calc(100vh-14rem)] overflow-y-auto [scrollbar-width:thin]">
+          <LeaveRangePicker
+            dateStart={dateFrom}
+            dateEnd={dateTo}
+            onDateStartChange={setDateFrom}
+            onDateEndChange={setDateTo}
+            closeOnSelect={false}
+          />
+        
+          {/* Optional filters */}
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-1">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">PRF Category</span>
+              <Select value={category} onValueChange={v => { setCategory(v); setPrfType('all'); }}>
+                <SelectTrigger className="h-9 text-xs">
+                  <SelectValue placeholder="All categories" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All categories</SelectItem>
+                  {PRF_CATEGORIES_FLAT.map(c => (
+                    <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
 
-        {/* Optional filters */}
-        <div className="flex flex-col gap-3">
-          <div className="flex flex-col gap-2">
-            <span className="text-xs text-[var(--color-text-muted)]">PRF Category</span>
-            <Select value={category} onValueChange={v => { setCategory(v); setPrfType('all'); }}>
-              <SelectTrigger className="h-9 text-sm">
-                <SelectValue placeholder="All categories" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All categories</SelectItem>
-                {PRF_CATEGORIES_FLAT.map(c => (
-                  <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+            <AnimatePresence initial={false}>
+              {category && category !== 'all' && (
+                <motion.div
+                  key="prf-type-filter"
+                  initial={{ height: 0, opacity: 0, y: -6 }}
+                  animate={{ height: 'auto', opacity: 1, y: 0 }}
+                  exit={{ height: 0, opacity: 0, y: -6 }}
+                  transition={{ duration: 0.22, ease: [0.4, 0, 0.2, 1] }}
+                  className="overflow-hidden"
+                >
+                  <div className="flex flex-col gap-2 pt-1">
+                    <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">PRF Type</span>
+                    <Select value={prfType} onValueChange={setPrfType}>
+                      <SelectTrigger className="h-9 text-xs">
+                        <SelectValue placeholder="All types" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All types</SelectItem>
+                        <SelectItem value="pagibig_loan">PAG-IBIG Loan</SelectItem>
+                        <SelectItem value="pagibig_cert_payment">PAG-IBIG Certificate of Payment</SelectItem>
+                        <SelectItem value="pagibig_cert_contribution">PAG-IBIG Certificate of Contribution</SelectItem>
+                        <SelectItem value="philhealth_form">PHILHEALTH Form</SelectItem>
+                        <SelectItem value="sss_loan">SSS Loan</SelectItem>
+                        <SelectItem value="sss_maternity">SSS Maternity Benefits</SelectItem>
+                        <SelectItem value="sss_sickness">SSS Sickness Benefits</SelectItem>
+                        <SelectItem value="bir_form">BIR Form (2316/1902)</SelectItem>
+                        <SelectItem value="rcbc_maintenance">RCBC Maintenance Form</SelectItem>
+                        <SelectItem value="bank_deposit">Bank Deposit</SelectItem>
+                        <SelectItem value="payroll_adjustment">Payroll Adjustment</SelectItem>
+                        <SelectItem value="id_replacement">ID Replacement</SelectItem>
+                        <SelectItem value="pcoe_compensation">PCOE with Compensation</SelectItem>
+                        <SelectItem value="certificate_employment">Certificate of Employment</SelectItem>
+                        <SelectItem value="clearance_form">Clearance Form</SelectItem>
+                        <SelectItem value="emergency_loan">Emergency Loan</SelectItem>
+                        <SelectItem value="medical_loan">Medical Assistance Loan</SelectItem>
+                        <SelectItem value="educational_loan">Educational Assistance Loan</SelectItem>
+                        <SelectItem value="coop_loan">Coop Loan</SelectItem>
+                        <SelectItem value="medicine_allowance">Medicine Allowance</SelectItem>
+                        <SelectItem value="uniform_ppe">Uniform / Caps / PPE / T-shirt</SelectItem>
+                        <SelectItem value="others">Others</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
 
-          <AnimatePresence initial={false}>
-            {category && category !== 'all' && (
-              <motion.div
-                key="prf-type-filter"
-                initial={{ height: 0, opacity: 0, y: -6 }}
-                animate={{ height: 'auto', opacity: 1, y: 0 }}
-                exit={{ height: 0, opacity: 0, y: -6 }}
-                transition={{ duration: 0.22, ease: [0.4, 0, 0.2, 1] }}
-                className="overflow-hidden"
-              >
-                <div className="flex flex-col gap-2 pt-1">
-                  <span className="text-xs text-[var(--color-text-muted)]">PRF Type</span>
-                  <Select value={prfType} onValueChange={setPrfType}>
-                    <SelectTrigger className="h-9 text-sm">
-                      <SelectValue placeholder="All types" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All types</SelectItem>
-                      <SelectItem value="pagibig_loan">PAG-IBIG Loan</SelectItem>
-                      <SelectItem value="pagibig_cert_payment">PAG-IBIG Certificate of Payment</SelectItem>
-                      <SelectItem value="pagibig_cert_contribution">PAG-IBIG Certificate of Contribution</SelectItem>
-                      <SelectItem value="philhealth_form">PHILHEALTH Form</SelectItem>
-                      <SelectItem value="sss_loan">SSS Loan</SelectItem>
-                      <SelectItem value="sss_maternity">SSS Maternity Benefits</SelectItem>
-                      <SelectItem value="sss_sickness">SSS Sickness Benefits</SelectItem>
-                      <SelectItem value="bir_form">BIR Form (2316/1902)</SelectItem>
-                      <SelectItem value="rcbc_maintenance">RCBC Maintenance Form</SelectItem>
-                      <SelectItem value="bank_deposit">Bank Deposit</SelectItem>
-                      <SelectItem value="payroll_adjustment">Payroll Adjustment</SelectItem>
-                      <SelectItem value="id_replacement">ID Replacement</SelectItem>
-                      <SelectItem value="pcoe_compensation">PCOE with Compensation</SelectItem>
-                      <SelectItem value="certificate_employment">Certificate of Employment</SelectItem>
-                      <SelectItem value="clearance_form">Clearance Form</SelectItem>
-                      <SelectItem value="emergency_loan">Emergency Loan</SelectItem>
-                      <SelectItem value="medical_loan">Medical Assistance Loan</SelectItem>
-                      <SelectItem value="educational_loan">Educational Assistance Loan</SelectItem>
-                      <SelectItem value="coop_loan">Coop Loan</SelectItem>
-                      <SelectItem value="medicine_allowance">Medicine Allowance</SelectItem>
-                      <SelectItem value="uniform_ppe">Uniform / Caps / PPE / T-shirt</SelectItem>
-                      <SelectItem value="others">Others</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          <div className="flex flex-col gap-2">
-            <span className="text-xs text-[var(--color-text-muted)]">Status</span>
-            <Select value={status} onValueChange={setStatus}>
-              <SelectTrigger className="h-9 text-sm">
-                <SelectValue placeholder="All statuses" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All statuses</SelectItem>
-                <SelectItem value="pending">Pending</SelectItem>
-                <SelectItem value="approved">Approved</SelectItem>
-                <SelectItem value="disapproved">Disapproved</SelectItem>
-                <SelectItem value="cancelled">Cancelled</SelectItem>
-              </SelectContent>
-            </Select>
+            <div className="flex flex-col gap-1">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Status</span>
+              <Select value={status} onValueChange={setStatus}>
+                <SelectTrigger className="h-9 text-xs">
+                  <SelectValue placeholder="All statuses" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All statuses</SelectItem>
+                  <SelectItem value="pending">Pending</SelectItem>
+                  <SelectItem value="approved">Approved</SelectItem>
+                  <SelectItem value="disapproved">Disapproved</SelectItem>
+                  <SelectItem value="cancelled">Cancelled</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
         </div>
 
         {/* Actions */}
-        <div className="flex justify-end pt-1">
-          <button
-            type="button" onClick={handleGenerate} disabled={generating}
-            className="flex-1 h-9 inline-flex items-center justify-center gap-1.5 rounded-lg text-xs font-medium
-              bg-[var(--btn-primary-bg)] text-[var(--btn-success-text)]
-              hover:bg-[var(--btn-primary-hover)]
-              transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <Download size={14} />
-            {generating
-              ? <TextShimmer className="text-xs" duration={1.2}>Generating…</TextShimmer>
-              : <><span>Generate Excel</span></>}
-          </button>
+        <div className="border-t border-[var(--color-border)] px-6 py-4 flex items-center justify-end gap-2">
+          <div className="flex justify-end pt-1">
+            <button
+              type="button" onClick={handleGenerate} disabled={!canGenerate}
+              className="flex min-w-[150px] items-center justify-center gap-1.5 px-4 py-2 rounded-lg
+              bg-[#2845D6] text-white text-xs font-normal hover:bg-[#1f38c0]
+              disabled:opacity-50 transition-colors"
+            >
+              <Download size={14} />
+              {generating
+                ? <TextShimmer className="text-xs" duration={1.2}>Generating…</TextShimmer>
+                : <><span>Generate Excel</span></>}
+            </button>
+          </div>
         </div>
       </motion.div>
     </motion.div>
@@ -1314,10 +1318,10 @@ export default function PRFAdminPage() {
         {/* ── Page header ── */}
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div>
-            <h1 className="text-xl font-bold text-[var(--color-text-primary)] flex items-center gap-2">
+            <h1 className="text-lg font-bold text-[var(--color-text-primary)] flex items-center gap-2">
               PRF Request Management
             </h1>
-            <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
+            <p className="text-xs text-[var(--color-text-muted)]">
               Review, approve, or disapprove all employee PRF submissions.
             </p>
           </div>
@@ -1472,7 +1476,7 @@ export default function PRFAdminPage() {
               placeholder="Search by PRF number, employee, type…"
             />
           </div>
-          <AnimatePresence initial={false}>
+          {/* <AnimatePresence initial={false}>
             {prfTypeFilter && (
               <motion.span
                 key="chip-type"
@@ -1513,17 +1517,17 @@ export default function PRFAdminPage() {
                 </button>
               </motion.span>
             )}
-          </AnimatePresence>
+          </AnimatePresence> */}
           <div className="flex-1" />
           <button
             type="button"
             onClick={handleExport}
             className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#2845D6] text-white
-                text-xs font-medium hover:bg-[#1f38c0] transition-colors shrink-0"
+                text-xs font-normal hover:bg-[#1f38c0] transition-colors shrink-0"
             title="Export Excel"
           >
-            <Download size={12} />
-            Export
+            <Download size={14} />
+            Export Report
           </button>
         </div>
 

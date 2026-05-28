@@ -54,5 +54,9 @@ class NotificationReadAllView(APIView):
 
     @transaction.atomic
     def post(self, request):
-        Notification.objects.filter(recipient=request.user, is_read=False).update(is_read=True)
+        from django.db.models import Q
+        Notification.objects.filter(
+            Q(recipient=request.user) | Q(notification_scope='general'),
+            is_read=False,
+        ).update(is_read=True)
         return Response({'detail': 'All notifications marked as read.'})

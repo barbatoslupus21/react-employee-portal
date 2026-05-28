@@ -60,7 +60,12 @@ export default function ChangePasswordPage() {
       if (!res.ok) { router.replace('/'); return; }
       const data: UserData = await res.json();
       // If no forced change is required, redirect away — nothing to do here.
-      if (!data.change_password) { router.replace('/dashboard'); return; }
+      if (!data.change_password) {
+        // Use a hard navigation so the dashboard layout remounts with fresh
+        // auth state instead of reusing a stale in-memory change_password flag.
+        window.location.replace('/dashboard');
+        return;
+      }
       setUser(data);
     } catch {
       router.replace('/');
@@ -121,7 +126,9 @@ export default function ChangePasswordPage() {
       });
 
       if (res.ok) {
-        router.replace('/dashboard');
+        // Hard navigation avoids a client-side redirect race with the dashboard
+        // layout, which may still hold the pre-change auth snapshot.
+        window.location.replace('/dashboard');
       } else {
         const err = await res.json().catch(() => ({})) as Record<string, string | string[]>;
         const msg =

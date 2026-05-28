@@ -117,7 +117,7 @@ function ChoiceboxItem({
       aria-disabled={disabled}
     >
       <div className="flex items-center gap-3 py-2 px-3">
-        <div className="flex flex-col gap-0.5 flex-1 min-w-0 font-sans text-xs">
+        <div className="flex flex-col gap-0.5 flex-1 min-w-0 text-xs">
           <span
             className={clsx(
               'font-semibold leading-snug',
@@ -177,7 +177,7 @@ function ChoiceboxGroupBase({
   return (
     <div className="flex flex-col gap-2">
       {showLabel && label && (
-        <label className="text-xs font-medium text-[var(--color-text-primary)]">
+        <label className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
           {label}
         </label>
       )}

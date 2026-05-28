@@ -348,12 +348,12 @@ function ViewCertModal({
         className="w-full max-w-3xl rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-2xl overflow-hidden flex flex-col"
         style={{ maxHeight: '90vh' }}
       >
-        <div className="flex items-center justify-between border-b border-[var(--color-border)] px-6 py-2 shrink-0">
+        <div className="flex items-center justify-between border-b border-[var(--color-border)] px-6 py-4 shrink-0">
           <div className="min-w-0">
             <h2 className="text-base font-semibold text-[var(--color-text-primary)] truncate">
               {cert.title}
             </h2>
-            <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
+            <p className="text-[12px] text-[var(--color-text-muted)]">
               {cert.category_name} · {cert.employee_firstname} {cert.employee_lastname}
             </p>
           </div>
@@ -458,7 +458,7 @@ function EditCertModal({
         exit={{ opacity: 0, scale: 0.95, y: 12 }}
         transition={{ type: 'spring', stiffness: 320, damping: 28 }}
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-lg rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-2xl overflow-hidden"
+        className="w-full max-w-md rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-2xl overflow-hidden"
       >
         <div className="flex items-center justify-between border-b border-[var(--color-border)] px-6 py-4">
           <h2 className="text-base font-semibold text-[var(--color-text-primary)]">Edit Certificate</h2>
@@ -491,7 +491,7 @@ function EditCertModal({
 
           {/* Category */}
           <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium text-[var(--color-text-primary)]">Category</label>
+            <label className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Category</label>
             <Select value={categoryId} onValueChange={setCategoryId}>
               <SelectTrigger className="w-full">
                 {categoryId ? (
@@ -526,7 +526,7 @@ function EditCertModal({
 
           {/* Replace PDF */}
           <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium text-[var(--color-text-primary)]">
+            <label className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
               Replace PDF&nbsp;
               <span className="text-[var(--color-text-muted)] font-normal">(optional)</span>
             </label>
@@ -534,8 +534,8 @@ function EditCertModal({
               className="flex items-center gap-3 rounded-lg border border-dashed border-[var(--color-border-strong)] px-4 py-3 cursor-pointer hover:bg-[var(--color-bg-card)] transition-colors"
               onClick={() => fileRef.current?.click()}
             >
-              <Upload size={15} className="text-[var(--color-text-muted)] shrink-0" />
-              <span className="text-sm text-[var(--color-text-muted)] truncate">
+              <Upload size={14} className="text-[var(--color-text-muted)] shrink-0" />
+              <span className="text-xs text-[var(--color-text-muted)] truncate">
                 {newFile ? newFile.name : cert.original_filename}
               </span>
             </div>
@@ -550,7 +550,7 @@ function EditCertModal({
         </div>
 
         <div className="border-t border-[var(--color-border)] px-6 py-4 flex justify-end gap-3">
-          <Button size="sm" onClick={handleSave} disabled={hasError || saving} className="min-w-[110px] flex items-center gap-2 text-sm font-normal px-6 py-4">
+          <Button size="sm" onClick={handleSave} disabled={hasError || saving} className="min-w-[110px] flex items-center gap-2 text-xs font-normal px-4 py-2">
             {saving
               ? <TextShimmer>Saving...</TextShimmer>
               : <><Check size={14} /> Save Changes</>}
@@ -603,7 +603,6 @@ function DeleteCertModal({
       confirming={deleting}
       onConfirm={handleDelete}
       onCancel={onClose}
-      icon={<AlertTriangle size={0} className="text-red-600" />}
     />
   );
 }
@@ -806,14 +805,14 @@ function UploadModal({
         exit={{ opacity: 0, scale: 0.95, y: 12 }}
         transition={{ type: 'spring', stiffness: 320, damping: 28 }}
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-2xl rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-2xl overflow-hidden flex flex-col"
+        className="w-md max-w-2xl rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-2xl overflow-hidden flex flex-col"
         style={{ maxHeight: '90vh' }}
       >
         {/* Header */}
         <div className="flex items-start justify-between border-b border-[var(--color-border)] px-6 py-4 shrink-0">
           <div>
             <h2 className="text-base font-semibold text-[var(--color-text-primary)]">Bulk Certificate Upload</h2>
-            <p className="mt-0.5 text-xs text-[var(--color-text-muted)]">
+            <p className="text-[12px] text-[var(--color-text-muted)]">
               Each PDF must be named{' '}
               <code className="bg-[var(--color-bg)] px-1 rounded">
                 {'{idnumber}_{fullname}.pdf'}
@@ -831,7 +830,6 @@ function UploadModal({
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* Drop-zone */}
             <div className="flex flex-col gap-1.5 md:col-span-2">
-              <label className="text-sm font-medium text-[var(--color-text-primary)]">PDF Files</label>
               <div
                 onClick={() => !uploading && fileRef.current?.click()}
                 onDragOver={e => { e.preventDefault(); e.stopPropagation(); }}
@@ -854,10 +852,10 @@ function UploadModal({
               >
                 <Upload size={36} className={cn('transition-colors', isDragging ? 'text-[#2845D6]' : 'text-[var(--color-text-muted)]')} />
                 <div className="text-center">
-                  <p className="text-sm font-medium text-[var(--color-text-primary)]">
+                  <p className="text-xs font-medium text-[var(--color-text-primary)]">
                     Click to select or drag &amp; drop
                   </p>
-                  <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
+                  <p className="text-[10px] text-[var(--color-text-muted)] mt-0.5">
                     {files.length > 0
                       ? `${files.length} file${files.length !== 1 ? 's' : ''} selected`
                       : '.pdf files only'}
@@ -899,7 +897,7 @@ function UploadModal({
 
             {/* Category */}
             <div className="flex flex-col gap-1.5">
-              <label className="text-sm font-medium text-[var(--color-text-primary)]">Category</label>
+              <label className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Category</label>
               <Select value={categoryId} onValueChange={setCategoryId}>
                 <SelectTrigger className="w-full">
                   {categoryId ? (
@@ -983,10 +981,10 @@ function UploadModal({
 
         {/* Footer */}
         <div className="border-t border-[var(--color-border)] px-6 py-4 shrink-0 flex justify-end">
-          <Button onClick={handleUpload} disabled={!canSubmit} className="min-w-[140px] flex items-center gap-2">
+          <Button onClick={handleUpload} disabled={!canSubmit} className="text-xs font-normal px-4 py-2 flex items-center gap-2 px-4 py-2">
             {uploading
               ? <TextShimmer>Uploading...</TextShimmer>
-              : <><Upload size={15} /> Upload Files</>
+              : <><Upload size={14} /> Upload Files</>
             }
           </Button>
         </div>
@@ -1028,22 +1026,22 @@ function AccordionRow({
         )}
         onClick={onToggle}
       >
-        <td className="px-4 py-3.5 text-xs text-[var(--color-text-muted)]">
+        <td className="px-4 py-3.5 text-xs text-[var(--color-text-primary)]">
           {emp.idnumber}
         </td>
-        <td className="px-4 py-3.5 text-xs font-medium text-[var(--color-text-primary)]">
+        <td className="px-4 py-3.5 text-xs text-[var(--color-text-primary)]">
           {fullName}
         </td>
-        <td className="px-4 py-3.5 text-xs text-[var(--color-text-muted)] hidden sm:table-cell">
+        <td className="px-4 py-3.5 text-xs text-[var(--color-text-primary)] hidden sm:table-cell">
           {emp.department || '—'}
         </td>
-        <td className="px-4 py-3.5 text-xs text-[var(--color-text-muted)] hidden sm:table-cell">
+        <td className="px-4 py-3.5 text-xs text-[var(--color-text-primary)] hidden sm:table-cell">
           {emp.line || '—'}
         </td>
-        <td className="px-4 py-3.5 text-xs text-[var(--color-text-muted)]">
+        <td className="px-4 py-3.5 text-xs text-[var(--color-text-primary)]">
           {emp.certificates.length}
         </td>
-        <td className="px-4 py-3.5 text-[var(--color-text-muted)]">
+        <td className="px-4 py-3.5 text-[var(--color-text-primary)]">
           {isExpanded
             ? <ChevronDown size={16} />
             : <ChevronRight size={16} />
@@ -1332,8 +1330,8 @@ export default function CertificationAdminPage() {
     <div className="mx-auto p-4 sm:p-6 space-y-6">
       {/* Page header */}
       <div>
-        <h1 className="text-2xl font-bold text-[var(--color-text-primary)]">Certificate Management</h1>
-        <p className="mt-1 text-sm text-[var(--color-text-muted)]">
+        <h1 className="text-lg font-bold text-[var(--color-text-primary)]">Certificate Management</h1>
+        <p className="text-xs text-[var(--color-text-muted)]">
           Upload certificates and manage employee records.
         </p>
       </div>
@@ -1352,9 +1350,9 @@ export default function CertificationAdminPage() {
             type="button"
             onClick={() => setShowImportModal(true)}
             className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#2845D6] text-white
-              text-xs font-medium hover:bg-[#1f38c0] transition-colors shrink-0"
+              text-xs font-normal hover:bg-[#1f38c0] transition-colors shrink-0"
           >
-            <Upload size={12} />
+            <Upload size={14} />
             Import Certificate
           </button>
         </div>
@@ -1453,50 +1451,51 @@ export default function CertificationAdminPage() {
           </table>
         </div>
 
-        {/* Pagination - always visible in lower-left */}
-        <div className="flex items-center justify-between border-t border-[var(--color-border)] px-5 py-3">
-          <div className="text-xs text-[var(--color-text-muted)]">
-            Showing{' '}
-            <span className="text-xs text-[var(--color-text-muted)]">
-              {totalCount === 0 ? 0 : (page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, totalCount)}
-            </span>
-            {' '}of{' '}
-            <span className="text-xs text-[var(--color-text-muted)]">{totalCount}</span>
-          </div>
-
-          <div>
-            <Pagination>
-              <PaginationContent>
-                <PaginationItem>
-                  <PaginationPrevious
-                    onClick={() => setPage((p) => Math.max(1, p - 1))}
-                    disabled={page === 1}
-                  />
-                </PaginationItem>
-                {buildPaginationRange(page, totalPages).map((p, i) => (
-                  <PaginationItem key={`${p}-${i}`}>
-                    {p === '...' ? (
-                      <PaginationEllipsis />
-                    ) : (
-                      <PaginationLink
-                        isActive={p === page}
-                        onClick={() => setPage(p as number)}
-                      >
-                        {p}
-                      </PaginationLink>
-                    )}
+          <div className="flex items-center justify-between border-t border-[var(--color-border)] px-5 py-3">
+            <div className="text-xs text-[var(--color-text-muted)]">
+              Showing{' '}
+              <span className="text-xs text-[var(--color-text-muted)]">
+                {totalCount === 0 ? 0 : (page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, totalCount)}
+              </span>
+              {' '}of{' '}
+              <span className="text-xs text-[var(--color-text-muted)]">{totalCount}</span>
+            </div>
+            {totalPages > 1 && (
+            <div>
+              <Pagination>
+                <PaginationContent>
+                  <PaginationItem>
+                    <PaginationPrevious
+                      onClick={() => setPage((p) => Math.max(1, p - 1))}
+                      disabled={page === 1}
+                    />
                   </PaginationItem>
-                ))}
-                <PaginationItem>
-                  <PaginationNext
-                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                    disabled={page === totalPages}
-                  />
-                </PaginationItem>
-              </PaginationContent>
-            </Pagination>
+                  {buildPaginationRange(page, totalPages).map((p, i) => (
+                    <PaginationItem key={`${p}-${i}`}>
+                      {p === '...' ? (
+                        <PaginationEllipsis />
+                      ) : (
+                        <PaginationLink
+                          isActive={p === page}
+                          onClick={() => setPage(p as number)}
+                        >
+                          {p}
+                        </PaginationLink>
+                      )}
+                    </PaginationItem>
+                  ))}
+                  <PaginationItem>
+                    <PaginationNext
+                      onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                      disabled={page === totalPages}
+                    />
+                  </PaginationItem>
+                </PaginationContent>
+              </Pagination>
+            </div>
+            )}
           </div>
-        </div>
+        
       </div>
 
       {/* Modals */}

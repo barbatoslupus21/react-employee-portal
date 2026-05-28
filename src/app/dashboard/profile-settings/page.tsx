@@ -33,6 +33,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Country, State, City } from "country-state-city";
 import { AvatarUploader } from "@/components/ui/avatar-uploader";
+import { useMediaQuery } from "@/hooks/use-media-query";
 
 // ── Types ───────────────────────────────────────────────────────────────────────
 
@@ -318,8 +319,11 @@ function LeftCard({
   profile, isEditing, avatarPreview, onAvatarClick,
 }: LeftCardProps) {
   const [certsExpanded, setCertsExpanded] = useState(false);
-  // Expand/collapse the card body — available on ALL viewport sizes
   const [isExpanded, setIsExpanded] = useState(true);
+  const [canScrollUp, setCanScrollUp] = useState(false);
+  const [canScrollDown, setCanScrollDown] = useState(false);
+  const bodyScrollRef = useRef<HTMLDivElement | null>(null);
+  const isDesktop = useMediaQuery("(min-width: 1024px)");
 
   const wi         = profile.work_info;
   const displayAv  = avatarPreview ?? profile.avatar ?? "/default-avatar.png";
@@ -328,11 +332,190 @@ function LeftCard({
   const certPreview  = profile.certificates.slice(0, 4);
   const certExtra    = profile.certificates.slice(4);
   const extraCount   = certExtra.length;
+  const isBodyExpanded = isDesktop || isExpanded;
 
   const hasAnyEmploymentDetail = !!(wi?.date_hired || wi?.tin_number || wi?.sss_number || wi?.hdmf_number || wi?.bank_account);
 
+  const updateScrollState = useCallback(() => {
+    const node = bodyScrollRef.current;
+    if (!node || !isDesktop) {
+      setCanScrollUp(false);
+      setCanScrollDown(false);
+      return;
+    }
+
+    setCanScrollUp(node.scrollTop > 2);
+    setCanScrollDown(node.scrollTop + node.clientHeight < node.scrollHeight - 2);
+  }, [isDesktop]);
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(updateScrollState);
+    if (!isDesktop) return;
+
+    const handleResize = () => updateScrollState();
+    window.addEventListener("resize", handleResize);
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("resize", handleResize);
+    };
+  }, [certsExpanded, hasAnyEmploymentDetail, isDesktop, profile, updateScrollState]);
+
+  const scrollCardBody = (delta: number) => {
+    const node = bodyScrollRef.current;
+    if (!node) return;
+    node.scrollBy({ top: delta, behavior: "smooth" });
+  };
+
+  const cardBody = (
+    <div className="relative flex-1 min-h-0 overflow-hidden">
+      <div
+        ref={bodyScrollRef}
+        onScroll={updateScrollState}
+        className="profile-left-card-scroll h-full overflow-y-auto px-5 pb-3 space-y-3"
+      >
+        {(wi?.office_name || wi?.employment_type_name) && (
+          <div className="flex items-start justify-between gap-3">
+            <span className="text-[10px] font-semibold uppercase text-[var(--color-text-muted)]">Employment type</span>
+            <div className="flex flex-wrap justify-end gap-1 max-w-[70%]">
+              {wi?.employment_type_name && <Pill>{wi.employment_type_name}</Pill>}
+            </div>
+          </div>
+        )}
+
+        {hasAnyEmploymentDetail && (
+          <div className="space-y-2.5">
+            <InfoRow label="Date Hired" value={formatDisplayDate(wi?.date_hired)} />
+            <InfoRow label="TIN Number" value={wi?.tin_number} />
+            <InfoRow label="SSS Number" value={wi?.sss_number} />
+            <InfoRow label="HDMF / Pag-IBIG" value={wi?.hdmf_number} />
+            <InfoRow label="Bank Account" value={wi?.bank_account} />
+          </div>
+        )}
+
+        {profile.skills.length > 0 && (
+          profile.skills.length <= 2 ? (
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-[10px] font-semibold uppercase text-[var(--color-text-muted)]">Skills</span>
+              <div className="flex flex-wrap justify-end gap-1 max-w-[70%]">
+                {profile.skills.map((skill) => <Pill key={skill.name}>{skill.name}</Pill>)}
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              <span className="text-[10px] font-semibold uppercase text-[var(--color-text-muted)]">Skills</span>
+              <div className="flex flex-wrap gap-1">
+                {profile.skills.map((skill) => <Pill key={skill.name}>{skill.name}</Pill>)}
+              </div>
+            </div>
+          )
+        )}
+
+        {profile.certificates.length > 0 && (
+          <div className="space-y-1">
+            <span className="text-[9px] font-semibold uppercase text-[var(--color-text-muted)]">Certificates</span>
+            <div className="space-y-0">
+              {certPreview.map((c) => (
+                <div key={c.id} className="flex items-center gap-2 py-1.5">
+                  <Award size={13} className="shrink-0 text-[#2845D6]" />
+                  <div className="min-w-0">
+                    <p className="text-xs font-medium text-[var(--color-text-primary)] truncate leading-snug">{c.title}</p>
+                    <p className="text-[10px] text-[var(--color-text-muted)] truncate">{c.category_name}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <AnimatePresence initial={false}>
+              {certsExpanded && extraCount > 0 && (
+                <motion.div
+                  key="cert-extra"
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: "auto", opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.28, ease: "easeInOut" }}
+                  className="overflow-hidden"
+                >
+                  {certExtra.map((c) => (
+                    <div key={c.id} className="flex items-center gap-2 py-1.5">
+                      <Award size={13} className="shrink-0 text-[#2845D6]" />
+                      <div className="min-w-0">
+                        <p className="text-xs font-medium text-[var(--color-text-primary)] truncate leading-snug">{c.title}</p>
+                        <p className="text-[10px] text-[var(--color-text-muted)] truncate">{c.category_name}</p>
+                      </div>
+                    </div>
+                  ))}
+                </motion.div>
+              )}
+            </AnimatePresence>
+            {extraCount > 0 && (
+              <button
+                type="button"
+                onClick={() => setCertsExpanded((v) => !v)}
+                className="flex items-center gap-1 text-[10px] text-[#2845D6] hover:text-[#1e37b8] font-medium transition-colors pt-0.5"
+              >
+                {certsExpanded ? <>See less <ChevronUp size={12} /></> : <>See {extraCount} more <ChevronDown size={12} /></>}
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
+      {isDesktop && canScrollUp && (
+        <>
+          <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex justify-center bg-gradient-to-b from-[var(--color-bg-elevated)] via-[var(--color-bg-elevated)]/85 to-transparent pt-1.5">
+            <button
+              type="button"
+              onClick={() => scrollCardBody(-88)}
+              className="pointer-events-auto z-20 flex h-7 w-7 items-center justify-center bg-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] transition-colors"
+              aria-label="Scroll profile card up"
+            >
+              <ChevronUp size={14} />
+            </button>
+          </div>
+        </>
+      )}
+
+      {isDesktop && canScrollDown && (
+        <>
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex justify-center bg-gradient-to-t from-[var(--color-bg-elevated)] via-[var(--color-bg-elevated)]/85 to-transparent pb-1.5">
+            <button
+              type="button"
+              onClick={() => scrollCardBody(88)}
+              className="pointer-events-auto z-20 flex h-7 w-7 items-center justify-center bg-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] transition-colors"
+              aria-label="Scroll profile card down"
+            >
+              <ChevronDown size={14} />
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+
   return (
-    <aside className="w-full lg:w-64 xl:w-72 shrink-0 lg:h-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] flex flex-col overflow-hidden">
+    <>
+      <style jsx global>{`
+        .profile-left-card-scroll {
+          scrollbar-width: none;
+          -ms-overflow-style: none;
+        }
+
+        .profile-left-card-scroll::-webkit-scrollbar {
+          width: 0 !important;
+          height: 0 !important;
+          display: none !important;
+          background: transparent;
+        }
+
+        .profile-left-card-scroll::-webkit-scrollbar-thumb {
+          background: transparent;
+        }
+
+        .profile-left-card-scroll::-webkit-scrollbar-track {
+          background: transparent;
+        }
+      `}</style>
+      <aside className="w-full lg:w-64 xl:w-72 shrink-0 lg:h-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] flex flex-col overflow-hidden">
 
       {/* ── Cover image ── */}
       <div className="relative shrink-0 h-[80px] overflow-visible rounded-t-2xl">
@@ -389,128 +572,47 @@ function LeftCard({
         </div>
       </div>
 
-      {/* ── Expandable body — controlled by isExpanded on ALL viewports ── */}
-      <AnimatePresence initial={false}>
-        {isExpanded && (
-          <motion.div
-            key="card-body"
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.3, ease: "easeInOut" }}
-            className="overflow-hidden"
-          >
-            <div className="overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden px-5 pb-3 space-y-3">
-              {/* ── Employment type ── */}
-              {(wi?.office_name || wi?.employment_type_name) && (
-                <div className="flex items-start justify-between gap-3">
-                  <span className="text-[10px] font-semibold uppercase text-[var(--color-text-muted)]">Employment type</span>
-                  <div className="flex flex-wrap justify-end gap-1 max-w-[70%]">
-                    {wi?.employment_type_name && <Pill>{wi.employment_type_name}</Pill>}
-                  </div>
+      {isDesktop ? (
+        cardBody
+      ) : (
+        <>
+          <AnimatePresence initial={false}>
+            {isBodyExpanded && (
+              <motion.div
+                key="card-body"
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: "auto", opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.3, ease: "easeInOut" }}
+                className="overflow-hidden"
+              >
+                <div className="max-h-[420px]">
+                  {cardBody}
                 </div>
-              )}
+              </motion.div>
+            )}
+          </AnimatePresence>
 
-              {/* ── Core employment details ── */}
-              {hasAnyEmploymentDetail && (
-                <div className="space-y-2.5">
-                  <InfoRow label="Date Hired"      value={formatDisplayDate(wi?.date_hired)} />
-                  <InfoRow label="TIN Number"      value={wi?.tin_number} />
-                  <InfoRow label="SSS Number"      value={wi?.sss_number} />
-                  <InfoRow label="HDMF / Pag-IBIG" value={wi?.hdmf_number} />
-                  <InfoRow label="Bank Account"    value={wi?.bank_account} />
-                </div>
-              )}
-
-              {/* ── Skills ── */}
-              {profile.skills.length > 0 && (
-                profile.skills.length <= 2 ? (
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-[10px] font-semibold uppercase text-[var(--color-text-muted)]">Skills</span>
-                    <div className="flex flex-wrap justify-end gap-1 max-w-[70%]">
-                      {profile.skills.map((skill) => <Pill key={skill.name}>{skill.name}</Pill>)}
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex flex-col gap-2">
-                    <span className="text-[10px] font-semibold uppercase text-[var(--color-text-muted)]">Skills</span>
-                    <div className="flex flex-wrap gap-1">
-                      {profile.skills.map((skill) => <Pill key={skill.name}>{skill.name}</Pill>)}
-                    </div>
-                  </div>
-                )
-              )}
-
-              {/* ── Certificates ── */}
-              {profile.certificates.length > 0 && (
-                <div className="space-y-1">
-                  <span className="text-[9px] font-semibold uppercase text-[var(--color-text-muted)]">Certificates</span>
-                  <div className="space-y-0">
-                    {certPreview.map((c) => (
-                      <div key={c.id} className="flex items-center gap-2 py-1.5">
-                        <Award size={13} className="shrink-0 text-[#2845D6]" />
-                        <div className="min-w-0">
-                          <p className="text-xs font-medium text-[var(--color-text-primary)] truncate leading-snug">{c.title}</p>
-                          <p className="text-[10px] text-[var(--color-text-muted)] truncate">{c.category_name}</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                  <AnimatePresence initial={false}>
-                    {certsExpanded && extraCount > 0 && (
-                      <motion.div
-                        key="cert-extra"
-                        initial={{ height: 0, opacity: 0 }}
-                        animate={{ height: "auto", opacity: 1 }}
-                        exit={{ height: 0, opacity: 0 }}
-                        transition={{ duration: 0.28, ease: "easeInOut" }}
-                        className="overflow-hidden"
-                      >
-                        {certExtra.map((c) => (
-                          <div key={c.id} className="flex items-center gap-2 py-1.5">
-                            <Award size={13} className="shrink-0 text-[#2845D6]" />
-                            <div className="min-w-0">
-                              <p className="text-xs font-medium text-[var(--color-text-primary)] truncate leading-snug">{c.title}</p>
-                              <p className="text-[10px] text-[var(--color-text-muted)] truncate">{c.category_name}</p>
-                            </div>
-                          </div>
-                        ))}
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                  {extraCount > 0 && (
-                    <button
-                      onClick={() => setCertsExpanded((v) => !v)}
-                      className="flex items-center gap-1 text-[10px] text-[#2845D6] hover:text-[#1e37b8] font-medium transition-colors pt-0.5"
-                    >
-                      {certsExpanded ? <>See less <ChevronUp size={12} /></> : <>See {extraCount} more <ChevronDown size={12} /></>}
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* ── Expand/collapse toggle — always visible on all viewports ── */}
-      <div className="shrink-0 flex justify-center pb-2 pt-1 mt-auto">
-        <button
-          type="button"
-          onClick={() => setIsExpanded((v) => !v)}
-          className="flex items-center gap-1 text-[10px] text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] transition-colors"
-          aria-label={isExpanded ? "Collapse card" : "Expand card"}
-        >
-          <motion.span
-            animate={{ rotate: isExpanded ? 180 : 0 }}
-            transition={{ duration: 0.25, ease: "easeInOut" }}
-            className="inline-flex"
-          >
-            <ChevronDown size={14} />
-          </motion.span>
-        </button>
-      </div>
-    </aside>
+          <div className="shrink-0 flex justify-center pb-2 pt-1 mt-auto lg:hidden">
+            <button
+              type="button"
+              onClick={() => setIsExpanded((v) => !v)}
+              className="flex items-center gap-1 text-[10px] text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] transition-colors"
+              aria-label={isExpanded ? "Collapse card" : "Expand card"}
+            >
+              <motion.span
+                animate={{ rotate: isExpanded ? 180 : 0 }}
+                transition={{ duration: 0.25, ease: "easeInOut" }}
+                className="inline-flex"
+              >
+                <ChevronDown size={14} />
+              </motion.span>
+            </button>
+          </div>
+        </>
+      )}
+      </aside>
+    </>
   );
 }
 
@@ -790,20 +892,38 @@ interface AccordionSectionProps {
   headerExtra?: React.ReactNode;
   children: React.ReactNode;
   defaultOpen?: boolean;
+  forceOpen?: boolean;
+  disableToggle?: boolean;
 }
 
-function AccordionSection({ title, headerExtra, children, defaultOpen = true }: AccordionSectionProps) {
+function AccordionSection({
+  title,
+  headerExtra,
+  children,
+  defaultOpen = true,
+  forceOpen = false,
+  disableToggle = false,
+}: AccordionSectionProps) {
   const [open, setOpen] = useState(defaultOpen);
+  const isOpen = forceOpen || open;
+
+  useEffect(() => {
+    if (forceOpen) setOpen(true);
+  }, [forceOpen]);
+
   return (
     <section className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] overflow-hidden">
       <div className="flex items-center justify-between px-5 min-h-[48px]">
         <button
           type="button"
-          onClick={() => setOpen((v) => !v)}
+          onClick={() => {
+            if (disableToggle) return;
+            setOpen((v) => !v);
+          }}
           className="flex items-center gap-2 flex-1 py-3.5 text-sm font-semibold text-[var(--color-text-primary)] text-left select-none"
         >
           <motion.span
-            animate={{ rotate: open ? 0 : -90 }}
+            animate={{ rotate: isOpen ? 0 : -90 }}
             transition={{ duration: 0.22, ease: "easeInOut" }}
             className="shrink-0"
           >
@@ -814,7 +934,7 @@ function AccordionSection({ title, headerExtra, children, defaultOpen = true }: 
         {headerExtra && <div className="shrink-0 pl-2">{headerExtra}</div>}
       </div>
       <AnimatePresence initial={false}>
-        {open && (
+        {isOpen && (
           <motion.div
             key="body"
             initial={{ height: 0, opacity: 0 }}
@@ -1420,7 +1540,7 @@ export default function ProfileSettingsPage() {
   // ────────────────────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex flex-col lg:flex-row lg:h-full lg:overflow-hidden p-4 lg:p-5 gap-4">
+    <div className="flex min-h-0 flex-col gap-4 p-4 lg:h-full lg:flex-row lg:overflow-hidden lg:p-5">
 
       {/* ── Left Card ─────────────────────────────────────────────────────── */}
       <LeftCard
@@ -1448,7 +1568,7 @@ export default function ProfileSettingsPage() {
       />
 
       {/* ── Right Content ──────────────────────────────────────────────────── */}
-      <div className="flex-1 flex flex-col lg:h-full px-2 lg:overflow-hidden rounded-lg overflow-hidden">
+      <div className="flex-1 min-h-0 overflow-hidden rounded-lg px-2 lg:flex lg:h-full lg:flex-col lg:overflow-hidden">
 
         {/* Header: title + Edit/Save/Cancel + VercelTabs */}
         <div className="shrink-0 pt-2 pb-0 border-b border-[var(--color-border)] bg-[var(--color-bg)]">
@@ -1467,11 +1587,11 @@ export default function ProfileSettingsPage() {
                 {isEditing && (
                   <motion.div key="save-cancel" initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={{ duration: 0.15 }} className="flex items-center gap-2">
                     <Button variant="outline" size="sm" onClick={cancelEditing} disabled={saving} className="gap-1.5">
-                      <X size={13} /> Cancel
+                      Cancel
                     </Button>
-                    <Button size="sm" onClick={handleSave} disabled={saving || !canSave} className="gap-1.5 min-w-[96px]">
+                    <Button size="sm" onClick={handleSave} disabled={saving || !canSave} className="gap-1.5 min-w-[96px] text-xs font-normal">
                       {saving
-                        ? <TextShimmer className="text-sm text-white" duration={1.2}>Saving…</TextShimmer>
+                        ? <TextShimmer className="text-xs text-white" duration={1.2}>Saving…</TextShimmer>
                         : "Save changes"}
                     </Button>
                   </motion.div>
@@ -1489,7 +1609,7 @@ export default function ProfileSettingsPage() {
         </div>
 
         {/* Tab content — each tab scrolls independently */}
-        <div className="flex-1 overflow-hidden">
+        <div className="flex-1 min-h-0 overflow-hidden">
           <AnimatePresence mode="wait">
             <motion.div
               key={activeTab}
@@ -1497,18 +1617,18 @@ export default function ProfileSettingsPage() {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -6 }}
               transition={{ duration: 0.2, ease: "easeOut" }}
-              className="h-full"
+              className="h-full min-h-0"
             >
 
               {/* ══════════════════════════════════════════════════════════════
                   TAB 1 — Personal Information
               ══════════════════════════════════════════════════════════════ */}
               {activeTab === "personal" && (
-                <div className="flex flex-col lg:flex-row gap-5 h-full overflow-hidden lg:overflow-hidden pt-6">
+                <div className="flex min-h-0 flex-col gap-5 overflow-hidden pt-6 lg:h-full lg:flex-row lg:overflow-hidden">
 
                   {/* ── Left column (70% on desktop, full-width on tablet/mobile) — scrolls independently ── */}
                   {/* On tablet/mobile this is the only column; right column items are appended below Skills */}
-                  <div className="flex-[7] min-w-0 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden space-y-4 pb-6">
+                  <div className="flex-[7] min-h-0 min-w-0 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden space-y-4 pb-6">
 
                     {/* Basic info */}
                     <AccordionSection title="Basic Information">
@@ -1832,13 +1952,13 @@ export default function ProfileSettingsPage() {
                   </div>
 
                   {/* ── Right column (30% on desktop, hidden on tablet/mobile — items moved below Skills) ── */}
-                  <div className="hidden lg:flex lg:flex-col flex-[3] min-w-0 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden space-y-4 pb-6">
+                  <div className="hidden flex-[3] min-h-0 min-w-0 overflow-y-auto space-y-4 pb-6 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden lg:flex lg:flex-col">
 
                     {/* Profile Completion card — desktop only */}
                     <ProfileCompletionCard profile={savedProfile} />
 
                     {/* Email card */}
-                    <AccordionSection title="Email Addresses">
+                    <AccordionSection title="Email Addresses" forceOpen={isEditing} disableToggle={isEditing}>
                       <AnimatePresence mode="wait">
                         {isEditing ? (
                           <motion.div key="email-edit" variants={FIELD_VARIANTS} initial="hidden" animate="visible">
@@ -1870,7 +1990,7 @@ export default function ProfileSettingsPage() {
                     </AccordionSection>
 
                     {/* Department & Role card */}
-                    <AccordionSection title="Department & Role">
+                    <AccordionSection title="Department & Role" forceOpen={isEditing} disableToggle={isEditing}>
 
                       {/* Department */}
                       <AnimatePresence mode="wait">

@@ -14,6 +14,7 @@ interface AnimatedTabsProps {
   defaultTab?: string;
   onChange?: (tabId: string) => void;
   className?: string;
+  itemClassName?: string;
 }
 
 export function AnimatedTabs({
@@ -21,6 +22,7 @@ export function AnimatedTabs({
   defaultTab,
   onChange,
   className = "",
+  itemClassName = "",
 }: AnimatedTabsProps) {
   const [activeTab, setActiveTab] = useState(defaultTab ?? tabs[0].id);
 
@@ -39,8 +41,8 @@ export function AnimatedTabs({
           <button
             key={tab.id}
             onClick={() => handleTabChange(tab.id)}
-            className="relative flex items-center gap-1.5 rounded-md px-3 py-1 text-sm font-medium
-              outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-[#2845D6]"
+            className={`relative flex items-center gap-1.5 rounded-md px-3 py-1 text-sm font-medium ${itemClassName}
+              outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-[#2845D6]`}
             style={{ WebkitTapHighlightColor: "transparent" }}
           >
             {/* Animated pill background */}

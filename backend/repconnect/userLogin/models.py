@@ -48,7 +48,10 @@ class loginCredentials(AbstractUser):
     #Status
     active = models.BooleanField(default=True)
     locked = models.BooleanField(default=False)
+    locked_at = models.DateTimeField(null=True, blank=True, db_index=True)
     change_password = models.BooleanField(default=False)
+    failed_login_attempts = models.PositiveSmallIntegerField(default=0)
+    last_failed_attempt = models.DateTimeField(null=True, blank=True)
 
     # Permissions 
     admin = models.BooleanField(default=False)

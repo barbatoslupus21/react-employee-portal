@@ -32,6 +32,10 @@ export function FileUploadDropzone({
 
   function upsertFiles(newFiles: FileList | File[]) {
     const items = Array.from(newFiles);
+    if (!multiple) {
+      onFilesChange(items.slice(0, 1));
+      return;
+    }
     const merged = [...files];
     for (const f of items) {
       if (!merged.some((existing) => existing.name === f.name && existing.size === f.size)) {
@@ -87,8 +91,8 @@ export function FileUploadDropzone({
           className={cn('transition-colors', isDragging ? 'text-[#2845D6]' : 'text-[var(--color-text-muted)]')}
         />
         <div>
-          <p className="text-sm font-medium text-[var(--color-text-primary)]">{label}</p>
-          <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
+          <p className="text-xs font-medium text-[var(--color-text-primary)]">{label}</p>
+          <p className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
             {files.length > 0
               ? `${files.length} file${files.length !== 1 ? 's' : ''} selected`
               : (helperText ?? accept)}

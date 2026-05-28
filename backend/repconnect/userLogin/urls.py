@@ -19,11 +19,17 @@ from .views import (
 
 urlpatterns = [
     path('csrf',                              CsrfCookieView.as_view(),                      name='auth-csrf'),
+    path('csrf/',                             CsrfCookieView.as_view(),                      name='auth-csrf-slash'),
     path('login',                             LoginView.as_view(),                            name='auth-login'),
+    path('login/',                            LoginView.as_view(),                            name='auth-login-slash'),
     path('logout',                            LogoutView.as_view(),                           name='auth-logout'),
+    path('logout/',                           LogoutView.as_view(),                           name='auth-logout-slash'),
     path('token/refresh',                     TokenRefreshView.as_view(),                     name='auth-token-refresh'),
+    path('token/refresh/',                    TokenRefreshView.as_view(),                     name='auth-token-refresh-slash'),
     path('me',                                MeView.as_view(),                               name='auth-me'),
+    path('me/',                               MeView.as_view(),                               name='auth-me-slash'),
     path('users',                             UserListView.as_view(),                         name='auth-users'),
+    path('users/',                            UserListView.as_view(),                         name='auth-users-slash'),
     # Employee admin endpoints
     path('admin/employees',                   EmployeeAdminListView.as_view(),                name='auth-admin-employees'),
     path('admin/employees/chart',             EmployeeAdminChartView.as_view(),               name='auth-admin-employees-chart'),

@@ -114,8 +114,8 @@ class PasswordPolicy(models.Model):
     )
     min_length = models.PositiveSmallIntegerField(
         default=8,
-        validators=[MinValueValidator(6), MaxValueValidator(64)],
-        help_text='Minimum number of characters (6 – 64).',
+        validators=[MinValueValidator(6), MaxValueValidator(128)],
+        help_text='Minimum number of characters (6 – 128).',
     )
     require_uppercase = models.BooleanField(
         default=True,
@@ -132,6 +132,25 @@ class PasswordPolicy(models.Model):
     require_special_character = models.BooleanField(
         default=False,
         help_text='Password must contain at least one special character (!@#$%^&* …).',
+    )
+    password_expiry_days = models.PositiveSmallIntegerField(
+        default=90,
+        validators=[MinValueValidator(1), MaxValueValidator(3650)],
+        help_text='Number of days before user passwords expire.',
+    )
+    default_password_prefix = models.CharField(
+        max_length=32,
+        default='Repco_',
+        help_text='Prefix used when generating default passwords (e.g., Repco_{id number}).',
+    )
+    enable_account_lockout = models.BooleanField(
+        default=True,
+        help_text='Enable automatic account lockout after repeated failed login attempts.',
+    )
+    max_failed_login_attempts = models.PositiveSmallIntegerField(
+        default=5,
+        validators=[MinValueValidator(1), MaxValueValidator(20)],
+        help_text='Maximum failed login attempts before account lockout (1 - 20).',
     )
 
     class Meta:
@@ -177,6 +196,8 @@ class EmailConfiguration(models.Model):
     password  = models.CharField(max_length=255)
     from_name = models.CharField(max_length=100, blank=True,
                                  help_text='Display name shown in the From field.')
+    from_address = models.EmailField(max_length=255, blank=True,
+                                    help_text='From email address (defaults to username if blank).')
 
     class Meta:
         verbose_name = 'Email Configuration'
@@ -189,6 +210,56 @@ class EmailConfiguration(models.Model):
         # Enforce singleton.
         self.pk = 1
         super().save(*args, **kwargs)
+
+
+class MemoAdvertisementSettings(models.Model):
+    """
+    Singleton model that controls whether memo and advertisement content is shown system-wide.
+    """
+
+    enabled = models.BooleanField(
+        default=False,
+        help_text='Toggle display of active memos on user-facing pages.',
+    )
+
+    class Meta:
+        verbose_name = 'Memo Advertisement Settings'
+        verbose_name_plural = 'Memo Advertisement Settings'
+
+    def __str__(self) -> str:
+        return 'Memo Advertisement Settings'
+
+    def save(self, *args, **kwargs) -> None:
+        self.pk = 1
+        super().save(*args, **kwargs)
+
+    @classmethod
+    def get(cls) -> 'MemoAdvertisementSettings':
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj
+
+
+class MemoAdvertisement(models.Model):
+    """
+    A memo or advertisement item created by admins.
+    """
+
+    title = models.CharField(max_length=200)
+    description = models.TextField(max_length=10000)
+    active = models.BooleanField(
+        default=True,
+        help_text='Whether this memo is active and should be shown to users.',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['created_at']
+        verbose_name = 'Memo Advertisement'
+        verbose_name_plural = 'Memo Advertisements'
+
+    def __str__(self) -> str:
+        return self.title
 
 
 # ── Position ───────────────────────────────────────────────────────────────────
@@ -239,3 +310,50 @@ class EmploymentType(models.Model):
 
     def __str__(self) -> str:
         return self.name
+
+
+class CompanyWorkdayConfiguration(models.Model):
+    """Singleton model that stores company-wide working weekdays.
+
+    Uses Python weekday indexing where Monday=0 and Sunday=6.
+    Weekday durations can be configured independently for custom schedules.
+    """
+
+    workdays = models.JSONField(
+        default=list,
+        help_text='List of working weekdays using Python weekday numbers (0=Mon ... 6=Sun).',
+    )
+    hours_per_day = models.DecimalField(
+        max_digits=4,
+        decimal_places=1,
+        default=8,
+        help_text='Configured number of working hours in one full leave day.',
+    )
+    weekday_durations = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text='Optional per-weekday duration map using Python weekday numbers as keys (0=Mon ... 6=Sun).',
+    )
+
+    class Meta:
+        verbose_name = 'Company Workday Configuration'
+        verbose_name_plural = 'Company Workday Configuration'
+
+    def __str__(self) -> str:
+        return 'Company Workday Configuration'
+
+    def save(self, *args, **kwargs) -> None:
+        self.pk = 1
+        super().save(*args, **kwargs)
+
+    @classmethod
+    def get(cls) -> 'CompanyWorkdayConfiguration':
+        obj, _ = cls.objects.get_or_create(
+            pk=1,
+            defaults={
+                'workdays': [0, 1, 2, 3, 4, 5],
+                'hours_per_day': 8,
+                'weekday_durations': {str(day): 8 if day in [0, 1, 2, 3, 4, 5] else 0 for day in range(7)},
+            },
+        )
+        return obj

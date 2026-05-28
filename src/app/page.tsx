@@ -10,13 +10,16 @@ import PrivacyConsentModal from "@/components/PrivacyConsentModal";
 import { ThreePromises } from "@/components/ui/three-promises";
 import { Features } from "@/components/blocks/features-6";
 import { Footer7 } from "@/components/ui/footer-7";
+import { seedCsrfCookie } from "@/lib/csrf";
 
 export default function Home() {
   const [loginOpen, setLoginOpen] = useState(false);
 
   // Seed the Django CSRF cookie so the login form can include X-CSRFToken.
   useEffect(() => {
-    fetch('/api/auth/csrf', { credentials: 'include' }).catch(() => {});
+    seedCsrfCookie().catch((error) => {
+      console.warn('Unable to seed CSRF cookie:', error);
+    });
   }, []);
 
   return (
