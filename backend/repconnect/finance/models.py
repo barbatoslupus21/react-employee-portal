@@ -435,3 +435,52 @@ class Payslip(models.Model):
 
     def __str__(self) -> str:
         return f'{self.employee} — {self.payslip_type} — {self.period_start}/{self.period_end}'
+
+
+class OJTPayslipData(models.Model):
+    employee = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='ojt_payslips',
+    )
+    period_start = models.DateField(null=True, blank=True, db_index=True)
+    period_end = models.DateField(null=True, blank=True)
+    regular_day = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    allowance_day = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    total_allowance = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    nd_allowance = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    grand_total = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    basic_school_share = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    basic_ojt_share = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    deduction = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    net_ojt_share = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    rice_allowance = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    ot_allowance = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    nd_ot_allowance = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    special_holiday = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    legal_holiday = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    satoff_allowance = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    rd_ot = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    adjustment = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    deduction_2 = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    ot_pay_allowance = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    total_allow = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    holiday_date = models.CharField(max_length=50, blank=True, default='')
+    rd_ot_date = models.CharField(max_length=50, blank=True, default='')
+    perfect_attendance = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    sent = models.BooleanField(
+        default=False,
+        help_text='True once the OJT payslip has been sent to the employee via email.',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self) -> str:
+        emp = self.employee
+        display_name = f"{getattr(emp, 'firstname', '')} {getattr(emp, 'lastname', '')}".strip()
+        if not display_name:
+            display_name = getattr(emp, 'username', None) or getattr(emp, 'idnumber', None) or str(emp.pk)
+        period = f"{self.period_start} – {self.period_end}" if self.period_start else str(self.created_at.date())
+        return f"OJT {display_name} - {period}"

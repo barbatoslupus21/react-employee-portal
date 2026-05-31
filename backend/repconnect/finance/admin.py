@@ -7,6 +7,7 @@ from .models import (
     Loan,
     LoanType,
     OfficeFinanceRate,
+    OJTPayslipData,
     Payslip,
     PayslipType,
     Savings,
@@ -116,4 +117,65 @@ class PayslipAdmin(admin.ModelAdmin):
     search_fields = ('employee__username', 'employee__first_name', 'employee__last_name', 'description')
     date_hierarchy = 'created_at'
     raw_id_fields = ('employee', 'payslip_type')
+
+
+@admin.register(OJTPayslipData)
+class OJTPayslipDataAdmin(admin.ModelAdmin):
+    list_display = (
+        'employee',
+        'period_start',
+        'period_end',
+        'grand_total',
+        'net_ojt_share',
+        'created_at',
+    )
+    list_filter = ('period_start', 'created_at')
+    search_fields = (
+        'employee__username',
+        'employee__firstname',
+        'employee__lastname',
+        'employee__idnumber',
+    )
+    date_hierarchy = 'created_at'
+    raw_id_fields = ('employee',)
+    readonly_fields = ('created_at',)
+    fieldsets = (
+        (None, {
+            'fields': ('employee', 'period_start', 'period_end'),
+        }),
+        ('Basic Computation', {
+            'fields': (
+                'regular_day',
+                'allowance_day',
+                'total_allowance',
+                'nd_allowance',
+                'grand_total',
+                'basic_school_share',
+                'basic_ojt_share',
+                'deduction',
+                'net_ojt_share',
+            ),
+        }),
+        ('Additional Allowances', {
+            'fields': (
+                'rice_allowance',
+                'ot_allowance',
+                'nd_ot_allowance',
+                'special_holiday',
+                'legal_holiday',
+                'satoff_allowance',
+                'rd_ot',
+                'adjustment',
+                'deduction_2',
+                'ot_pay_allowance',
+                'total_allow',
+                'holiday_date',
+                'rd_ot_date',
+                'perfect_attendance',
+            ),
+        }),
+        ('Metadata', {
+            'fields': ('created_at',),
+        }),
+    )
 

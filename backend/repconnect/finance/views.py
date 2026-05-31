@@ -457,6 +457,225 @@ def _queue_finance_notifications(
     transaction.on_commit(_emit)
 
 
+# ── OJT Payslip PDF builder ───────────────────────────────────────────────────
+
+def _build_ojt_payslip_pdf(obj, user, line_name: str = '—') -> bytes:
+    """Return raw PDF bytes for an OJT payslip, mirroring OJTPayslipViewModal."""
+    from pathlib import Path as _Path
+    from reportlab.lib.pagesizes import A4
+    from reportlab.pdfgen import canvas as _rl_canvas
+    from reportlab.lib.colors import HexColor
+
+    buf = io.BytesIO()
+    W, H = A4  # 595.28 x 841.89 pt
+    c = _rl_canvas.Canvas(buf, pagesize=A4)
+
+    # ── Try to register a Unicode-capable font (supports ₱) ──────────────────
+    body_font = 'Helvetica'
+    bold_font = 'Helvetica-Bold'
+    peso = 'PHP '
+    try:
+        from reportlab.pdfbase.ttfonts import TTFont
+        from reportlab.pdfbase import pdfmetrics
+        _font_pairs = [
+            (r'C:\Windows\Fonts\arial.ttf',   r'C:\Windows\Fonts\arialbd.ttf'),
+            (r'C:\Windows\Fonts\calibri.ttf', r'C:\Windows\Fonts\calibrib.ttf'),
+        ]
+        for _reg, _reg_bold in _font_pairs:
+            import os as _os
+            if _os.path.exists(_reg):
+                pdfmetrics.registerFont(TTFont('_OJTBody', _reg))
+                body_font = '_OJTBody'
+                peso = '₱'  # ₱
+                if _os.path.exists(_reg_bold):
+                    pdfmetrics.registerFont(TTFont('_OJTBold', _reg_bold))
+                    bold_font = '_OJTBold'
+                break
+    except Exception:
+        pass
+
+    # ── Helpers ───────────────────────────────────────────────────────────────
+    def _n(v):
+        try:
+            return f"{float(v):,.2f}"
+        except Exception:
+            return '0.00'
+
+    def _fmt_period(start, end):
+        if not start or not end:
+            return '—'
+        MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN',
+                  'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC']
+        sm = MONTHS[start.month - 1]
+        em = MONTHS[end.month - 1]
+        sd, ed, sy, ey = start.day, end.day, start.year, end.year
+        if start.month == end.month and sy == ey:
+            return f"{sm} {sd}-{ed},{sy}"
+        if sy == ey:
+            return f"{sm} {sd} - {em} {ed},{sy}"
+        return f"{sm} {sd},{sy} - {em} {ed},{ey}"
+
+    # ── Employee data ─────────────────────────────────────────────────────────
+    lastname  = (getattr(user, 'lastname',  '') or '').strip()
+    firstname = (getattr(user, 'firstname', '') or '').strip()
+    if lastname and firstname:
+        full_name = f"{lastname}, {firstname}".upper()
+    elif lastname or firstname:
+        full_name = (lastname or firstname).upper()
+    else:
+        full_name = (getattr(user, 'idnumber', '') or str(user.pk)).upper()
+
+    id_number = getattr(user, 'idnumber', '') or ''
+    period    = _fmt_period(obj.period_start, obj.period_end)
+
+    # ── Layout constants ──────────────────────────────────────────────────────
+    ML        = 40          # left/right margin
+    MT        = 30          # top margin
+    CW        = W - 2 * ML  # content width = 515.28 pt
+    blue      = HexColor('#1a3db5')
+    gray_bg   = HexColor('#f0f0f0')
+    dark_gray = HexColor('#555555')
+    border_c  = HexColor('#aaaaaa')
+    cell_c    = HexColor('#cccccc')
+    ROW_H     = 14
+    HDR_H     = 16
+
+    y = H - MT  # current y-cursor (descends as content is drawn)
+
+    # ── Company header (logo + name + address) ────────────────────────────────
+    LOGO_SIZE = 52
+    logo_path = _Path(__file__).resolve().parent.parent.parent.parent / 'public' / 'ryonanlogo.png'
+    if logo_path.exists():
+        try:
+            c.drawImage(
+                str(logo_path), ML, y - LOGO_SIZE,
+                width=LOGO_SIZE, height=LOGO_SIZE, mask='auto',
+            )
+        except Exception:
+            pass
+
+    text_cx = (ML + LOGO_SIZE + 6 + W - ML) / 2  # center between logo-right and right margin
+    c.setFont(bold_font, 11)
+    c.setFillColorRGB(0, 0, 0)
+    c.drawCentredString(text_cx, y - 16, 'RYONAN ELECTRIC PHILIPPINES CORPORATION')
+    c.setFont(body_font, 8)
+    c.setFillColor(dark_gray)
+    c.drawCentredString(text_cx, y - 29, '105 East Main Avenue, Special Export Processing Zone')
+    c.drawCentredString(text_cx, y - 39, 'Laguna, Technopark, Binan, Laguna')
+
+    y -= LOGO_SIZE + 8
+
+    # ── Horizontal rule ───────────────────────────────────────────────────────
+    c.setStrokeColor(border_c)
+    c.line(ML, y, W - ML, y)
+    y -= 4
+
+    # ── Employee info (2-column grid) ─────────────────────────────────────────
+    LBL_SZ = 8
+    VAL_SZ = 9
+    GAP    = 13
+    col1_x = ML
+    col2_x = ML + CW / 2
+
+    for (lbl1, val1), (lbl2, val2) in [
+        (('ID Number:', id_number), ('Period Covered:', period)),
+        (('Employee Name:', full_name), ('Line:', line_name or '—')),
+    ]:
+        y -= GAP
+        c.setFont(body_font, LBL_SZ)
+        c.setFillColor(dark_gray)
+        c.drawString(col1_x, y, lbl1)
+        c.drawString(col2_x, y, lbl2)
+        y -= GAP
+        c.setFont(bold_font, VAL_SZ)
+        c.setFillColorRGB(0, 0, 0)
+        c.drawString(col1_x, y, val1)
+        c.drawString(col2_x, y, val2)
+        y -= 4
+
+    y -= 6
+
+    # ── Two-column tables ─────────────────────────────────────────────────────
+    TBL_GAP = 8
+    TW      = (CW - TBL_GAP) / 2
+    left_x  = ML
+    right_x = ML + TW + TBL_GAP
+    LBL_W   = TW * 0.62
+    VAL_W   = TW - LBL_W
+    PAD     = 3
+
+    def _draw_table(tx, title, rows, start_y):
+        cy = start_y
+        # Header
+        c.setFillColor(gray_bg)
+        c.rect(tx, cy - HDR_H, TW, HDR_H, fill=1, stroke=0)
+        c.setStrokeColor(border_c)
+        c.rect(tx, cy - HDR_H, TW, HDR_H, fill=0, stroke=1)
+        c.setFont(bold_font, 9)
+        c.setFillColorRGB(0, 0, 0)
+        c.drawCentredString(tx + TW / 2, cy - HDR_H + 5, title)
+        cy -= HDR_H
+
+        for label, val, is_bold in rows:
+            fn = bold_font if is_bold else body_font
+            c.setStrokeColor(cell_c)
+            # Label cell
+            c.rect(tx, cy - ROW_H, LBL_W, ROW_H, fill=0, stroke=1)
+            c.setFont(fn, 8)
+            c.setFillColor(blue)
+            c.drawString(tx + PAD, cy - ROW_H + 4, label)
+            # Value cell
+            c.rect(tx + LBL_W, cy - ROW_H, VAL_W, ROW_H, fill=0, stroke=1)
+            c.setFillColorRGB(0, 0, 0)
+            c.drawRightString(tx + TW - PAD, cy - ROW_H + 4, val)
+            cy -= ROW_H
+
+        return cy  # bottom edge of table
+
+    left_rows = [
+        ('REGULAR # of Days Work',     _n(obj.regular_day),        False),
+        ('ALLOWANCE/DAY',              _n(obj.allowance_day),       False),
+        ('Total:',                     _n(obj.total_allowance),     True),
+        ('REG ND ALLOWANCE',           _n(obj.nd_allowance),        False),
+        ('GRAND TOTAL',                _n(obj.grand_total),         False),
+        ('BASIC ALLOW.SCHOOL SHARE',   _n(obj.basic_school_share),  False),
+        ('BASIC ALLOW. OJT SHARE',     _n(obj.basic_ojt_share),     False),
+        ('DEDUCTION',                  _n(obj.deduction),           False),
+        ('NET BASIC ALLOW. OJT SHARE', _n(obj.net_ojt_share),       True),
+    ]
+    right_rows = [
+        ('RICE ALLOWANCE',             _n(obj.rice_allowance),      False),
+        ('Reg OT ALLOWANCE',           _n(obj.ot_allowance),        False),
+        ('REG ND OT ALLOWANCE',        _n(obj.nd_ot_allowance),     False),
+        ('SPECIAL HOLIDAY',            _n(obj.special_holiday),     False),
+        ('LEGAL HOLIDAY',              _n(obj.legal_holiday),       False),
+        ('SAT-OFF ALLOWANCE',          _n(obj.satoff_allowance),    False),
+        ('RD OT',                      _n(obj.rd_ot),               False),
+        ('PERFECT ATTENDANCE',         _n(obj.perfect_attendance),  False),
+        ('ADJUSTMENT',                 _n(obj.adjustment),          False),
+        ('DEDUCTION 2',                _n(obj.deduction_2),         False),
+        ('NET OJT OT PAY ALLOWANCE',   _n(obj.ot_pay_allowance),    True),
+    ]
+
+    tbl_start = y
+    left_bot  = _draw_table(left_x,  'Regular Day', left_rows,  tbl_start)
+    right_bot = _draw_table(right_x, 'Allowances',  right_rows, tbl_start)
+
+    y = min(left_bot, right_bot) - 10
+
+    # ── Total Allowance box ───────────────────────────────────────────────────
+    BOX_H = 24
+    c.setStrokeColor(border_c)
+    c.rect(ML, y - BOX_H, CW, BOX_H, fill=0, stroke=1)
+    c.setFont(bold_font, 11)
+    c.setFillColorRGB(0, 0, 0)
+    c.drawCentredString(W / 2, y - BOX_H + 8, f"TOTAL ALLOWANCE:  {peso}{_n(obj.total_allow)}")
+
+    c.save()
+    buf.seek(0)
+    return buf.read()
+
+
 # ── Views ─────────────────────────────────────────────────────────────────────
 
 class FinanceTypeListView(APIView):
@@ -671,16 +890,53 @@ class FinanceEmployeeDetailView(APIView):
         if emp.admin or emp.accounting or emp.hr:
             return Response({'detail': 'Employee not found.'}, status=status.HTTP_404_NOT_FOUND)
 
-        loans      = Loan.objects.filter(employee=emp).order_by('-created_at')
-        allowances = Allowance.objects.filter(employee=emp).order_by('-created_at')
-        savings    = Savings.objects.filter(employee=emp).order_by('-created_at')
-        payslips   = Payslip.objects.filter(employee=emp).order_by('-created_at')
+        from .models import OJTPayslipData
+
+        loans        = Loan.objects.filter(employee=emp).order_by('-created_at')
+        allowances   = Allowance.objects.filter(employee=emp).order_by('-created_at')
+        savings      = Savings.objects.filter(employee=emp).order_by('-created_at')
+        payslips     = Payslip.objects.filter(employee=emp).order_by('-created_at')
+        ojt_payslips = OJTPayslipData.objects.filter(employee=emp).order_by('-period_start', '-created_at')
+
+        ojt_data = [
+            {
+                'id':                obj.pk,
+                'period_start':      obj.period_start.isoformat() if obj.period_start else None,
+                'period_end':        obj.period_end.isoformat()   if obj.period_end   else None,
+                'regular_day':       str(obj.regular_day),
+                'allowance_day':     str(obj.allowance_day),
+                'total_allowance':   str(obj.total_allowance),
+                'nd_allowance':      str(obj.nd_allowance),
+                'grand_total':       str(obj.grand_total),
+                'basic_school_share': str(obj.basic_school_share),
+                'basic_ojt_share':   str(obj.basic_ojt_share),
+                'deduction':         str(obj.deduction),
+                'net_ojt_share':     str(obj.net_ojt_share),
+                'rice_allowance':    str(obj.rice_allowance),
+                'ot_allowance':      str(obj.ot_allowance),
+                'nd_ot_allowance':   str(obj.nd_ot_allowance),
+                'special_holiday':   str(obj.special_holiday),
+                'legal_holiday':     str(obj.legal_holiday),
+                'satoff_allowance':  str(obj.satoff_allowance),
+                'rd_ot':             str(obj.rd_ot),
+                'adjustment':        str(obj.adjustment),
+                'deduction_2':       str(obj.deduction_2),
+                'ot_pay_allowance':  str(obj.ot_pay_allowance),
+                'total_allow':       str(obj.total_allow),
+                'perfect_attendance': str(obj.perfect_attendance),
+                'holiday_date':      obj.holiday_date,
+                'rd_ot_date':        obj.rd_ot_date,
+                'created_at':        obj.created_at.isoformat(),
+            }
+            for obj in ojt_payslips
+        ]
 
         return Response({
-            'loans':      LoanSerializer(loans, many=True).data,
-            'allowances': AllowanceSerializer(allowances, many=True).data,
-            'savings':    SavingsSerializer(savings, many=True).data,
-            'payslips':   PayslipSerializer(payslips, many=True, context={'request': request}).data,
+            'loans':        LoanSerializer(loans, many=True).data,
+            'allowances':   AllowanceSerializer(allowances, many=True).data,
+            'savings':      SavingsSerializer(savings, many=True).data,
+            'payslips':     PayslipSerializer(payslips, many=True, context={'request': request}).data,
+            'ojt_payslips': ojt_data,
         })
 
 
@@ -1903,6 +2159,324 @@ class FinanceSavingsTemplateView(APIView):
         return response
 
 
+class FinanceOJTPayslipTemplateView(APIView):
+    """
+    GET /api/finance/admin/template/ojt-payslip
+    Returns a clean xlsx template for bulk OJT payslip import.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request) -> HttpResponse:
+        err = _require_accounting_admin(request)
+        if err:
+            return err
+
+        from openpyxl import Workbook
+        from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+        from openpyxl.utils import get_column_letter
+
+        def _side():
+            return Side(style='thin', color='FF000000')
+
+        thin     = Border(left=_side(), right=_side(), top=_side(), bottom=_side())
+        hdr_fill = PatternFill(start_color='FF2845D6', end_color='FF2845D6', fill_type='solid')
+
+        headers = [
+            'ID Number',
+            'Regular Day',
+            'Allowance Day',
+            'Total Allowance',
+            'ND Allowance',
+            'Grand Total',
+            'Basic School Share',
+            'Basic OJT Share',
+            'Deduction',
+            'Net OJT Share',
+            'Rice Allowance',
+            'OT Allowance',
+            'ND OT Allowance',
+            'Special Holiday',
+            'Legal Holiday',
+            'Satoff Allowance',
+            'RD OT',
+            'Adjustment',
+            'Deduction 2',
+            'OT Pay Allowance',
+            'Total Allow',
+            'Holiday Date',
+            'RD OT Date',
+            'Perfect Attendance',
+        ]
+        col_widths = [18] * len(headers)
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = 'OJT Payslip'
+
+        for col, (header, width) in enumerate(zip(headers, col_widths), 1):
+            cell = ws.cell(row=1, column=col, value=header)
+            cell.font      = Font(bold=True, color='FFFFFFFF', size=10)
+            cell.fill      = hdr_fill
+            cell.border    = thin
+            cell.alignment = Alignment(horizontal='center', vertical='center')
+            ws.column_dimensions[get_column_letter(col)].width = width
+
+        ws.row_dimensions[1].height = 18
+
+        example_values = [
+            '960921', '22', '5000', '110000', '1500',
+            '111500', '55750', '55750', '0', '55750',
+            '0', '0', '0', '0', '0',
+            '0', '0', '0', '0', '0',
+            '0', '01/15/2026', '01/22/2026', '0',
+        ]
+        for col, val in enumerate(example_values, 1):
+            cell = ws.cell(row=2, column=col, value=val)
+            cell.border = thin
+            cell.font   = Font(color='FF888888', italic=True)
+
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+
+        response = HttpResponse(
+            buf.read(),
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+        response['Content-Disposition'] = 'attachment; filename="ojt_payslip_template.xlsx"'
+        return response
+
+
+def _format_ojt_cutoff(start: 'datetime.date', end: 'datetime.date') -> str:
+    """Format a date range into the OJT cut-off string.
+
+    Same month & year  : "Apr 15 - 30, 2026"
+    Different month, same year  : "Apr 30 - May 08, 2026"
+    Different month & year : "Dec 24, 2026 - Jan 05, 2027"
+    """
+    MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+    sm, em = MONTHS[start.month - 1], MONTHS[end.month - 1]
+    sd, ed = start.day, end.day
+    sy, ey = start.year, end.year
+    if start.month == end.month and sy == ey:
+        return f"{sm} {sd} - {ed}, {sy}"
+    elif sy == ey:
+        return f"{sm} {sd} - {em} {ed:02d}, {sy}"
+    else:
+        return f"{sm} {sd}, {sy} - {em} {ed:02d}, {ey}"
+
+
+def _parse_ojt_decimal(value, field: str, row: int) -> 'tuple[Decimal | None, dict | None]':
+    """Parse a cell as a non-negative Decimal for OJT import.
+    None / blank / N/A → Decimal('0').
+    Non-numeric text → error.
+    """
+    if value is None:
+        return Decimal('0'), None
+    s = str(value).strip()
+    if s == '' or s.lower() in ('none', 'n/a', '-'):
+        return Decimal('0'), None
+    try:
+        d = Decimal(s.replace(',', '')).quantize(Decimal('0.01'))
+        if d < 0:
+            return None, {'row': row, 'field': field, 'reason': f'{field} must be 0 or greater.'}
+        return d, None
+    except (InvalidOperation, TypeError, ValueError):
+        return None, {'row': row, 'field': field, 'reason': f'{field} must be a numeric value (letters are not allowed).'}
+
+
+def _build_ojt_error_excel(original_rows: list[list], failures: list[dict]) -> str:
+    """Build an OJT-specific error report preserving all original columns + a Remarks column."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
+
+    OJT_HEADERS = [
+        'ID Number', 'Regular Day', 'Allowance Day', 'Total Allowance', 'ND Allowance',
+        'Grand Total', 'Basic School Share', 'Basic OJT Share', 'Deduction', 'Net OJT Share',
+        'Rice Allowance', 'OT Allowance', 'ND OT Allowance', 'Special Holiday', 'Legal Holiday',
+        'Satoff Allowance', 'RD OT', 'Adjustment', 'Deduction 2', 'OT Pay Allowance',
+        'Total Allow', 'Holiday Date', 'RD OT Date', 'Perfect Attendance', 'Remarks',
+    ]
+    NUM_DATA_COLS = 24
+
+    wb = Workbook()
+    ws = wb.active
+    assert ws is not None
+    ws.title = 'OJT Import Errors'
+
+    def _side():
+        return Side(style='thin', color='FF000000')
+
+    thin     = Border(left=_side(), right=_side(), top=_side(), bottom=_side())
+    hdr_fill = PatternFill(start_color='FFCC0000', end_color='FFCC0000', fill_type='solid')
+    red_font = Font(color='FFFF0000')
+    hdr_font = Font(bold=True, color='FFFFFFFF')
+
+    for col, h in enumerate(OJT_HEADERS, 1):
+        cell = ws.cell(row=1, column=col, value=h)
+        cell.font      = hdr_font
+        cell.fill      = hdr_fill
+        cell.border    = thin
+        cell.alignment = Alignment(horizontal='center')
+        ws.column_dimensions[get_column_letter(col)].width = 20 if col == len(OJT_HEADERS) else 18
+
+    error_map: dict[int, str] = {}
+    for f in failures:
+        r = f.get('row')
+        if r is not None:
+            reason = f.get('reason', '')
+            error_map[r] = (error_map[r] + '; ' + reason) if r in error_map else reason
+
+    for i, row in enumerate(original_rows[1:], start=2):
+        while len(row) < NUM_DATA_COLS:
+            row.append(None)
+        has_error = i in error_map
+        for col, val in enumerate(row[:NUM_DATA_COLS], 1):
+            cell = ws.cell(row=i, column=col, value=str(val) if val is not None else '')
+            cell.border = thin
+            if has_error:
+                cell.font = red_font
+        remarks_cell = ws.cell(row=i, column=NUM_DATA_COLS + 1, value=error_map.get(i, ''))
+        remarks_cell.border = thin
+        if has_error:
+            remarks_cell.font = red_font
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return base64.b64encode(buf.read()).decode('utf-8')
+
+
+class FinanceOJTPayslipImportView(APIView):
+    """
+    POST /api/finance/admin/import/ojt-payslip
+    Accepts a single xlsx file + period_start + period_end (YYYY-MM-DD).
+    Validates all rows before writing (all-or-nothing).
+    Returns { imported, failed, error_report_b64 }.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request) -> Response:
+        import datetime as _dt
+        err = _require_accounting_admin(request)
+        if err:
+            return err
+
+        # ── Parse period dates ─────────────────────────────────────────────────
+        period_start_raw = request.POST.get('period_start', '').strip()
+        period_end_raw   = request.POST.get('period_end',   '').strip()
+        if not period_start_raw or not period_end_raw:
+            return Response({'detail': 'period_start and period_end are required.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            period_start = _dt.date.fromisoformat(period_start_raw)
+            period_end   = _dt.date.fromisoformat(period_end_raw)
+        except (ValueError, TypeError):
+            return Response({'detail': 'period_start and period_end must be valid ISO dates (YYYY-MM-DD).'}, status=status.HTTP_400_BAD_REQUEST)
+        if period_end < period_start:
+            period_start, period_end = period_end, period_start
+
+        # ── Read file ──────────────────────────────────────────────────────────
+        file_obj = request.FILES.get('file')
+        if not file_obj:
+            return Response({'detail': 'No file uploaded.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        rows, read_err = _read_xlsx(file_obj)
+        if read_err:
+            return Response({'detail': read_err}, status=status.HTTP_400_BAD_REQUEST)
+        if len(rows) < 2:
+            return Response({'detail': 'File has no data rows (need at least header + one data row).'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Column order (0-based): matches template exactly
+        # 0:id, 1:regular_day, 2:allowance_day, 3:total_allowance, 4:nd_allowance,
+        # 5:grand_total, 6:basic_school_share, 7:basic_ojt_share, 8:deduction,
+        # 9:net_ojt_share, 10:rice_allowance, 11:ot_allowance, 12:nd_ot_allowance,
+        # 13:special_holiday, 14:legal_holiday, 15:satoff_allowance, 16:rd_ot,
+        # 17:adjustment, 18:deduction_2, 19:ot_pay_allowance, 20:total_allow,
+        # 21:holiday_date, 22:rd_ot_date, 23:perfect_attendance
+        NUMERIC_FIELDS = [
+            (1,  'Regular Day',       'regular_day'),
+            (2,  'Allowance Day',     'allowance_day'),
+            (3,  'Total Allowance',   'total_allowance'),
+            (4,  'ND Allowance',      'nd_allowance'),
+            (5,  'Grand Total',       'grand_total'),
+            (6,  'Basic School Share','basic_school_share'),
+            (7,  'Basic OJT Share',   'basic_ojt_share'),
+            (8,  'Deduction',         'deduction'),
+            (9,  'Net OJT Share',     'net_ojt_share'),
+            (10, 'Rice Allowance',    'rice_allowance'),
+            (11, 'OT Allowance',      'ot_allowance'),
+            (12, 'ND OT Allowance',   'nd_ot_allowance'),
+            (13, 'Special Holiday',   'special_holiday'),
+            (14, 'Legal Holiday',     'legal_holiday'),
+            (15, 'Satoff Allowance',  'satoff_allowance'),
+            (16, 'RD OT',             'rd_ot'),
+            (17, 'Adjustment',        'adjustment'),
+            (18, 'Deduction 2',       'deduction_2'),
+            (19, 'OT Pay Allowance',  'ot_pay_allowance'),
+            (20, 'Total Allow',       'total_allow'),
+            (23, 'Perfect Attendance','perfect_attendance'),
+        ]
+
+        failures: list[dict] = []
+        operations: list[dict] = []
+
+        # ── Phase 1: validate every row ────────────────────────────────────────
+        for row_idx, row in enumerate(rows[1:], start=2):
+            while len(row) < 24:
+                row.append(None)
+
+            idnumber = str(row[0]).strip() if row[0] is not None else ''
+            if not idnumber:
+                failures.append({'row': row_idx, 'field': 'ID Number', 'reason': 'ID Number is required.'})
+                continue
+
+            employee, emp_err = _lookup_employee(idnumber, row_idx)
+            if emp_err:
+                failures.append(emp_err)
+                continue
+
+            row_data: dict = {'employee': employee}
+            row_ok = True
+
+            for col_idx, label, model_field in NUMERIC_FIELDS:
+                val, parse_err = _parse_ojt_decimal(row[col_idx], label, row_idx)
+                if parse_err:
+                    failures.append(parse_err)
+                    row_ok = False
+                else:
+                    row_data[model_field] = val
+
+            if not row_ok:
+                continue
+
+            # AlphaNumeric text fields — store as-is; None → empty string
+            def _text(v) -> str:
+                if v is None:
+                    return ''
+                s = str(v).strip()
+                return '' if s.lower() in ('none', 'n/a') else s
+
+            row_data['holiday_date']  = _text(row[21])
+            row_data['rd_ot_date']    = _text(row[22])
+            row_data['period_start']  = period_start
+            row_data['period_end']    = period_end
+            operations.append(row_data)
+
+        # ── Phase 2: all-or-nothing ────────────────────────────────────────────
+        if failures:
+            error_b64 = _build_ojt_error_excel(rows, failures)
+            return Response({'imported': 0, 'failed': len(failures), 'error_report_b64': error_b64})
+
+        # ── Phase 3: bulk create in atomic transaction ─────────────────────────
+        from .models import OJTPayslipData
+        with transaction.atomic():
+            objs = [OJTPayslipData(**data) for data in operations]
+            OJTPayslipData.objects.bulk_create(objs)
+
+        return Response({'imported': len(objs), 'failed': 0, 'error_report_b64': None})
+
+
 class FinanceEmployeeFilterOptionsView(APIView):
     """
     GET /api/finance/admin/employee-filters
@@ -1942,6 +2516,28 @@ class FinanceEmployeeFilterOptionsView(APIView):
         idnumbers = list(qs.order_by('idnumber').values_list('idnumber', flat=True))
 
         return Response({'departments': departments, 'lines': lines, 'idnumbers': idnumbers})
+
+
+# ── OJT Payslip delete ────────────────────────────────────────────────────────
+
+class FinanceOJTPayslipDeleteView(APIView):
+    """
+    DELETE /api/finance/admin/ojt-payslips/<pk>
+    Permanently deletes an OJT payslip data record.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, pk: int) -> Response:
+        err = _require_accounting_admin(request)
+        if err:
+            return err
+        from .models import OJTPayslipData
+        try:
+            obj = OJTPayslipData.objects.get(pk=pk)
+        except OJTPayslipData.DoesNotExist:
+            return Response({'detail': 'OJT payslip not found.'}, status=status.HTTP_404_NOT_FOUND)
+        obj.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 # ── Payslip delete ─────────────────────────────────────────────────────────────
@@ -2334,6 +2930,121 @@ def _build_payslip_email(payslip, employee) -> tuple[str, str]:
     return subject, html_body
 
 
+def _build_ojt_payslip_email(obj, employee, period_label: str) -> tuple[str, str]:
+    """Build subject and HTML body for an OJT payslip email notification."""
+    full_name = (
+        f'{employee.firstname or ""} {employee.lastname or ""}'.strip()
+        or employee.idnumber
+    )
+    subject = f'Your OJT Payslip for {period_label} is Ready'
+    html_body = f"""\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OJT Payslip Notification</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f4f6f8;font-family:'Segoe UI',Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" border="0"
+         style="background-color:#f4f6f8;padding:32px 16px;">
+    <tr>
+      <td align="center">
+        <table width="600" cellpadding="0" cellspacing="0" border="0"
+               style="max-width:600px;width:100%;background-color:#ffffff;
+                      border-radius:12px;overflow:hidden;
+                      box-shadow:0 4px 16px rgba(0,0,0,0.08);">
+
+          <!-- Header -->
+          <tr>
+            <td style="background-color:#2845D6;padding:28px 32px;text-align:center;">
+              <h1 style="margin:0;color:#ffffff;font-size:22px;
+                         font-weight:700;letter-spacing:-0.3px;">REPConnect</h1>
+              <p style="margin:6px 0 0;color:rgba(255,255,255,0.80);
+                        font-size:13px;">HR &amp; Finance System</p>
+            </td>
+          </tr>
+
+          <!-- Body -->
+          <tr>
+            <td style="padding:32px 32px 24px;">
+              <p style="margin:0 0 16px;font-size:15px;color:#262626;">Dear <strong>{full_name}</strong>,</p>
+
+              <p style="margin:0 0 16px;font-size:14px;color:#3a3a3a;line-height:1.7;">
+                We would like to inform you that your OJT payslip for the period
+                <strong>{period_label}</strong> is now available.
+                A copy has been securely attached to this email for your reference and review.
+              </p>
+
+              <p style="margin:0 0 24px;font-size:14px;color:#3a3a3a;line-height:1.7;">
+                Please take a moment to verify the details. If you have any questions or require
+                clarification regarding your OJT payslip, you may coordinate directly with your
+                <strong>HR or Finance department</strong> for assistance.
+              </p>
+
+              <p style="margin:0 0 8px;font-size:14px;color:#3a3a3a;">Thank you.</p>
+              <p style="margin:0;font-size:14px;color:#3a3a3a;">
+                Sincerely,<br />
+                <strong>REPConnect</strong><br />
+                <span style="color:#6b7280;">HR &amp; Finance System</span>
+              </p>
+            </td>
+          </tr>
+
+          <!-- Notice block -->
+          <tr>
+            <td style="padding:0 32px 24px;">
+              <table width="100%" cellpadding="0" cellspacing="0" border="0"
+                     style="background-color:#fef9ec;border:1px solid #fde68a;
+                            border-radius:8px;">
+                <tr>
+                  <td style="padding:12px 16px;font-size:12px;color:#92400e;line-height:1.6;">
+                    &#9888;&nbsp; <em>This is a system-generated email.
+                    Please do not reply to this message.</em>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Security Reminder -->
+          <tr>
+            <td style="padding:0 32px 32px;">
+              <table width="100%" cellpadding="0" cellspacing="0" border="0"
+                     style="border-top:1px solid #e5e7eb;">
+                <tr>
+                  <td style="padding-top:20px;font-size:11px;color:#6b7280;line-height:1.7;">
+                    <strong style="color:#374151;">Security Reminder:</strong><br />
+                    Please remain vigilant against phishing and malicious emails.
+                    Do not click on links from suspicious or unknown senders, and avoid
+                    downloading attachments with unfamiliar or unexpected file formats.
+                    Always verify the sender and ensure the email is legitimate before
+                    taking any action.
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="background-color:#f4f6f8;padding:16px 32px;text-align:center;
+                       border-top:1px solid #e5e7eb;">
+              <p style="margin:0;font-size:11px;color:#9ca3af;">
+                &copy; REPConnect HR &amp; Finance System &bull; All rights reserved.
+              </p>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>"""
+    return subject, html_body
+
+
 class UserFinanceLoanSettingsView(APIView):
     """
     GET /api/finance/my/loan-settings
@@ -2358,11 +3069,48 @@ class UserFinanceRecordsView(APIView):
         allowances = Allowance.objects.filter(employee=user).order_by('-created_at')
         savings    = Savings.objects.filter(employee=user).order_by('-created_at')
         payslips   = Payslip.objects.filter(employee=user).order_by('-created_at')
+        from .models import OJTPayslipData
+        ojt_payslips = OJTPayslipData.objects.filter(employee=user).order_by('-period_start', '-created_at')
+        ojt_data = [
+            {
+                'id':                obj.pk,
+                'period_start':      obj.period_start.isoformat() if obj.period_start else None,
+                'period_end':        obj.period_end.isoformat()   if obj.period_end   else None,
+                'regular_day':       str(obj.regular_day),
+                'allowance_day':     str(obj.allowance_day),
+                'total_allowance':   str(obj.total_allowance),
+                'nd_allowance':      str(obj.nd_allowance),
+                'grand_total':       str(obj.grand_total),
+                'basic_school_share': str(obj.basic_school_share),
+                'basic_ojt_share':   str(obj.basic_ojt_share),
+                'deduction':         str(obj.deduction),
+                'net_ojt_share':     str(obj.net_ojt_share),
+                'rice_allowance':    str(obj.rice_allowance),
+                'ot_allowance':      str(obj.ot_allowance),
+                'nd_ot_allowance':   str(obj.nd_ot_allowance),
+                'special_holiday':   str(obj.special_holiday),
+                'legal_holiday':     str(obj.legal_holiday),
+                'satoff_allowance':  str(obj.satoff_allowance),
+                'rd_ot':             str(obj.rd_ot),
+                'adjustment':        str(obj.adjustment),
+                'deduction_2':       str(obj.deduction_2),
+                'ot_pay_allowance':  str(obj.ot_pay_allowance),
+                'total_allow':       str(obj.total_allow),
+                'perfect_attendance': str(obj.perfect_attendance),
+                'holiday_date':      obj.holiday_date,
+                'rd_ot_date':        obj.rd_ot_date,
+                'sent':              obj.sent,
+                'created_at':        obj.created_at.isoformat(),
+            }
+            for obj in ojt_payslips
+        ]
+
         response_data = {
-            'loans':      LoanSerializer(loans,      many=True).data,
-            'allowances': AllowanceSerializer(allowances, many=True).data,
-            'savings':    SavingsSerializer(savings,  many=True).data,
-            'payslips':   PayslipSerializer(payslips, many=True, context={'request': request}).data,
+            'loans':        LoanSerializer(loans,      many=True).data,
+            'allowances':   AllowanceSerializer(allowances, many=True).data,
+            'savings':      SavingsSerializer(savings,  many=True).data,
+            'payslips':     PayslipSerializer(payslips, many=True, context={'request': request}).data,
+            'ojt_payslips': ojt_data,
         }
         # Mark unseen loans as seen after serializing so the "New" pill is visible on first load
         Loan.objects.filter(employee=user, seen=False).update(seen=True)
@@ -2377,10 +3125,12 @@ class UserFinanceUnseenCountView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request) -> Response:
+        from .models import OJTPayslipData
         user = request.user
-        unseen_loans = Loan.objects.filter(employee=user, seen=False).count()
-        unsent_payslips = Payslip.objects.filter(employee=user, sent=False).count()
-        return Response({'count': unseen_loans + unsent_payslips})
+        unseen_loans      = Loan.objects.filter(employee=user, seen=False).count()
+        unsent_payslips   = Payslip.objects.filter(employee=user, sent=False).count()
+        unsent_ojt        = OJTPayslipData.objects.filter(employee=user, sent=False).count()
+        return Response({'count': unseen_loans + unsent_payslips + unsent_ojt})
 
 
 class UserFinanceLoanDeductionsView(APIView):
@@ -2516,3 +3266,138 @@ class UserFinancePayslipSendEmailView(APIView):
         payslip.save(update_fields=['sent'])
 
         return Response({'detail': 'Payslip sent to your email successfully.'})
+
+
+class UserFinanceOJTPayslipSendEmailView(APIView):
+    """
+    POST /api/finance/my/ojt-payslips/<pk>/send-email
+    Sends OJT payslip data as an HTML email to the authenticated user.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk: int) -> Response:
+        from .models import OJTPayslipData
+        try:
+            obj = OJTPayslipData.objects.get(pk=pk, employee=request.user)
+        except OJTPayslipData.DoesNotExist:
+            return Response({'detail': 'OJT payslip not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        from generalsettings.models import EmailConfiguration
+        try:
+            config = EmailConfiguration.objects.get(pk=1)
+        except EmailConfiguration.DoesNotExist:
+            return Response(
+                {'detail': 'Email configuration has not been set up.'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        requested_recipient = str(request.data.get('recipient_email', '') or '').strip().lower()
+        personal_email = (request.user.email or '').strip().lower()
+        work_email = ''
+        try:
+            work_email = (request.user.personal_info.work_email or '').strip().lower()
+        except Exception:
+            pass
+
+        allowed_recipients = {e for e in [personal_email, work_email] if e}
+        if requested_recipient and requested_recipient not in allowed_recipients:
+            return Response(
+                {'detail': 'Selected email is not allowed for this account.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        recipient_email = requested_recipient or personal_email
+        if not recipient_email:
+            return Response(
+                {'detail': 'No email address is on file for your account.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user = request.user
+
+        # ── Resolve line name ─────────────────────────────────────────────────
+        line_name = '—'
+        try:
+            from userProfile.models import workInformation
+            wi = workInformation.objects.select_related('line').filter(
+                employee=user,
+            ).order_by('-created_at').first()
+            if wi and wi.line:
+                line_name = wi.line.name or '—'
+        except Exception:
+            pass
+
+        def _fmt_period(start, end):
+            if not start or not end:
+                return '—'
+            MONTHS = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC']
+            sm, em = MONTHS[start.month - 1], MONTHS[end.month - 1]
+            sd, ed, sy, ey = start.day, end.day, start.year, end.year
+            if start.month == end.month and sy == ey:
+                return f"{sm} {sd}-{ed},{sy}"
+            if sy == ey:
+                return f"{sm} {sd} - {em} {ed},{sy}"
+            return f"{sm} {sd},{sy} - {em} {ed},{ey}"
+
+        period = _fmt_period(obj.period_start, obj.period_end)
+
+        # ── Generate PDF attachment ───────────────────────────────────────────
+        pdf_bytes: bytes | None = None
+        try:
+            pdf_bytes = _build_ojt_payslip_pdf(obj, user, line_name=line_name)
+        except Exception:
+            pass  # non-fatal — email still sends without attachment
+
+        safe_period = period.replace(' ', '_').replace(',', '').replace('/', '_')
+        pdf_filename = f"ojt_payslip_{safe_period}.pdf"
+
+        # ── Build email (same style as regular payslip) ───────────────────────
+        subject, html_body = _build_ojt_payslip_email(obj, user, period_label=period)
+
+        import smtplib
+        from email.mime.multipart import MIMEMultipart
+        from email.mime.text import MIMEText
+        from email.mime.application import MIMEApplication
+
+        msg = MIMEMultipart('mixed')
+        from_addr = f'{config.from_name} <{config.username}>' if config.from_name else config.username
+        msg['From']    = from_addr
+        msg['To']      = recipient_email
+        msg['Subject'] = subject
+
+        # HTML body wrapped in alternative part
+        alt_part = MIMEMultipart('alternative')
+        alt_part.attach(MIMEText(html_body, 'html'))
+        msg.attach(alt_part)
+
+        # PDF attachment (if generation succeeded)
+        if pdf_bytes:
+            pdf_part = MIMEApplication(pdf_bytes, _subtype='pdf')
+            pdf_part.add_header('Content-Disposition', 'attachment', filename=pdf_filename)
+            msg.attach(pdf_part)
+
+        try:
+            port = config.smtp_port
+            if port == 465:
+                use_ssl, use_tls = True, False
+            elif port == 587:
+                use_ssl, use_tls = False, True
+            else:
+                use_ssl, use_tls = bool(config.use_ssl), bool(config.use_tls)
+
+            _cls = smtplib.SMTP_SSL if use_ssl else smtplib.SMTP
+            with _cls(config.smtp_host, port, timeout=15) as smtp:
+                if use_tls and not use_ssl:
+                    smtp.starttls()
+                smtp.login(config.username, config.password)
+                smtp.sendmail(config.username, recipient_email, msg.as_string())
+        except Exception as exc:
+            return Response(
+                {'detail': f'Email sending failed: {exc}'},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        obj.sent = True
+        obj.save(update_fields=['sent'])
+
+        return Response({'detail': 'OJT payslip sent to your email successfully.'})
