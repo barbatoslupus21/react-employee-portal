@@ -13,7 +13,7 @@ SECRET_KEY = config('SECRET_KEY', default='dev-only-insecure-key-change-in-produ
 
 DEBUG = config('DEBUG', default=True, cast=bool)
 
-ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1', cast=Csv())
+ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='192.168.10.244,localhost,127.0.0.1', cast=Csv())
 
 # Upload limits
 DATA_UPLOAD_MAX_MEMORY_SIZE = 54_525_952  # 52 MB — allows video uploads
@@ -189,7 +189,7 @@ JWT_COOKIE_SECURE = not DEBUG
 # ── CORS ───────────────────────────────────────────────────────────────────────
 CORS_ALLOWED_ORIGINS = config(
     'CORS_ALLOWED_ORIGINS',
-    default='http://localhost:3000,http://127.0.0.1:3000',
+    default='http://192.168.10.244:3000,http://localhost:3000,http://127.0.0.1:3000',
     cast=Csv(),
 )
 CORS_ALLOW_CREDENTIALS = True  # Required so cookies are sent cross-origin
@@ -221,7 +221,7 @@ CSRF_COOKIE_SECURE = not DEBUG   # True in production
 # Trust the Next.js dev server origin so the proxy-forwarded Origin header passes.
 CSRF_TRUSTED_ORIGINS = config(
     'CSRF_TRUSTED_ORIGINS',
-    default='http://localhost:3000,http://127.0.0.1:3000',
+    default='http://192.168.10.244:3000,http://localhost:3000,http://127.0.0.1:3000',
     cast=Csv(),
 )
 
