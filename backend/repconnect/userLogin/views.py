@@ -16,11 +16,13 @@ from django.views.decorators.csrf import csrf_protect, ensure_csrf_cookie
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import LoginAttempt
+from .permissions import IsEmployeeAdmin
 from .serializers import EmployeeAdminSerializer, LoginSerializer, UserSerializer
 
 logger = logging.getLogger(__name__)
@@ -314,7 +316,8 @@ class TokenRefreshView(APIView):
     Issues a new access token using the HttpOnly refresh cookie.
     """
     permission_classes = [AllowAny]
-    throttle_classes = []
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'token_refresh'
 
     def post(self, request):
         raw_refresh = request.COOKIES.get(_REFRESH_COOKIE)
@@ -397,18 +400,6 @@ class UserListView(APIView):
 
 # ── Employee admin helpers ─────────────────────────────────────────────────────
 
-_EMP_ADMIN_REQUIRED = {'admin', 'hr'}
-
-def _require_employee_admin(request) -> Response | None:
-    """Return a 403 Response if the requesting user is not admin or hr."""
-    u = request.user
-    if not (u.admin or u.hr):
-        return Response(
-            {'detail': 'You do not have permission to perform this action.'},
-            status=status.HTTP_403_FORBIDDEN,
-        )
-    return None
-
 
 def _employee_queryset():
     """Base queryset: all non-privileged users (not admin, hr, or accounting)."""
@@ -433,12 +424,9 @@ class EmployeeAdminListView(APIView):
       sort          — idnumber | lastname | department | line | employment_type | active
       dir           — asc | desc
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsEmployeeAdmin]
 
     def get(self, request) -> Response:
-        err = _require_employee_admin(request)
-        if err:
-            return err
 
         from userProfile.models import workInformation
         from django.db.models import Prefetch
@@ -537,13 +525,10 @@ class EmployeeAdminStatusView(APIView):
     Body: { "action": "activate" | "deactivate" | "lock" | "unlock" }
     Applies the requested status change to the target employee.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsEmployeeAdmin]
 
     @transaction.atomic
     def patch(self, request, pk: int) -> Response:
-        err = _require_employee_admin(request)
-        if err:
-            return err
 
         # Idempotency
         idem_key = request.headers.get('X-Idempotency-Key', '').strip()
@@ -625,12 +610,9 @@ class EmployeeAdminChartView(APIView):
     Buckets with no snapshot record return all-zero counts.
     Fiscal year runs July → June.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsEmployeeAdmin]
 
     def get(self, request) -> Response:
-        err = _require_employee_admin(request)
-        if err:
-            return err
 
         from .models import EmployeeSnapshot
 
@@ -735,12 +717,9 @@ class EmployeeAdminSnapshotTriggerView(APIView):
     All writes are idempotent (update_or_create).
     Requires admin or HR role.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsEmployeeAdmin]
 
     def post(self, request) -> Response:
-        err = _require_employee_admin(request)
-        if err:
-            return err
 
         from .utils import take_snapshot
         from .models import EmployeeSnapshot
@@ -822,12 +801,9 @@ class EmployeeAdminFilterOptionsView(APIView):
     GET /api/auth/admin/employees/filters
     Returns all departments and lines for the filter popovers.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsEmployeeAdmin]
 
     def get(self, request) -> Response:
-        err = _require_employee_admin(request)
-        if err:
-            return err
 
         from generalsettings.models import Department, Line
 
@@ -880,13 +856,10 @@ class EmployeeAdminPasswordResetView(APIView):
     The new password value is never returned in any response.
     Accepts X-Idempotency-Key for safe replay.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsEmployeeAdmin]
 
     @transaction.atomic
     def post(self, request, pk: int) -> Response:
-        err = _require_employee_admin(request)
-        if err:
-            return err
 
         idem_key = request.headers.get('X-Idempotency-Key', '').strip()
         if idem_key:
@@ -958,12 +931,9 @@ class EmployeeAdminImportView(APIView):
 
     Requires admin or HR role.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsEmployeeAdmin]
 
     def post(self, request) -> Response:
-        err = _require_employee_admin(request)
-        if err:
-            return err
 
         uploaded = request.FILES.get('file')
         if not uploaded:
@@ -1258,12 +1228,9 @@ class EmployeeAdminExportView(APIView):
     month       1-12                              (monthly)
     week_start  YYYY-MM-DD                        (weekly)
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsEmployeeAdmin]
 
     def post(self, request) -> Response:
-        err = _require_employee_admin(request)
-        if err:
-            return err
 
         export_type = str(request.data.get('type', '')).strip()
         if export_type not in ('personal_info', 'work_info', 'summary', 'all'):

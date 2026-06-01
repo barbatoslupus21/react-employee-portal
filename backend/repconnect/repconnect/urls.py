@@ -1,9 +1,8 @@
-from django.conf import settings
-from django.conf.urls.static import static
 from django.contrib import admin
 from django.urls import include, path, re_path
 
 from feedback import views as feedback_views
+from repconnect.media_views import ProtectedMediaView
 
 urlpatterns = [
     path('admin', admin.site.urls),
@@ -25,4 +24,7 @@ urlpatterns = [
     path('api/feedback/settings', feedback_views.FeedbackSettingsView.as_view()),
     path('api/feedback/settings/', feedback_views.FeedbackSettingsView.as_view()),
     path('api/feedback/', include('feedback.urls')),
-] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+    # Authenticated media serving — replaces the dev-only static() helper.
+    # Payslips, certificates, and avatars are only accessible to logged-in users.
+    re_path(r'^media/(?P<path>.+)$', ProtectedMediaView.as_view(), name='protected-media'),
+]

@@ -67,6 +67,8 @@ MIDDLEWARE = [
     # Fires a background thread on the first request of each day to ensure
     # today's EmployeeSnapshot record is created automatically.
     'userLogin.middleware.DailySnapshotMiddleware',
+    # Adds Cache-Control: no-store to all /api/* responses (Finding #19).
+    'repconnect.middleware.NoCacheAPIMiddleware',
 ]
 
 ROOT_URLCONF = 'repconnect.urls'
@@ -93,11 +95,20 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'repconnect.wsgi.application'
 
-# ── Database (SQLite — swap ENGINE for PostgreSQL in production) ───────────────
+# ── Database ───────────────────────────────────────────────────────────────────
+# Defaults to MySQL. Override via environment variables (set in .env or Docker).
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'ENGINE': config('DB_ENGINE', default='django.db.backends.mysql'),
+        'NAME': config('DB_NAME', default='repconnect'),
+        'USER': config('DB_USER', default='repconnect'),
+        'PASSWORD': config('DB_PASSWORD', default='repconnect_pass'),
+        'HOST': config('DB_HOST', default='localhost'),
+        'PORT': config('DB_PORT', default='3311'),
+        'OPTIONS': {
+            'charset': 'utf8mb4',
+            'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
+        },
     }
 }
 
@@ -147,14 +158,15 @@ REST_FRAMEWORK = {
         'anon': '500/hour',
         'user': '2000/hour',
         'mis_chat': '20/min',
+        'token_refresh': '30/min',
     },
 }
 
-# ── MIS Ticket — n8n webhook URL (never hardcode; set in environment) ──────────
-N8N_WEBHOOK_URL = config(
-    'N8N_WEBHOOK_URL',
-    default='http://192.168.10.244:5678/webhook/d726b12d-7241-4cbd-9624-66bd3ffeaa7d',
-)
+# ── MIS Ticket — n8n webhook URL ─────────────────────────────────────────────
+# Must be set explicitly in the environment — no default so a missing value
+# raises ImproperlyConfigured at startup rather than silently hitting an
+# internal IP that leaks network topology (Finding #15).
+N8N_WEBHOOK_URL = config('N8N_WEBHOOK_URL', default='')
 
 # ── Simple JWT ─────────────────────────────────────────────────────────────────
 SIMPLE_JWT = {
@@ -185,6 +197,19 @@ CORS_ALLOW_CREDENTIALS = True  # Required so cookies are sent cross-origin
 # ── Security headers ───────────────────────────────────────────────────────────
 SECURE_CONTENT_TYPE_NOSNIFF = True
 X_FRAME_OPTIONS = 'DENY'
+SECURE_REFERRER_POLICY = 'strict-origin-when-cross-origin'
+
+# HSTS — set SECURE_HSTS_SECONDS=63072000 in production once HTTPS is confirmed.
+# Set to 0 here so a misconfigured non-TLS deployment doesn't lock browsers out.
+SECURE_HSTS_SECONDS = config('SECURE_HSTS_SECONDS', default=0, cast=int)
+SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+SECURE_HSTS_PRELOAD = True
+
+# When nginx terminates TLS and forwards requests, trust its X-Forwarded-Proto.
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
+# Redirect bare HTTP to HTTPS — enable in production via env var.
+SECURE_SSL_REDIRECT = config('SECURE_SSL_REDIRECT', default=False, cast=bool)
 
 # ── CSRF ───────────────────────────────────────────────────────────────────────
 # CsrfViewMiddleware remains active in MIDDLEWARE (see above).

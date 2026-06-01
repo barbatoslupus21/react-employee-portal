@@ -225,10 +225,16 @@ _SERVER_MAC: str = ':'.join(
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _get_client_ip(request: HttpRequest) -> str:
-    """Resolve the real client IP, honouring X-Forwarded-For."""
-    forwarded = request.META.get('HTTP_X_FORWARDED_FOR', '')
-    if forwarded:
-        return forwarded.split(',')[0].strip()
+    """Resolve the real client IP.
+
+    X-Forwarded-For is only trusted in production (DEBUG=False) where a
+    known reverse proxy (nginx) sets it.  In DEBUG mode we always use
+    REMOTE_ADDR to prevent a spoofed header from polluting the audit log.
+    """
+    if not settings.DEBUG:
+        forwarded = request.META.get('HTTP_X_FORWARDED_FOR', '')
+        if forwarded:
+            return forwarded.split(',')[0].strip()
     return request.META.get('REMOTE_ADDR', '')
 
 
