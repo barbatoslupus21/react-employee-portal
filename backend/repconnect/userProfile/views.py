@@ -404,9 +404,9 @@ class WorkInfoUserUpdateView(APIView):
                 if approver_wi and approver_wi.position
                 else 0
             )
-            if approver_level < 5 or approver_level <= current_level:
+            if approver_level < 3 or approver_level <= current_level:
                 return Response(
-                    {'approver': 'The selected approver must be at position level 5 or above and have a higher position level than yours.'},
+                    {'approver': 'The selected approver must be at position level 3 or above and have a higher position level than yours.'},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 

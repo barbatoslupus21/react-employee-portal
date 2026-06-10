@@ -10,7 +10,7 @@ The Finance module gives employees access to their financial records: payslips, 
 
 | Section | Description |
 |---------|-------------|
-| **Payslips** | PDF payslips uploaded by accounting/admin |
+| **OJT Payslips** | Viewable directly in the system (OJT employees only) |
 | **Allowances** | Current allowances (transportation, meal, etc.) |
 | **Loans** | Active loans, balances, and deduction history |
 | **Deductions** | One-time or recurring deductions |
@@ -18,20 +18,28 @@ The Finance module gives employees access to their financial records: payslips, 
 
 ---
 
-## How to View Your Payslip
+## How Payslips Are Delivered
+
+### Regular Employees — Email Delivery
+Regular employee payslips are **sent directly to your registered email address** and are **not displayed inside the system**. This is a security measure to protect sensitive salary information.
+
+- Check your inbox for an email from the payroll/accounting team each pay period.
+- Also check your **Spam / Junk** folder if you do not see it.
+- If your email address is incorrect, go to **Profile Settings > Personal Information** to verify it, then ask HR to update it.
+
+### OJT Employees — In-System View
+OJT trainees can view their payslips directly inside the Finance module.
 
 1. Navigate to **Finance** in the sidebar.
-2. Select **Payslips**.
-3. A list of your payslips sorted by date will appear.
-4. Click on a payslip to **open/download** the PDF.
-
-> Payslips are uploaded by the accounting or admin team. If you do not see a payslip for a period, contact HR or Accounting.
+2. Select **OJT Payslip**.
+3. Your payslip for the current and past periods will appear.
+4. Click a payslip entry to view the breakdown.
 
 ---
 
 ## OJT Payslips
 
-OJT (On-the-Job Training) employees have a separate payslip view that shows a detailed breakdown:
+OJT (On-the-Job Training) employees have an in-system payslip view that shows a detailed breakdown:
 
 - Basic allowance
 - Overtime pay

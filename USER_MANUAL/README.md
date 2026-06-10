@@ -24,6 +24,7 @@
 | 12 | [Employee Profile](12_employee_profile.md) | Profile management and personal information |
 | 13 | [Feedback & Updates](13_feedback_updates.md) | System feedback and What's New |
 | 14 | [Troubleshooting Guide](14_troubleshooting.md) | Common issues and solutions |
+| 15 | [System Features & Capabilities](15_system_features.md) | Security features, functions, workflows, access control, audit logging |
 
 ---
 

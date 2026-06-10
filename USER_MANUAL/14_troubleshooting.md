@@ -126,21 +126,28 @@ This guide covers common issues that users may encounter while using the RepConn
 
 ## 4. Finance / Payslip Issues
 
-### Problem: My payslip is not visible
-**Cause:** Payslips are manually uploaded by accounting/admin.  
-**Solution:**
-1. Confirm the payroll period has been processed.
-2. Contact your HR or Accounting team to check if the payslip has been uploaded.
+> **How Payslips Work:**
+> - **Regular employees** — Payslips are **not displayed inside the system**. For security, your payslip is sent directly to your registered email address. Check your inbox for the payroll period in question.
+> - **OJT employees** — Payslips are viewable directly inside the Finance module under the OJT Payslip section.
 
 ---
 
-### Problem: Cannot open the payslip PDF
-**Cause:** Your browser may be blocking PDF opening, or the file may be corrupted.  
+### Problem: I did not receive my payslip in my email (Regular Employee)
+**Cause:** The payroll period may not have been processed yet, your registered email may be outdated, or the email went to spam.  
 **Solution:**
-1. Try a different browser.
-2. Check if your browser has a PDF viewer enabled.
-3. Download the file and open it with Adobe Acrobat or another PDF reader.
-4. If the file does not open at all, report the issue to HR/accounting to re-upload.
+1. Check your **Spam / Junk** folder — automated emails sometimes land there.
+2. Verify that the email address on your employee profile is correct (go to **Profile Settings > Personal Information**).
+3. If your email address is wrong, contact HR to update it.
+4. If your email is correct and no payslip arrived, contact HR or Accounting to confirm the payslip was sent.
+
+---
+
+### Problem: I cannot find my OJT payslip in the system
+**Cause:** OJT payslips are uploaded manually per pay period.  
+**Solution:**
+1. Navigate to **Finance > OJT Payslip**.
+2. Confirm the payroll period has been processed.
+3. If the payslip is missing, contact HR or Accounting to check if it has been uploaded.
 
 ---
 
