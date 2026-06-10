@@ -53,6 +53,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -184,12 +185,12 @@ JWT_ACCESS_COOKIE = 'access_token'
 JWT_REFRESH_COOKIE = 'refresh_token'
 
 # Cookie security flags — False in dev so HTTP works, True in prod
-JWT_COOKIE_SECURE = not DEBUG
+JWT_COOKIE_SECURE = config('JWT_COOKIE_SECURE', default=not DEBUG, cast=bool)
 
 # ── CORS ───────────────────────────────────────────────────────────────────────
 CORS_ALLOWED_ORIGINS = config(
     'CORS_ALLOWED_ORIGINS',
-    default='http://192.168.10.244:3000,http://localhost:3000,http://127.0.0.1:3000',
+    default='http://192.168.10.244:3002,http://localhost:3002,http://127.0.0.1:3002',
     cast=Csv(),
 )
 CORS_ALLOW_CREDENTIALS = True  # Required so cookies are sent cross-origin
@@ -217,11 +218,11 @@ SECURE_SSL_REDIRECT = config('SECURE_SSL_REDIRECT', default=False, cast=bool)
 # and attach it as the X-CSRFToken request header on every non-safe request.
 CSRF_COOKIE_HTTPONLY = False
 CSRF_COOKIE_SAMESITE = 'Lax'
-CSRF_COOKIE_SECURE = not DEBUG   # True in production
+CSRF_COOKIE_SECURE = config('CSRF_COOKIE_SECURE', default=not DEBUG, cast=bool)
 # Trust the Next.js dev server origin so the proxy-forwarded Origin header passes.
 CSRF_TRUSTED_ORIGINS = config(
     'CSRF_TRUSTED_ORIGINS',
-    default='http://192.168.10.244:3000,http://localhost:3000,http://127.0.0.1:3000',
+    default='http://192.168.10.244:3002,http://localhost:3002,http://127.0.0.1:3002',
     cast=Csv(),
 )
 

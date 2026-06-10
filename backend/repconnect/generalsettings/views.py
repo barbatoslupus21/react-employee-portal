@@ -177,7 +177,7 @@ class CompanyWorkdayConfigurationSerializer(serializers.ModelSerializer):
 
         normalized: dict[str, float] = {}
         for day in range(7):
-            raw_value = value.get(str(day), value.get(day, 0))
+            raw_value = value.get(str(day), 0)
             if raw_value in (None, ''):
                 raw_value = 0
             try:
@@ -754,7 +754,7 @@ class CompanyWorkdayConfigurationView(APIView):
                 new_hours = Decimal(str(updated_config.hours_per_day)).quantize(Decimal('0.1'))
                 recalculated = self._recalculate_leave_balances(old_hours, new_hours)
 
-                payload = CompanyWorkdayConfigurationSerializer(updated_config).data
+                payload = dict(CompanyWorkdayConfigurationSerializer(updated_config).data)
                 payload['balances_recalculated'] = recalculated
                 return Response(payload)
         except serializers.ValidationError as exc:
@@ -861,17 +861,24 @@ class AdminAccountListUpdateView(APIView):
 
         role_fields = ["admin", "hr", "accounting", "mis", "iad", "clinic", "hr_manager", "active"]
 
+        # Snapshot the current DB value of admin BEFORE applying changes so the
+        # guards below can detect whether admin is actually being removed.
+        was_admin = bool(user.admin)
+
         for field in role_fields:
             if field in payload:
                 setattr(user, field, bool(payload[field]))
 
-        if user.pk == request.user.pk and not user.admin:
+        # Prevent self-removal of admin role.
+        if user.pk == request.user.pk and was_admin and not user.admin:
             return Response(
                 {"detail": "You cannot remove your own admin role from this endpoint."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if "admin" in payload and not user.admin:
+        # Prevent removing the last admin account.
+        # Only trigger when the target was previously an admin and is now being set to False.
+        if was_admin and not user.admin:
             admin_count = loginCredentials.objects.filter(admin=True).count()
             if admin_count <= 1:
                 return Response(

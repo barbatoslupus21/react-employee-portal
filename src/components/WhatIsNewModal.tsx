@@ -89,7 +89,7 @@ export function WhatIsNewModal({ userId, admin, onOpenChange }: WhatIsNewModalPr
           <ModalTitle>{"What's New"}</ModalTitle>
         </ModalHeader>
 
-        <ModalBody className="space-y-4 py-4 overflow-visible">
+        <ModalBody className="space-y-4 py-4 min-h-[80px] max-h-[60vh] overflow-y-auto">
           {updates.map((update) => (
             <div key={update.id} className="space-y-1">
               <p className="text-xs font-bold text-[var(--color-text-primary)]">

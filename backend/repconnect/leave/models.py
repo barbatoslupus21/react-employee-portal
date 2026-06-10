@@ -164,18 +164,19 @@ class LeaveRequest(models.Model):
     @classmethod
     def generate_control_number(cls) -> str:
         """Generate LR-prefixed control number starting from LR1000, concurrency-safe."""
-        latest = (
+        from django.db.models import Max
+        from django.db.models.functions import Cast, Substr
+        from django.db.models import IntegerField
+
+        result = (
             cls.objects.select_for_update()
             .filter(control_number__startswith='LR')
-            .order_by('-created_at')
-            .first()
+            .annotate(num=Cast(Substr('control_number', 3), output_field=IntegerField()))
+            .aggregate(max_num=Max('num'))
         )
-        if latest and latest.control_number:
-            try:
-                num = int(latest.control_number[2:])
-                next_num = num + 1
-            except (ValueError, TypeError):
-                next_num = 1000
+        max_num = result.get('max_num')
+        if max_num is not None:
+            next_num = max_num + 1
         else:
             next_num = 1000
         return f'LR{next_num}'

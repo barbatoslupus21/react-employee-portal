@@ -151,6 +151,7 @@ class LeaveSubreasonAdminSerializer(serializers.ModelSerializer):
 class LeaveBalanceSerializer(serializers.ModelSerializer):
     leave_type = serializers.CharField(source='leave_type.name', read_only=True)
     leave_type_id = serializers.IntegerField(read_only=True)
+    is_active = serializers.SerializerMethodField()
     entitled_leave = serializers.SerializerMethodField()
     used_leave = serializers.SerializerMethodField()
     remaining_leave = serializers.SerializerMethodField()
@@ -164,11 +165,16 @@ class LeaveBalanceSerializer(serializers.ModelSerializer):
         model = LeaveBalance
         fields = [
             'id', 'leave_type', 'leave_type_id',
+            'is_active',
             'period_start', 'period_end',
             'entitled_leave', 'used_leave', 'remaining_leave',
             'entitled_leave_hours', 'used_leave_hours', 'remaining_leave_hours',
             'pending_leave', 'pending_leave_hours',
         ]
+
+    def get_is_active(self, obj):
+        from datetime import date
+        return obj.period_end >= date.today()
 
     def _to_display_days(self, hours: Decimal) -> str:
         hours_per_day = get_configured_hours_per_day()

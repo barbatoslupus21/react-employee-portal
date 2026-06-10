@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import calendar
 import datetime
+from collections.abc import Mapping
 from decimal import Decimal
 
 from django.db.models import Count, Max, Q, Sum
@@ -452,7 +453,7 @@ class AccountingOverviewView(APIView):
             ).values('prf_type').annotate(count=Count('id'))
         }
 
-        def _build_type_breakdown(current_map: dict[str, float], previous_map: dict[str, float]) -> list[dict]:
+        def _build_type_breakdown(current_map: Mapping[str, float], previous_map: Mapping[str, float]) -> list[dict]:
             rows: list[dict] = []
             for name, amount in current_map.items():
                 if amount <= 0:

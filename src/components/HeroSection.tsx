@@ -43,23 +43,18 @@ export default function HeroSection({ onLoginClick }: HeroSectionProps) {
       </div>
 
       {/* Hero section — relative so DottedSurface (absolute) is clipped to it */}
-      <section id="hero" className="relative overflow-hidden isolate">
+      <section
+        id="hero"
+        className="relative overflow-hidden isolate"
+      >
+        <div
+          aria-hidden
+          className="pointer-events-none absolute left-1/2 top-[-46rem] hidden h-[99rem] w-[99rem] -translate-x-1/2 rounded-full bg-[radial-gradient(circle_at_center,#6366f150_0%,rgba(99,102,241,0.18)_28%,rgba(99,102,241,0.08)_48%,transparent_72%)] dark:block"
+        />
         {/* Dotted surface scoped only to this section */}
-        <DottedSurface />
+        <DottedSurface className="-top-70" />
 
-        <div className="relative pt-24 md:pt-36">
-          {/* Radial vignette behind content — helps text pop over the dotted surface */}
-          <div
-            aria-hidden
-            className="absolute inset-0 -z-10 pointer-events-none [background:radial-gradient(ellipse_80%_60%_at_50%_40%,transparent_30%,var(--color-bg)_100%)]"
-          />
-
-          {/* Radial fade-out at bottom */}
-          <div
-            aria-hidden
-            className="absolute inset-0 -z-10 size-full [background:radial-gradient(125%_125%_at_50%_100%,transparent_0%,var(--color-bg)_75%)]"
-          />
-
+        <div className="relative pt-24 md:pt-32">
           <div className="mx-auto max-w-7xl px-6">
             <div className="text-center sm:mx-auto lg:mr-auto lg:mt-0">
               <AnimatedGroup
@@ -92,7 +87,7 @@ export default function HeroSection({ onLoginClick }: HeroSectionProps) {
                 </a>
 
                 {/* Hero heading — bold, tight leading */}
-                <h1 className="mt-8 mx-auto text-5xl md:text-6xl lg:mt-12 xl:text-[4rem] font-black leading-[1.04] tracking-tight">
+                <h1 className="mt-8 mx-auto text-4xl sm:text-5xl md:text-6xl lg:mt-12 xl:text-[4rem] font-black leading-[1.04] tracking-tight">
                   One Workplace
                   <br />
                   One Platform
@@ -130,17 +125,17 @@ export default function HeroSection({ onLoginClick }: HeroSectionProps) {
                   container: { visible: { transition: { staggerChildren: 0.05, delayChildren: 0.75 } } },
                   item: transitionVariants,
                 }}
-                className="mt-10 flex flex-col items-center justify-center gap-4 md:flex-row"
+                className="mt-10 flex flex-row flex-wrap items-center justify-center gap-3 sm:gap-4"
               >
                 <InteractiveHoverButton
                   text="Login to Portal"
                   onClick={onLoginClick}
-                  className="min-w-[160px]"
+                  className="min-w-[140px] px-4 py-2 text-xs sm:min-w-[160px] sm:px-5 sm:py-2.5 sm:text-sm md:min-w-[180px] md:px-6 md:py-2.5 md:text-xs"
                 />
                 <InteractiveHoverButton
                   text="Learn More"
                   onClick={() => document.querySelector("#mission-vision")?.scrollIntoView({ behavior: "smooth" })}
-                  className="min-w-[140px] border-[var(--color-border)] bg-transparent text-[var(--color-text-secondary)] hover:text-white"
+                  className="min-w-[128px] border-[var(--color-border)] bg-transparent px-4 py-2 text-xs text-[var(--color-text-secondary)] hover:text-white sm:min-w-[144px] sm:px-5 sm:py-2.5 sm:text-sm md:min-w-[164px] md:px-6 md:py-2.5 md:text-xs"
                 />
               </AnimatedGroup>
             </div>
@@ -159,24 +154,24 @@ export default function HeroSection({ onLoginClick }: HeroSectionProps) {
                 className="bg-gradient-to-b to-[var(--color-bg)] absolute inset-0 z-10 from-transparent from-35%"
               />
               <div
-                className="bg-[var(--color-bg-elevated)] relative mx-auto max-w-6xl overflow-hidden
-                  rounded-2xl border border-[var(--color-border)] p-4 shadow-lg shadow-black/15"
+                className="bg-[var(--color-bg-elevated)] relative mx-auto w-full max-w-[72rem] overflow-hidden
+                  rounded-2xl border border-[var(--color-border)] shadow-lg shadow-black/15"
               >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
-                  className="bg-[var(--color-bg-card)] aspect-[15/8] relative hidden rounded-2xl dark:block"
-                  src="https://tailark.com//_next/image?url=%2Fmail2.png&w=3840&q=75"
-                  alt="REPConnect portal preview"
-                  width="2700"
-                  height="1440"
+                  className="bg-[var(--color-bg-card)] aspect-[15/8] w-full relative hidden rounded-2xl object-cover dark:block"
+                  src="/dashboard-hr-dark.png"
+                  alt="REPConnect HR dashboard preview"
+                  width="1440"
+                  height="900"
                 />
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
-                  className="z-2 border-[var(--color-border)] aspect-[15/8] relative rounded-2xl border dark:hidden"
-                  src="https://tailark.com/_next/image?url=%2Fmail2-light.png&w=3840&q=75"
-                  alt="REPConnect portal preview"
-                  width="2700"
-                  height="1440"
+                  className="z-2 border-[var(--color-border)] aspect-[15/8] w-full relative rounded-2xl border object-cover dark:hidden"
+                  src="/dashboard-hr-light.png"
+                  alt="REPConnect HR dashboard preview"
+                  width="1440"
+                  height="900"
                 />
               </div>
             </div>

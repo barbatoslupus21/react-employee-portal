@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, Suspense } from "react";
 import Link from "next/link";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { motion } from "motion/react";
@@ -29,6 +29,8 @@ import {
   GraduationCap,
   X,
 } from "lucide-react";
+import { AIChatPanel, RobotNavButton } from "@/components/ui/ai-chat-panel";
+import { DottedSurface } from "@/components/ui/dotted-surface";
 import { SystemFeedbackModal } from "@/components/SystemFeedbackModal";
 import { WhatIsNewModal } from "@/components/WhatIsNewModal";
 import { Balloons } from "@/components/screen-effects/Balloons";
@@ -92,6 +94,13 @@ const STATIC_NAV: NavItem[] = [
   { icon: Ticket,          label: "MIS Ticket",        href: "/dashboard/mis-ticket",        section: "Management Information System" },
 ];
 
+// Static breadcrumb labels for routes that have no direct nav item entry.
+const STATIC_BREADCRUMBS: Record<string, string> = {
+  '/dashboard/leave/admin':                               'Leave Approval',
+  '/dashboard/assessments/survey-management':             'Survey Management',
+  '/dashboard/assessments/survey-templates':              'Survey Templates',
+};
+
 function isEvalEligible(user: UserData, periodStartDate: string | null): boolean {
   const empType = (user.employment_type_name ?? '').toLowerCase();
   if (/probationary|ojt|on.job|on.the.job/.test(empType)) return false;
@@ -137,7 +146,7 @@ function buildNav(user: UserData, activePeriodStart: string | null): NavItem[] {
         }
       }
       if (item.href === "/dashboard/pr-form" && (user.admin || user.hr || user.accounting)) {
-        return { ...item, label: "PR Request" };
+        return { ...item, href: "/dashboard/pr-form/admin", label: "PR Request" };
       }
       if (item.href === "/dashboard/mis-ticket") {
         return {
@@ -927,7 +936,7 @@ function DashboardSearchBar() {
           bg-[var(--color-bg-elevated)] pl-8 pr-3 text-xs
           text-[var(--color-text-primary)]
           placeholder:text-[var(--color-text-muted)] placeholder:italic
-          focus:outline-none focus:shadow-md focus:ring-0
+          focus:outline-none focus:ring-0
           transition-all duration-200"
       />
     </div>
@@ -935,6 +944,14 @@ function DashboardSearchBar() {
 }
 
 // ── Shell ──────────────────────────────────────────────────────────────
+
+function SearchParamsReader({ onSurveyView }: { onSurveyView: (v: 'my' | 'admin' | null) => void }) {
+  const searchParams = useSearchParams();
+  const view = searchParams?.get('view');
+  const surveyView: 'my' | 'admin' | null = view === 'my' ? 'my' : view === 'admin' ? 'admin' : null;
+  useEffect(() => { onSurveyView(surveyView); }, [surveyView, onSurveyView]);
+  return null;
+}
 
 export default function DashboardLayout({
   children,
@@ -973,6 +990,8 @@ export default function DashboardLayout({
   const [pendingNavHref, setPendingNavHref] = useState('');
   const [navGuardSubmitting, setNavGuardSubmitting] = useState(false);
   const [pendingLogout, setPendingLogout] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatUnread, setChatUnread] = useState(false);
   const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
   const [updatesModalOpen, setUpdatesModalOpen] = useState(false);
   const [happyBirthdayOpen, setHappyBirthdayOpen] = useState(false);
@@ -1171,8 +1190,7 @@ export default function DashboardLayout({
     } catch { /* silent */ }
   }, []);
 
-  const searchParams = useSearchParams();
-  const surveyView = searchParams?.get('view') === 'my' ? 'my' : searchParams?.get('view') === 'admin' ? 'admin' : null;
+  const [surveyView, setSurveyView] = useState<'my' | 'admin' | null>(null);
 
   // ── Fetch survey badge on user load, visibility change, and route change ──
   useEffect(() => {
@@ -1511,12 +1529,16 @@ export default function DashboardLayout({
   if (!user) return null;
 
   const navItems = buildNav(user, activePeriodStart);
-  const activeItem =
-    navItems.find((n) => n.href === pathname) ??
-    navItems.find((n) => pathname.startsWith(n.href + "/")) ??
-    navItems[0];
-  // Breadcrumb shows only the page label (not the section)
-  const breadcrumb = activeItem.label;
+  const exactMatch = navItems.find((n) => n.href === pathname);
+  const prefixMatch = [...navItems]
+    .filter((n) => pathname.startsWith(n.href + '/'))
+    .sort((a, b) => b.href.length - a.href.length)[0];
+  const activeItem = exactMatch ?? prefixMatch ?? navItems[0];
+  // Breadcrumb: static overrides win, then survey-builder dynamic route, then nav item label.
+  const breadcrumb =
+    STATIC_BREADCRUMBS[pathname] ??
+    (pathname.startsWith('/dashboard/assessments/survey-templates/builder/') ? 'Survey Builder' : null) ??
+    activeItem.label;
 
   // A user can access the leave approval queue if they have
   // a role-group (clinic/iad), or are designated as an approver in WorkInformation.
@@ -1527,6 +1549,9 @@ export default function DashboardLayout({
   return (
     <NavigationGuardProvider registerGuard={registerGuard}>
     <div className="flex flex-col h-screen overflow-hidden bg-[var(--color-bg)]">
+      <Suspense fallback={null}>
+        <SearchParamsReader onSurveyView={setSurveyView} />
+      </Suspense>
 
       {/* ── FULL-WIDTH NAVBAR ── */}
       <header
@@ -1566,6 +1591,10 @@ export default function DashboardLayout({
         {/* Search — hidden below lg */}
         <DashboardSearchBar />
 
+        <RobotNavButton
+          onClick={() => { setChatOpen((v) => !v); setChatUnread(false); }}
+          hasUnread={chatUnread}
+        />
         <NotificationInboxPopover />
         <ThemeSwitch />
       </header>
@@ -1577,9 +1606,11 @@ export default function DashboardLayout({
           <SidebarBody className="py-0">
             <SidebarUserCard user={user} />
             {/* onClickCapture intercepts all link clicks in the sidebar for navigation guard */}
+            <div className="relative flex-1 min-h-0">
             <div
               ref={sidebarScrollRef}
-              className="flex-1 overflow-y-auto overflow-x-hidden py-2 px-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+              className="h-full overflow-y-auto overflow-x-hidden py-2 px-2 [&::-webkit-scrollbar]:hidden"
+              style={{ scrollbarWidth: 'none' }}
               onClickCapture={(e) => {
                 const guard = navGuardRef.current;
                 if (!guard?.isDirty) return;
@@ -1799,25 +1830,26 @@ export default function DashboardLayout({
             </div>
             <div
               className={cn(
-                'pointer-events-none absolute inset-x-0 top-0 z-10 flex justify-center py-3 transition-opacity duration-200',
+                'pointer-events-none absolute inset-x-0 top-0 z-10 flex justify-center pt-1.5 transition-opacity duration-200',
                 showSidebarScrollTop ? 'opacity-100' : 'opacity-0',
               )}
             >
-              <div className="absolute inset-x-0 top-0 h-16 bg-gradient-to-b from-[var(--color-bg-elevated)] to-transparent" />
-              <div className="relative flex h-4 w-8 items-center justify-center rounded-full bg-[rgba(255,255,255,0.95)] text-[var(--color-text-muted)] dark:bg-transparent dark:text-white">
-                <ChevronUp className="h-4 w-4" />
+              <div className="absolute inset-x-0 top-0 h-10 bg-gradient-to-b from-[var(--color-bg-elevated)] to-transparent rounded-t" />
+              <div className="relative z-10 flex h-4 w-4 items-center justify-center text-[var(--color-text-muted)]">
+                <ChevronUp className="h-3.5 w-3.5" />
               </div>
             </div>
             <div
               className={cn(
-                'pointer-events-none absolute inset-x-0 bottom-0 z-10 flex justify-center py-3 transition-opacity duration-200',
+                'pointer-events-none absolute inset-x-0 bottom-0 z-10 flex justify-center pb-1.5 transition-opacity duration-200',
                 showSidebarScrollBottom ? 'opacity-100' : 'opacity-0',
               )}
             >
-              <div className="absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-[var(--color-bg-elevated)] to-transparent" />
-              <div className="relative flex h-4 w-8 items-center justify-center rounded-full bg-[rgba(255,255,255,0.95)] text-[var(--color-text-muted)] dark:bg-transparent dark:text-white">
-                <ChevronDown className="h-4 w-4" />
+              <div className="absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-[var(--color-bg-elevated)] to-transparent rounded-b" />
+              <div className="relative z-10 flex h-4 w-4 items-center justify-center text-[var(--color-text-muted)]">
+                <ChevronDown className="h-3.5 w-3.5" />
               </div>
+            </div>
             </div>
             <div className="shrink-0 border-t border-[var(--color-border)] py-2 px-2">
               <LogoutButton onLogout={handleLogout} />
@@ -1826,9 +1858,10 @@ export default function DashboardLayout({
         </Sidebar>
 
         {/* Main — pl-[60px] reserves collapsed sidebar space on desktop */}
-        <div className="flex-1 min-h-0 overflow-hidden md:pl-[60px] relative">
+        <div className="flex-1 min-h-0 md:pl-[60px] relative isolate">
+          <DottedSurface className="pointer-events-none absolute inset-0 -z-10" />
           <div className="pointer-events-none absolute inset-0 z-0 hidden dark:block bg-background [background:radial-gradient(125%_125%_at_50%_-50%,#c7d2fe_40%,transparent_100%)] dark:[background:radial-gradient(125%_125%_at_50%_-50%,#6366f136_40%,transparent_100%)]" />
-          <div className="relative z-10 h-full">
+          <div className="relative h-full overflow-y-auto">
             {children}
           </div>
         </div>
@@ -1836,19 +1869,23 @@ export default function DashboardLayout({
 
       <Balloons ref={balloonsRef} className="pointer-events-none fixed inset-0 z-50" />
 
-      {/* ── System feedback modal (non-admin users only) ── */}
-      <SystemFeedbackModal
-        userId={user.id}
-        admin={user.admin}
-        onOpenChange={setFeedbackModalOpen}
-      />
+      {/* ── System feedback modal — suppressed while password change is required ── */}
+      {!user.change_password && (
+        <SystemFeedbackModal
+          userId={user.id}
+          admin={user.admin}
+          onOpenChange={setFeedbackModalOpen}
+        />
+      )}
 
-      {/* ── What's New modal (non-admin users only) ── */}
-      <WhatIsNewModal
-        userId={user.id}
-        admin={user.admin}
-        onOpenChange={setUpdatesModalOpen}
-      />
+      {/* ── What's New modal — suppressed while password change is required ── */}
+      {!user.change_password && (
+        <WhatIsNewModal
+          userId={user.id}
+          admin={user.admin}
+          onOpenChange={setUpdatesModalOpen}
+        />
+      )}
 
       {/* ── Happy birthday modal (automatically shown on birthday after balloons) ── */}
       <HappyBirthdayModal
@@ -1866,6 +1903,18 @@ export default function DashboardLayout({
           />
         )}
       </AnimatePresence>
+
+      {/* ── AI Chat Panel ── */}
+      <AIChatPanel
+        open={chatOpen}
+        onOpenChange={setChatOpen}
+        user={{
+          id: user.id,
+          firstname: user.firstname,
+          lastname: user.lastname,
+        }}
+        onUnreadChange={setChatUnread}
+      />
 
       {/* ── Navigation guard modal ── */}
       <AnimatePresence>

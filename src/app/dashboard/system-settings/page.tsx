@@ -29,6 +29,7 @@ import { getCsrfToken } from "@/lib/csrf";
 import { toast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 import { MultiSelectCombobox } from "@/components/ui/multi-select-combobox";
+import { StatusPill } from "@/components/ui/status-pill";
 
 type AuthPhase = "spinner" | "checking" | "done";
 type TopTab = "general" | "security" | "approval" | "memo-advertisement";
@@ -247,6 +248,76 @@ function buildLeaveRoutingRuleDraft(rule: LeaveRoutingRuleData | EvaluationRouti
 
 function formatPositionOption(position: PositionData) {
   return `${position.name} (level ${position.level_of_approval})`;
+}
+
+type RoutingRuleLike = { id: number; positions: string[]; departments: string[] };
+
+/**
+ * Returns the set of department IDs that are already claimed by another routing rule
+ * for any of the given selected position IDs.  Used to filter the departments combobox.
+ */
+function getExcludedDeptIds(
+  selectedPositionIds: number[],
+  rules: RoutingRuleLike[],
+  editTargetId: number | null,
+  positionList: PositionData[],
+  departmentList: DepartmentData[],
+): Set<number> {
+  if (selectedPositionIds.length === 0) return new Set();
+  const posIdToName = new Map(positionList.map((p) => [p.id, p.name]));
+  const deptNameToId = new Map(departmentList.map((d) => [d.name, d.id]));
+  const selectedPosNames = new Set(
+    selectedPositionIds.flatMap((id) => { const n = posIdToName.get(id); return n ? [n] : []; }),
+  );
+  const excluded = new Set<number>();
+  for (const rule of rules) {
+    if (rule.id === editTargetId) continue;
+    const covers = rule.positions.length === 0 || rule.positions.some((n) => selectedPosNames.has(n));
+    if (!covers) continue;
+    if (rule.departments.length === 0) {
+      departmentList.forEach((d) => excluded.add(d.id));
+    } else {
+      for (const name of rule.departments) {
+        const id = deptNameToId.get(name);
+        if (id !== undefined) excluded.add(id);
+      }
+    }
+  }
+  return excluded;
+}
+
+/**
+ * Returns the set of position IDs that are already claimed by another routing rule
+ * for any of the given selected department IDs.  Used to filter the positions combobox.
+ */
+function getExcludedPositionIds(
+  selectedDepartmentIds: number[],
+  rules: RoutingRuleLike[],
+  editTargetId: number | null,
+  positionList: PositionData[],
+  departmentList: DepartmentData[],
+): Set<number> {
+  if (selectedDepartmentIds.length === 0) return new Set();
+  const deptIdToName = new Map(departmentList.map((d) => [d.id, d.name]));
+  const posNameToId = new Map(positionList.map((p) => [p.name, p.id]));
+  const selectedDeptNames = new Set(
+    selectedDepartmentIds.flatMap((id) => { const n = deptIdToName.get(id); return n ? [n] : []; }),
+  );
+  const excluded = new Set<number>();
+  for (const rule of rules) {
+    if (rule.id === editTargetId) continue;
+    const covers = rule.departments.length === 0 || rule.departments.some((n) => selectedDeptNames.has(n));
+    if (!covers) continue;
+    if (rule.positions.length === 0) {
+      positionList.forEach((p) => excluded.add(p.id));
+    } else {
+      for (const name of rule.positions) {
+        const id = posNameToId.get(name);
+        if (id !== undefined) excluded.add(id);
+      }
+    }
+  }
+  return excluded;
 }
 
 function sameEmailConfig(a: EmailConfigData | null, b: EmailConfigData | null) {
@@ -1018,6 +1089,32 @@ export default function SystemSettingsPage() {
     || evaluationRoutingRuleDraft.steps.some((step) => step.position_ids.length > 0)
   );
 
+  // ── Conflict-aware option filtering for routing rule modals ──────────────
+  const leaveExcludedDeptIds = getExcludedDeptIds(
+    leaveRoutingRuleDraft.position_ids, leaveRoutingRules,
+    leaveRoutingEditTarget?.id ?? null, positions, departments,
+  );
+  const leaveExcludedPositionIds = getExcludedPositionIds(
+    leaveRoutingRuleDraft.department_ids, leaveRoutingRules,
+    leaveRoutingEditTarget?.id ?? null, positions, departments,
+  );
+  const trainingExcludedDeptIds = getExcludedDeptIds(
+    trainingEvaluationRoutingRuleDraft.position_ids, trainingEvaluationRoutingRules,
+    trainingEvaluationRoutingEditTarget?.id ?? null, positions, departments,
+  );
+  const trainingExcludedPositionIds = getExcludedPositionIds(
+    trainingEvaluationRoutingRuleDraft.department_ids, trainingEvaluationRoutingRules,
+    trainingEvaluationRoutingEditTarget?.id ?? null, positions, departments,
+  );
+  const evalExcludedDeptIds = getExcludedDeptIds(
+    evaluationRoutingRuleDraft.position_ids, evaluationRoutingRules,
+    evaluationRoutingEditTarget?.id ?? null, positions, departments,
+  );
+  const evalExcludedPositionIds = getExcludedPositionIds(
+    evaluationRoutingRuleDraft.department_ids, evaluationRoutingRules,
+    evaluationRoutingEditTarget?.id ?? null, positions, departments,
+  );
+
   useEffect(() => {
     if (!sectionsForTab.length) return;
     if (!sectionsForTab.some((s) => s.id === activeSectionId)) setActiveSectionId(sectionsForTab[0].id);
@@ -1079,6 +1176,16 @@ export default function SystemSettingsPage() {
     const data = await fetchJson<AdminAccountData[]>("/api/general-settings/admin-accounts");
     setAdminAccounts(data);
     setSavedAdminAccounts(data);
+  };
+  const saveAdminAccountRoles = async (accountId: number, roles: Record<AdminRoleKey, boolean>) => {
+    const updated = await mutateJson<AdminAccountData>(
+      `/api/general-settings/admin-accounts/${accountId}`,
+      "PATCH",
+      roles as unknown as JsonObject,
+    );
+    setAdminAccounts((prev) => prev.map((item) => (item.id === updated.id ? { ...item, ...updated } : item)));
+    setSavedAdminAccounts((prev) => prev.map((item) => (item.id === updated.id ? { ...item, ...updated } : item)));
+    return updated;
   };
   const refreshSecurityData = async () => {
     await Promise.all([
@@ -1144,7 +1251,7 @@ export default function SystemSettingsPage() {
   };
 
   useEffect(() => {
-    if (!user || authPhase !== "done" || activeTab === "approval") return;
+    if (!user || authPhase !== "done") return;
     let cancelled = false;
     const load = async () => {
       setSectionBusy((p) => ({ ...p, [activeSectionId]: true }));
@@ -1163,8 +1270,8 @@ export default function SystemSettingsPage() {
           ]);
         } else {
           if (activeSectionId === "general-group") await refreshGeneralData();
-          if (activeSectionId === "leave-reasons" || activeSectionId === "leave-routing") await refreshLeaveData();
-          if (activeSectionId === "evaluation-routing") await fetchEvaluationRoutingRules();
+          if (activeSectionId === "leave-reasons") await refreshLeaveData();
+          if (activeTab === "approval") await Promise.all([fetchPositionsData(), fetchDepartmentsData(), fetchLeaveRoutingRules(), fetchTrainingEvaluationRoutingRules(), fetchEvaluationRoutingRules()]);
           if (activeSectionId === "evaluation-frequency") {
             const evalData = await fetchJson<EvaluationSettingsData>("/api/employee-eval/settings");
             setEvaluationSettings(evalData);
@@ -1985,12 +2092,7 @@ export default function SystemSettingsPage() {
                       <p className="truncate text-[11px] text-[var(--color-text-muted)]">{rule.positions.length > 0 ? rule.positions.join(", ") : "All positions"}</p>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className={cn(
-                        "inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-semibold",
-                        rule.is_active ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500",
-                      )}>
-                        {rule.is_active ? "Active" : "Inactive"}
-                      </span>
+                      <StatusPill status={rule.is_active ? "active" : "inactive"} label={rule.is_active ? "Active" : "Inactive"} />
                       {canEdit && (
                         <>
                           <button type="button" className={ACTION_ICON_BUTTON_CLASS} onClick={() => {
@@ -2085,12 +2187,7 @@ export default function SystemSettingsPage() {
                       <p className="truncate text-[11px] text-[var(--color-text-muted)]">{rule.positions.length > 0 ? rule.positions.join(", ") : "All positions"}</p>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className={cn(
-                        "inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-semibold",
-                        rule.is_active ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500",
-                      )}>
-                        {rule.is_active ? "Active" : "Inactive"}
-                      </span>
+                      <StatusPill status={rule.is_active ? "active" : "inactive"} label={rule.is_active ? "Active" : "Inactive"} />
                       {canEdit && (
                         <>
                           <button type="button" className={ACTION_ICON_BUTTON_CLASS} onClick={() => {
@@ -2156,9 +2253,18 @@ export default function SystemSettingsPage() {
                     <div className="mt-4">
                       <MultiSelectCombobox
                         className="text-xs focus:outline-none focus:ring-0 focus:border-[var(--color-border)] focus-visible:ring-0 focus-visible:outline-none !ring-0"
-                        options={positions.map((p) => ({ value: String(p.id), label: formatPositionOption(p) }))}
+                        options={positions
+                          .filter((p) => !evalExcludedPositionIds.has(p.id))
+                          .map((p) => ({ value: String(p.id), label: formatPositionOption(p) }))}
                         selected={evaluationRoutingRuleDraft.position_ids.map(String)}
-                        onChange={(vals) => updateEvaluationRoutingRuleDraft({ position_ids: vals.map(Number).filter(Number.isFinite) })}
+                        onChange={(vals) => {
+                          const newPositionIds = vals.map(Number).filter(Number.isFinite);
+                          const newExcludedDepts = getExcludedDeptIds(newPositionIds, evaluationRoutingRules, evaluationRoutingEditTarget?.id ?? null, positions, departments);
+                          updateEvaluationRoutingRuleDraft({
+                            position_ids: newPositionIds,
+                            department_ids: evaluationRoutingRuleDraft.department_ids.filter((id) => !newExcludedDepts.has(id)),
+                          });
+                        }}
                         placeholder="Select positions"
                       />
                     </div>
@@ -2177,9 +2283,18 @@ export default function SystemSettingsPage() {
                     <div className="mt-4">
                       <MultiSelectCombobox
                         className="text-xs focus:outline-none focus:ring-0 focus:border-[var(--color-border)] focus-visible:ring-0 focus-visible:outline-none !ring-0"
-                        options={departments.map((d) => ({ value: String(d.id), label: d.name }))}
+                        options={departments
+                          .filter((d) => !evalExcludedDeptIds.has(d.id))
+                          .map((d) => ({ value: String(d.id), label: d.name }))}
                         selected={evaluationRoutingRuleDraft.department_ids.map(String)}
-                        onChange={(vals) => updateEvaluationRoutingRuleDraft({ department_ids: vals.map(Number).filter(Number.isFinite) })}
+                        onChange={(vals) => {
+                          const newDeptIds = vals.map(Number).filter(Number.isFinite);
+                          const newExcludedPositions = getExcludedPositionIds(newDeptIds, evaluationRoutingRules, evaluationRoutingEditTarget?.id ?? null, positions, departments);
+                          updateEvaluationRoutingRuleDraft({
+                            department_ids: newDeptIds,
+                            position_ids: evaluationRoutingRuleDraft.position_ids.filter((id) => !newExcludedPositions.has(id)),
+                          });
+                        }}
                         placeholder="Select departments"
                       />
                     </div>
@@ -2778,12 +2893,7 @@ export default function SystemSettingsPage() {
                     <p className="truncate text-[11px] text-[var(--color-text-muted)]">{rule.positions.length > 0 ? rule.positions.join(", ") : "All positions"}</p>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className={cn(
-                      "inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-semibold",
-                      rule.is_active ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500",
-                    )}>
-                      {rule.is_active ? "Active" : "Inactive"}
-                    </span>
+                    <StatusPill status={rule.is_active ? "active" : "inactive"} label={rule.is_active ? "Active" : "Inactive"} />
                     {canEdit && (
                       <>
                         <button type="button" className={ACTION_ICON_BUTTON_CLASS} onClick={() => {
@@ -2833,12 +2943,7 @@ export default function SystemSettingsPage() {
                     <p className="truncate text-[11px] text-[var(--color-text-muted)]">{rule.positions.length > 0 ? rule.positions.join(", ") : "All positions"}</p>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className={cn(
-                      "inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-semibold",
-                      rule.is_active ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500",
-                    )}>
-                      {rule.is_active ? "Active" : "Inactive"}
-                    </span>
+                    <StatusPill status={rule.is_active ? "active" : "inactive"} label={rule.is_active ? "Active" : "Inactive"} />
                     {canEdit && (
                       <>
                         <button type="button" className={ACTION_ICON_BUTTON_CLASS} onClick={() => {
@@ -2888,12 +2993,7 @@ export default function SystemSettingsPage() {
                     <p className="truncate text-[11px] text-[var(--color-text-muted)]">{rule.positions.length > 0 ? rule.positions.join(", ") : "All positions"}</p>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className={cn(
-                      "inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-semibold",
-                      rule.is_active ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500",
-                    )}>
-                      {rule.is_active ? "Active" : "Inactive"}
-                    </span>
+                    <StatusPill status={rule.is_active ? "active" : "inactive"} label={rule.is_active ? "Active" : "Inactive"} />
                     {canEdit && (
                       <>
                         <button type="button" className={ACTION_ICON_BUTTON_CLASS} onClick={() => {
@@ -2959,9 +3059,18 @@ export default function SystemSettingsPage() {
                   <div className="mt-4">
                     <MultiSelectCombobox
                       className="text-xs focus:outline-none focus:ring-0 focus:border-[var(--color-border)] focus-visible:ring-0 focus-visible:outline-none !ring-0"
-                      options={positions.map((p) => ({ value: String(p.id), label: formatPositionOption(p) }))}
+                      options={positions
+                        .filter((p) => !leaveExcludedPositionIds.has(p.id))
+                        .map((p) => ({ value: String(p.id), label: formatPositionOption(p) }))}
                       selected={leaveRoutingRuleDraft.position_ids.map(String)}
-                      onChange={(vals) => updateLeaveRoutingRuleDraft({ position_ids: vals.map(Number).filter(Number.isFinite) })}
+                      onChange={(vals) => {
+                        const newPositionIds = vals.map(Number).filter(Number.isFinite);
+                        const newExcludedDepts = getExcludedDeptIds(newPositionIds, leaveRoutingRules, leaveRoutingEditTarget?.id ?? null, positions, departments);
+                        updateLeaveRoutingRuleDraft({
+                          position_ids: newPositionIds,
+                          department_ids: leaveRoutingRuleDraft.department_ids.filter((id) => !newExcludedDepts.has(id)),
+                        });
+                      }}
                       placeholder="Select positions"
                     />
                   </div>
@@ -2980,9 +3089,18 @@ export default function SystemSettingsPage() {
                   <div className="mt-4">
                     <MultiSelectCombobox
                       className="text-xs focus:outline-none focus:ring-0 focus:border-[var(--color-border)] focus-visible:ring-0 focus-visible:outline-none !ring-0"
-                      options={departments.map((d) => ({ value: String(d.id), label: d.name }))}
+                      options={departments
+                        .filter((d) => !leaveExcludedDeptIds.has(d.id))
+                        .map((d) => ({ value: String(d.id), label: d.name }))}
                       selected={leaveRoutingRuleDraft.department_ids.map(String)}
-                      onChange={(vals) => updateLeaveRoutingRuleDraft({ department_ids: vals.map(Number).filter(Number.isFinite) })}
+                      onChange={(vals) => {
+                        const newDeptIds = vals.map(Number).filter(Number.isFinite);
+                        const newExcludedPositions = getExcludedPositionIds(newDeptIds, leaveRoutingRules, leaveRoutingEditTarget?.id ?? null, positions, departments);
+                        updateLeaveRoutingRuleDraft({
+                          department_ids: newDeptIds,
+                          position_ids: leaveRoutingRuleDraft.position_ids.filter((id) => !newExcludedPositions.has(id)),
+                        });
+                      }}
                       placeholder="Select departments"
                     />
                   </div>
@@ -3123,9 +3241,18 @@ export default function SystemSettingsPage() {
                   <div className="mt-4">
                     <MultiSelectCombobox
                       className="text-xs focus:outline-none focus:ring-0 focus:border-[var(--color-border)] focus-visible:ring-0 focus-visible:outline-none !ring-0"
-                      options={positions.map((p) => ({ value: String(p.id), label: formatPositionOption(p) }))}
+                      options={positions
+                        .filter((p) => !trainingExcludedPositionIds.has(p.id))
+                        .map((p) => ({ value: String(p.id), label: formatPositionOption(p) }))}
                       selected={trainingEvaluationRoutingRuleDraft.position_ids.map(String)}
-                      onChange={(vals) => updateTrainingEvaluationRoutingRuleDraft({ position_ids: vals.map(Number).filter(Number.isFinite) })}
+                      onChange={(vals) => {
+                        const newPositionIds = vals.map(Number).filter(Number.isFinite);
+                        const newExcludedDepts = getExcludedDeptIds(newPositionIds, trainingEvaluationRoutingRules, trainingEvaluationRoutingEditTarget?.id ?? null, positions, departments);
+                        updateTrainingEvaluationRoutingRuleDraft({
+                          position_ids: newPositionIds,
+                          department_ids: trainingEvaluationRoutingRuleDraft.department_ids.filter((id) => !newExcludedDepts.has(id)),
+                        });
+                      }}
                       placeholder="Select positions"
                     />
                   </div>
@@ -3144,9 +3271,18 @@ export default function SystemSettingsPage() {
                   <div className="mt-4">
                     <MultiSelectCombobox
                       className="text-xs focus:outline-none focus:ring-0 focus:border-[var(--color-border)] focus-visible:ring-0 focus-visible:outline-none !ring-0"
-                      options={departments.map((d) => ({ value: String(d.id), label: d.name }))}
+                      options={departments
+                        .filter((d) => !trainingExcludedDeptIds.has(d.id))
+                        .map((d) => ({ value: String(d.id), label: d.name }))}
                       selected={trainingEvaluationRoutingRuleDraft.department_ids.map(String)}
-                      onChange={(vals) => updateTrainingEvaluationRoutingRuleDraft({ department_ids: vals.map(Number).filter(Number.isFinite) })}
+                      onChange={(vals) => {
+                        const newDeptIds = vals.map(Number).filter(Number.isFinite);
+                        const newExcludedPositions = getExcludedPositionIds(newDeptIds, trainingEvaluationRoutingRules, trainingEvaluationRoutingEditTarget?.id ?? null, positions, departments);
+                        updateTrainingEvaluationRoutingRuleDraft({
+                          department_ids: newDeptIds,
+                          position_ids: trainingEvaluationRoutingRuleDraft.position_ids.filter((id) => !newExcludedPositions.has(id)),
+                        });
+                      }}
                       placeholder="Select departments"
                     />
                   </div>
@@ -3287,9 +3423,18 @@ export default function SystemSettingsPage() {
                   <div className="mt-4">
                     <MultiSelectCombobox
                       className="text-xs focus:outline-none focus:ring-0 focus:border-[var(--color-border)] focus-visible:ring-0 focus-visible:outline-none !ring-0"
-                      options={positions.map((p) => ({ value: String(p.id), label: formatPositionOption(p) }))}
+                      options={positions
+                        .filter((p) => !evalExcludedPositionIds.has(p.id))
+                        .map((p) => ({ value: String(p.id), label: formatPositionOption(p) }))}
                       selected={evaluationRoutingRuleDraft.position_ids.map(String)}
-                      onChange={(vals) => updateEvaluationRoutingRuleDraft({ position_ids: vals.map(Number).filter(Number.isFinite) })}
+                      onChange={(vals) => {
+                        const newPositionIds = vals.map(Number).filter(Number.isFinite);
+                        const newExcludedDepts = getExcludedDeptIds(newPositionIds, evaluationRoutingRules, evaluationRoutingEditTarget?.id ?? null, positions, departments);
+                        updateEvaluationRoutingRuleDraft({
+                          position_ids: newPositionIds,
+                          department_ids: evaluationRoutingRuleDraft.department_ids.filter((id) => !newExcludedDepts.has(id)),
+                        });
+                      }}
                       placeholder="Select positions"
                     />
                   </div>
@@ -3308,9 +3453,18 @@ export default function SystemSettingsPage() {
                   <div className="mt-4">
                     <MultiSelectCombobox
                       className="text-xs focus:outline-none focus:ring-0 focus:border-[var(--color-border)] focus-visible:ring-0 focus-visible:outline-none !ring-0"
-                      options={departments.map((d) => ({ value: String(d.id), label: d.name }))}
+                      options={departments
+                        .filter((d) => !evalExcludedDeptIds.has(d.id))
+                        .map((d) => ({ value: String(d.id), label: d.name }))}
                       selected={evaluationRoutingRuleDraft.department_ids.map(String)}
-                      onChange={(vals) => updateEvaluationRoutingRuleDraft({ department_ids: vals.map(Number).filter(Number.isFinite) })}
+                      onChange={(vals) => {
+                        const newDeptIds = vals.map(Number).filter(Number.isFinite);
+                        const newExcludedPositions = getExcludedPositionIds(newDeptIds, evaluationRoutingRules, evaluationRoutingEditTarget?.id ?? null, positions, departments);
+                        updateEvaluationRoutingRuleDraft({
+                          department_ids: newDeptIds,
+                          position_ids: evaluationRoutingRuleDraft.position_ids.filter((id) => !newExcludedPositions.has(id)),
+                        });
+                      }}
                       placeholder="Select departments"
                     />
                   </div>
@@ -3851,12 +4005,10 @@ export default function SystemSettingsPage() {
                                   type="button"
                                   className={ACTION_ICON_BUTTON_CLASS}
                                   disabled={!canSaveEditRow}
-                                  onClick={() => {
-                                    setAdminAccounts((prev) => prev.map((item) => (
-                                      item.id === account.id ? { ...item, ...adminEditRoles } : item
-                                    )));
+                                  onClick={() => void runAction("admin-update-roles", async () => {
+                                    await saveAdminAccountRoles(account.id, adminEditRoles);
                                     setAdminEditingId(null);
-                                  }}
+                                  }, "Admin roles updated.")}
                                 >
                                   <Check size={14} />
                                 </button>
@@ -3986,10 +4138,12 @@ export default function SystemSettingsPage() {
                             type="button"
                             className={ACTION_ICON_BUTTON_CLASS}
                             disabled={!canSaveAddRow}
-                            onClick={() => {
-                              setAdminAccounts((prev) => prev.map((item) => (
-                                String(item.id) === adminAddUserId ? { ...item, ...adminAddRoles } : item
-                              )));
+                            onClick={() => void runAction("admin-add-roles", async () => {
+                              const selectedId = Number(adminAddUserId);
+                              if (!Number.isFinite(selectedId) || selectedId <= 0) {
+                                throw new Error("Please select a valid user.");
+                              }
+                              await saveAdminAccountRoles(selectedId, adminAddRoles);
                               setAdminAddOpen(false);
                               setAdminUserSearch("");
                               setAdminAddUserId("");
@@ -4002,7 +4156,7 @@ export default function SystemSettingsPage() {
                                 hr_manager: false,
                                 mis: false,
                               });
-                            }}
+                            }, "Admin account updated.")}
                           >
                             <Check size={14} />
                           </button>
@@ -4061,20 +4215,16 @@ export default function SystemSettingsPage() {
                 confirmLabel="Delete"
                 confirming={Boolean(sectionBusy["admin-remove-privileges"])}
                 onConfirm={() => void runAction("admin-remove-privileges", async () => {
-                  setAdminAccounts((prev) => prev.map((item) => (
-                    item.id === adminDeleteTarget.id
-                      ? {
-                          ...item,
-                          admin: false,
-                          clinic: false,
-                          iad: false,
-                          accounting: false,
-                          hr: false,
-                          hr_manager: false,
-                          mis: false,
-                        }
-                      : item
-                  )));
+                  if (!adminDeleteTarget) return;
+                  await saveAdminAccountRoles(adminDeleteTarget.id, {
+                    admin: false,
+                    clinic: false,
+                    iad: false,
+                    accounting: false,
+                    hr: false,
+                    hr_manager: false,
+                    mis: false,
+                  });
                   setAdminDeleteTarget(null);
                 }, "Privileges removed from user.")}
                 onCancel={() => !sectionBusy["admin-remove-privileges"] && setAdminDeleteTarget(null)}

@@ -77,11 +77,20 @@ function ChartTooltipContent({
   className,
   hideLabel = false,
   nameKey,
-}: React.ComponentProps<typeof RechartsPrimitive.Tooltip> &
-  React.ComponentProps<"div"> & {
-    hideLabel?: boolean;
-    nameKey?: string;
-  }) {
+}: {
+  active?: boolean;
+  payload?: Array<{
+    name?: string | number;
+    dataKey?: string | number;
+    color?: string;
+    value?: number | string | null;
+    [key: string]: unknown;
+  }>;
+  label?: string | number;
+} & React.ComponentProps<"div"> & {
+  hideLabel?: boolean;
+  nameKey?: string;
+}) {
   const { config } = useChart();
 
   if (!active || !payload?.length) return null;

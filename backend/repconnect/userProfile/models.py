@@ -257,6 +257,8 @@ EDUCATION_LEVEL_CHOICES = [
     ('secondary', 'Secondary'),
     ('vocational', 'Vocational'),
     ('tertiary',  'Tertiary'),
+    ('masteral',  'Masteral'),
+    ('doctorate', 'Doctorate'),
 ]
 
 

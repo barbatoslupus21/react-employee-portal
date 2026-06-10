@@ -15,7 +15,6 @@ from email.mime.text import MIMEText
 from io import BytesIO
 
 from django.db import IntegrityError, transaction
-from django.db import transaction
 from django.db.models import Case, DecimalField, ExpressionWrapper, F, IntegerField, OuterRef, Prefetch, Q, Subquery, Sum, Value, When
 from django.db.models.functions import Greatest
 from django.http import HttpResponse
@@ -702,12 +701,16 @@ class LeaveReasonListView(APIView):
 
 
 class LeaveBalanceListView(APIView):
-    """GET /api/leave/balances/"""
+    """GET /api/leave/balances/ — returns only active (non-expired) balances for the user."""
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        today = datetime.date.today()
         balances = (
-            LeaveBalance.objects.filter(employee=request.user)
+            LeaveBalance.objects.filter(
+                employee=request.user,
+                period_end__gte=today,
+            )
             .select_related('leave_type')
             .order_by('-period_start', 'leave_type__name')
         )
@@ -2128,6 +2131,8 @@ class AdminLeaveRequestExportView(APIView):
             reason = lr.reason.title
             if lr.subreason:
                 reason += f' – {lr.subreason.title}'
+            elif lr.remarks:
+                reason += f' – {lr.remarks}'
             row_data = [
                 lr.control_number,
                 lr.employee.idnumber,
@@ -2456,7 +2461,7 @@ class ApprovalQueueExportView(APIView):
                 dept,
                 lr.leave_type.name,
                 lr.reason.title,
-                lr.subreason.title if lr.subreason else '',
+                lr.subreason.title if lr.subreason else (lr.remarks or ''),
                 self._fmt_range(lr.date_start, lr.date_end),
                 str(lr.total_days),
                 str(lr.total_hours),
@@ -2518,7 +2523,7 @@ class ApprovalQueueExportView(APIView):
                 dept,
                 lr.leave_type.name,
                 lr.reason.title,
-                lr.subreason.title if lr.subreason else '',
+                lr.subreason.title if lr.subreason else (lr.remarks or ''),
                 self._fmt_range(lr.date_start, lr.date_end),
                 current_approver,
             ]

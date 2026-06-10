@@ -381,13 +381,22 @@ class WorkInfoUserUpdateView(APIView):
         if not ser.is_valid():
             return Response(ser.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        # Validate that the chosen approver has a higher position level
+        # Validate that the chosen approver meets eligibility rules:
+        # • position level >= 5
+        # • position level strictly above the current user's level
+        # • not a privileged account (admin / hr / accounting)
         validated = ser.validated_data
         approver  = validated.get('approver')
         if approver is not None:
             current_level = (
                 obj.position.level_of_approval if obj.position else 0
             )
+            # Reject privileged accounts as approvers
+            if getattr(approver, 'admin', False) or getattr(approver, 'hr', False) or getattr(approver, 'accounting', False):
+                return Response(
+                    {'approver': 'The selected approver cannot be a privileged account.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             # Resolve approver's work info to get their position level
             approver_wi = workInformation.objects.filter(employee=approver).first()
             approver_level = (
@@ -395,9 +404,9 @@ class WorkInfoUserUpdateView(APIView):
                 if approver_wi and approver_wi.position
                 else 0
             )
-            if approver_level <= current_level:
+            if approver_level < 5 or approver_level <= current_level:
                 return Response(
-                    {'approver': 'The selected approver must have a higher position level than yours.'},
+                    {'approver': 'The selected approver must be at position level 5 or above and have a higher position level than yours.'},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
@@ -426,9 +435,7 @@ class AvatarUpdateView(APIView):
         if not ser.is_valid():
             return Response(ser.errors, status=status.HTTP_400_BAD_REQUEST)
         ser.save()
-        avatar_url = None
-        if request.user.avatar:
-            avatar_url = request.build_absolute_uri(f'/media/{request.user.avatar}')
+        avatar_url = f'/media/{request.user.avatar}' if request.user.avatar else None
         return Response({'avatar': avatar_url})
 
 
@@ -458,10 +465,14 @@ class ChangePasswordView(APIView):
 
 class ApproverListView(APIView):
     """
-    Returns users who are eligible to be the current user's approver.
-    Eligibility: they have a workInformation record whose position
-    has a level_of_approval strictly greater than the current user's.
-    An optional ``?department=<id>`` filter further narrows the list.
+    Returns users eligible to be the current user's approver.
+
+    Eligibility rules:
+      • Active, non-privileged employee (admin=False, hr=False, accounting=False)
+      • In the same department as the current user (resolved from their own
+        work-information record, not a query parameter)
+      • Position level_of_approval >= 5  AND  strictly greater than the
+        current user's own level_of_approval
     """
 
     permission_classes = [IsAuthenticated]
@@ -473,24 +484,35 @@ class ApproverListView(APIView):
             if current_wi and current_wi.position
             else 0
         )
+        current_dept_id = current_wi.department_id if current_wi else None
 
-        dept_id = request.query_params.get('department')
-
-        qs = workInformation.objects.select_related(
-            'employee', 'position', 'department'
-        ).filter(
-            position__level_of_approval__gt=current_level,
-            employee__active=True,
-        )
-
-        if dept_id:
+        # Optionally accept ?department=<id> to override (used by frontend when
+        # the user is changing their department in the edit form before saving).
+        dept_id_param = request.query_params.get('department')
+        if dept_id_param:
             try:
-                qs = qs.filter(department_id=int(dept_id))
+                filter_dept_id = int(dept_id_param)
             except (ValueError, TypeError):
                 return Response(
                     {'detail': 'Invalid department id.'},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
+        else:
+            filter_dept_id = current_dept_id
+
+        qs = workInformation.objects.select_related(
+            'employee', 'position', 'department'
+        ).filter(
+            employee__active=True,
+            employee__admin=False,
+            employee__hr=False,
+            employee__accounting=False,
+            position__level_of_approval__gte=3,
+            position__level_of_approval__gt=current_level,
+        )
+
+        if filter_dept_id is not None:
+            qs = qs.filter(department_id=filter_dept_id)
 
         results = []
         seen = set()
@@ -501,13 +523,10 @@ class ApproverListView(APIView):
             seen.add(emp.pk)
             name_parts = [part for part in [emp.firstname, emp.lastname] if part]
             results.append({
-                'id':       emp.pk,
-                'idnumber': emp.idnumber,
-                'name':     ' '.join(name_parts) or emp.idnumber,
-                'avatar':   (
-                    request.build_absolute_uri(f'/media/{emp.avatar}')
-                    if emp.avatar else None
-                ),
+                'id':             emp.pk,
+                'idnumber':       emp.idnumber,
+                'name':           ' '.join(name_parts) or emp.idnumber,
+                'avatar':         (f'/media/{emp.avatar}' if emp.avatar else None),
                 'position':       wi.position.name if wi.position else None,
                 'position_level': wi.position.level_of_approval if wi.position else 0,
             })

@@ -6,7 +6,7 @@ class IsEmployeeAdmin(BasePermission):
 
     message = 'You do not have permission to perform this action.'
 
-    def has_permission(self, request, view):
+    def has_permission(self, request, view) -> bool:  # type: ignore[override]
         return bool(
             request.user
             and request.user.is_authenticated

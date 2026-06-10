@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { motion, AnimatePresence, Reorder } from 'motion/react';
 import { X, Upload, GripVertical, Trash2, ChevronUp, ChevronDown, Eye, FileText } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -147,7 +148,7 @@ export function AnnouncementFormModal({
 
   return (
     <AnimatePresence>
-      {open && (
+      {open && createPortal(
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
@@ -362,7 +363,7 @@ export function AnnouncementFormModal({
             </div>
           </motion.div>
         </motion.div>
-      )}
+      , document.body)}
     </AnimatePresence>
   );
 }

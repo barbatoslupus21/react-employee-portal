@@ -1882,12 +1882,16 @@ class FinancePrincipalBalanceTemplateView(APIView):
 
         ws.row_dimensions[1].height = 18
 
-        # Column C: dropdown of all active loan types
+        # Column C: dropdown sourced from a hidden lookup sheet to avoid the
+        # 255-character limit on inline DataValidation formula1 strings.
         if loan_type_names:
-            formula = '"' + ','.join(loan_type_names) + '"'
+            lookup = wb.create_sheet(title='__LoanTypes__')
+            lookup.sheet_state = 'hidden'
+            for i, name in enumerate(loan_type_names, 1):
+                lookup.cell(row=i, column=1, value=name)
             dv = DataValidation(
                 type='list',
-                formula1=formula,
+                formula1=f"'__LoanTypes__'!$A$1:$A${len(loan_type_names)}",
                 sqref='C2:C5000',
                 allow_blank=True,
                 showDropDown=False,
@@ -1962,12 +1966,16 @@ class FinanceDeductionTemplateView(APIView):
 
         ws.row_dimensions[1].height = 18
 
-        # Column C: dropdown of all active loan types
+        # Column C: dropdown sourced from a hidden lookup sheet to avoid the
+        # 255-character limit on inline DataValidation formula1 strings.
         if loan_type_names:
-            formula = '"' + ','.join(loan_type_names) + '"'
+            lookup = wb.create_sheet(title='__LoanTypes__')
+            lookup.sheet_state = 'hidden'
+            for i, name in enumerate(loan_type_names, 1):
+                lookup.cell(row=i, column=1, value=name)
             dv = DataValidation(
                 type='list',
-                formula1=formula,
+                formula1=f"'__LoanTypes__'!$A$1:$A${len(loan_type_names)}",
                 sqref='C2:C5000',
                 allow_blank=True,
                 showDropDown=False,
@@ -2043,12 +2051,16 @@ class FinanceAllowanceTemplateView(APIView):
 
         ws.row_dimensions[1].height = 18
 
-        # Column C: dropdown of all active allowance types
+        # Column C: dropdown sourced from a hidden lookup sheet to avoid the
+        # 255-character limit on inline DataValidation formula1 strings.
         if allowance_type_names:
-            formula = '"' + ','.join(allowance_type_names) + '"'
+            lookup = wb.create_sheet(title='__AllowanceTypes__')
+            lookup.sheet_state = 'hidden'
+            for i, name in enumerate(allowance_type_names, 1):
+                lookup.cell(row=i, column=1, value=name)
             dv = DataValidation(
                 type='list',
-                formula1=formula,
+                formula1=f"'__AllowanceTypes__'!$A$1:$A${len(allowance_type_names)}",
                 sqref='C2:C5000',
                 allow_blank=True,
                 showDropDown=False,
@@ -2123,12 +2135,16 @@ class FinanceSavingsTemplateView(APIView):
 
         ws.row_dimensions[1].height = 18
 
-        # Column C: dropdown of all active savings types
+        # Column C: dropdown sourced from a hidden lookup sheet to avoid the
+        # 255-character limit on inline DataValidation formula1 strings.
         if savings_type_names:
-            formula = '"' + ','.join(savings_type_names) + '"'
+            lookup = wb.create_sheet(title='__SavingsTypes__')
+            lookup.sheet_state = 'hidden'
+            for i, name in enumerate(savings_type_names, 1):
+                lookup.cell(row=i, column=1, value=name)
             dv = DataValidation(
                 type='list',
-                formula1=formula,
+                formula1=f"'__SavingsTypes__'!$A$1:$A${len(savings_type_names)}",
                 sqref='C2:C5000',
                 allow_blank=True,
                 showDropDown=False,

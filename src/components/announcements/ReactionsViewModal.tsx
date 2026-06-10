@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { X } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -28,7 +29,7 @@ export function ReactionsViewModal({ open, onOpenChange, announcementId }: React
 
   return (
     <AnimatePresence>
-      {open && (
+      {open && createPortal(
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
@@ -85,7 +86,7 @@ export function ReactionsViewModal({ open, onOpenChange, announcementId }: React
             </div>
           </motion.div>
         </motion.div>
-      )}
+      , document.body)}
     </AnimatePresence>
   );
 }

@@ -54,9 +54,6 @@ class AnnouncementMediaSerializer(serializers.ModelSerializer):
         fields = ['id', 'file', 'media_type', 'order']
 
     def get_file(self, obj):
-        request = self.context.get('request')
-        if obj.file and request:
-            return request.build_absolute_uri(obj.file.url)
         return obj.file.url if obj.file else None
 
 
@@ -115,7 +112,7 @@ class AnnouncementReactionSerializer(serializers.ModelSerializer):
     def get_user_avatar(self, obj):
         request = self.context.get('request')
         if obj.user.avatar and request:
-            return request.build_absolute_uri(obj.user.avatar.url)
+            return obj.user.avatar.url
         return None
 
 
@@ -144,7 +141,7 @@ class AnnouncementCommentSerializer(serializers.ModelSerializer):
     def get_user_avatar(self, obj):
         request = self.context.get('request')
         if obj.user.avatar and request:
-            return request.build_absolute_uri(obj.user.avatar.url)
+            return obj.user.avatar.url
         return None
 
     def get_replies(self, obj):
@@ -185,18 +182,12 @@ class AnnouncementListSerializer(serializers.ModelSerializer):
         return ' '.join(p for p in parts if p).strip() or u.email
 
     def get_created_by_avatar(self, obj):
-        request = self.context.get('request')
-        if obj.created_by.avatar and request:
-            return request.build_absolute_uri(obj.created_by.avatar.url)
-        return None
+        return obj.created_by.avatar.url if obj.created_by.avatar else None
 
     def get_top_reactors(self, obj):
-        request = self.context.get('request')
         reactors = []
         for reaction in obj.reactions.select_related('user').order_by('created_at')[:5]:
-            avatar = None
-            if reaction.user.avatar and request:
-                avatar = request.build_absolute_uri(reaction.user.avatar.url)
+            avatar = reaction.user.avatar.url if reaction.user.avatar else None
             parts = [reaction.user.firstname or '', reaction.user.lastname or '']
             user_name = ' '.join(p for p in parts if p).strip() or reaction.user.email
             reactors.append({'avatar': avatar, 'name': user_name, 'emoji': reaction.emoji})

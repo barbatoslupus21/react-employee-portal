@@ -88,6 +88,14 @@ class Survey(models.Model):
         default='',
         db_index=True,
     )
+    source_template = models.ForeignKey(
+        'SurveyTemplate',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='seeded_surveys',
+        help_text='The template this survey was seeded from; used for live question sync.',
+    )
     created_at  = models.DateTimeField(default=timezone.now, db_index=True)
     updated_at  = models.DateTimeField(auto_now=True)
 
@@ -202,17 +210,6 @@ class SurveyQuestion(models.Model):
         ordering = ['order']
         verbose_name = 'Survey Question'
         verbose_name_plural = 'Survey Questions'
-        constraints = [
-            models.CheckConstraint(
-                # Exactly one FK must be non-null:
-                # (survey_id IS NOT NULL) XOR (template_id IS NOT NULL)
-                condition=(
-                    models.Q(survey__isnull=False, template__isnull=True) |
-                    models.Q(survey__isnull=True,  template__isnull=False)
-                ),
-                name='survey_question_exactly_one_parent',
-            )
-        ]
 
     def __str__(self) -> str:
         parent = f'Survey#{self.survey_id}' if self.survey_id else f'Template#{self.template_id}'

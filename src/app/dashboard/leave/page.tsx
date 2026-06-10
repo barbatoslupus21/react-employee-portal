@@ -7,6 +7,7 @@ import React, {
   useRef,
   useState,
 } from 'react';
+import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   AlertTriangle,
@@ -96,6 +97,7 @@ interface LeaveBalance {
   id: number;
   leave_type: string;
   leave_type_id: number;
+  is_active?: boolean;
   period_start: string;
   period_end: string;
   entitled_leave: string;
@@ -657,10 +659,14 @@ function LeaveDashboardRow({
   const currentYear = today.getFullYear();
   const currentMonth = today.getMonth(); // 0-indexed
 
-  // ── Balance cards: grouped by period with expand/collapse ──────────────────
+  // ── Balance cards: only active (non-expired) periods, grouped by period ──────
   const periodGroups = useMemo(() => {
+    const todayStr = new Date().toISOString().slice(0, 10);
     const map = new Map<string, LeaveBalance[]>();
     for (const b of balances) {
+      // Defensive client-side filter: only show balances where period_end >= today.
+      // The API already enforces this; this guards against stale cached data.
+      if (b.period_end < todayStr) continue;
       const key = `${b.period_start}|${b.period_end}`;
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(b);
@@ -1450,7 +1456,7 @@ function ApplyLeaveModal({ onClose, onCreated, balances }: ApplyLeaveModalProps)
     !overlapError &&
     (subreasonId !== 'other' || !!remarks.trim());
 
-  return (
+  return createPortal(
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
@@ -1655,7 +1661,7 @@ function ApplyLeaveModal({ onClose, onCreated, balances }: ApplyLeaveModalProps)
                 </div>
               </div>
 
-              {/* Row 2: Per-date list — container always mounted */}
+              {/* Row 2: Per-date list — only show Date From and Date To */}
               <div className="flex flex-col gap-0.5">
                 {!dateStart || !dateEnd ? (
                   <span className="px-1 text-xs text-[var(--color-text-muted)]">Select a date range to see details.</span>
@@ -1665,7 +1671,7 @@ function ApplyLeaveModal({ onClose, onCreated, balances }: ApplyLeaveModalProps)
                     <div className="h-5 animate-pulse rounded bg-[var(--color-bg-elevated)] opacity-60" />
                   </div>
                 ) : (
-                  activeDates.map((iso) => {
+                  activeDates.filter((_, idx, arr) => idx === 0 || idx === arr.length - 1).map((iso) => {
                       const dateObj = new Date(iso + 'T00:00:00');
                       const label = dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
                       const isWorking = workingDates.includes(iso);
@@ -1893,7 +1899,7 @@ function ApplyLeaveModal({ onClose, onCreated, balances }: ApplyLeaveModalProps)
         </form>
       </motion.div>
     </motion.div>
-  );
+  , document.body);
 }
 
 // ── Edit Leave Modal ──────────────────────────────────────────────────────────
@@ -2237,7 +2243,7 @@ function EditLeaveModal({ leaveId, onClose, onUpdated, balances }: EditLeaveModa
     !overlapError &&
     (subreasonId !== 'other' || !!remarks.trim());
 
-  return (
+  return createPortal(
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
@@ -2256,7 +2262,7 @@ function EditLeaveModal({ leaveId, onClose, onUpdated, balances }: EditLeaveModa
         className="w-full max-w-3xl rounded-2xl border border-[var(--color-border)]
           bg-[var(--color-bg-elevated)] shadow-2xl overflow-hidden"
       >
-        {/* Header */}
+        {/* Header - Edit */}
         <div className="flex items-center justify-between border-b border-[var(--color-border)] px-6 py-4">
           <h2 className="text-base font-semibold text-[var(--color-text-primary)] flex items-center gap-2">
             Edit Leave Request
@@ -2452,7 +2458,7 @@ function EditLeaveModal({ leaveId, onClose, onUpdated, balances }: EditLeaveModa
                   </div>
                 </div>
 
-                {/* Row 2: Per-date list */}
+                {/* Row 2: Per-date list — only show Date From and Date To */}
                 <div className="flex flex-col gap-0.5">
                   {!dateStart || !dateEnd ? (
                     <span className="px-1 text-xs text-[var(--color-text-muted)]">Select a date range to see details.</span>
@@ -2462,7 +2468,7 @@ function EditLeaveModal({ leaveId, onClose, onUpdated, balances }: EditLeaveModa
                       <div className="h-5 animate-pulse rounded bg-[var(--color-bg-elevated)] opacity-60" />
                     </div>
                   ) : (
-                      activeDates.map(iso => {
+                      activeDates.filter((_, idx, arr) => idx === 0 || idx === arr.length - 1).map(iso => {
                         const dateObj = new Date(iso + 'T00:00:00');
                         const label = dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
                         const isWorking = workingDates.includes(iso);
@@ -2686,7 +2692,7 @@ function EditLeaveModal({ leaveId, onClose, onUpdated, balances }: EditLeaveModa
         )}
       </motion.div>
     </motion.div>
-  );
+  , document.body);
 }
 
 // ── Leave Detail Modal ─────────────────────────────────────────────────────────
@@ -2905,7 +2911,7 @@ function LeaveDetailModal({
     return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   }
 
-  return (
+  return createPortal(
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
@@ -3159,7 +3165,7 @@ function LeaveDetailModal({
         </div>
       </motion.div>
     </motion.div>
-  );
+  , document.body);
 }
 
 // ── My Requests tab ───────────────────────────────────────────────────────────
@@ -3338,7 +3344,7 @@ function MyRequestsTab({ user, balances, refreshKey, onApply, onViewDetail, onEd
       options={STATUS_OPTIONS}
       value={statusFilter}
       onChange={handleStatusFilter}
-      allLabel="All Statuses"
+      showAllOption={false}
     />
   );
 
@@ -3995,7 +4001,7 @@ function ExportModal({
     }
   }
 
-  return (
+  return createPortal(
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
@@ -4062,7 +4068,7 @@ function ExportModal({
         </div>
       </motion.div>
     </motion.div>
-  );
+  , document.body);
 }
 
 // ── Page ──────────────────────────────────────────────────────────────────────

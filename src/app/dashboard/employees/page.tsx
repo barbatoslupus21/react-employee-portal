@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'motion/react';
 import type { ChartCategory } from '@/components/ui/multi-series-chart';
@@ -140,14 +141,20 @@ const STATUS_FILTER_OPTIONS = [
 ];
 
 const IMPORT_COLS = [
-  { col: 'A  —  ID Number',       note: undefined },
-  { col: 'B  —  First Name',      note: undefined },
-  { col: 'C  —  Last Name',       note: undefined },
-  { col: 'D  —  Email',           note: undefined },
-  { col: 'E  —  Department',      note: 'Must match an existing Department name exactly.' },
-  { col: 'F  —  Line',            note: 'Must match an existing Line name exactly (if provided).' },
-  { col: 'G  —  Employment Type', note: 'Must match an existing Employment Type name exactly (if provided).' },
-  { col: 'H  —  Date Hired',      note: 'Format: MM/DD/YYYY (e.g. 01/15/2025) (if provided).' },
+  { col: 'A  —  ID Number',           note: undefined },
+  { col: 'B  —  First Name',          note: undefined },
+  { col: 'C  —  Last Name',           note: undefined },
+  { col: 'D  —  Email',               note: undefined },
+  { col: 'E  —  Department',          note: 'Must match an existing Department name exactly.' },
+  { col: 'F  —  Line',                note: 'Must match an existing Line name exactly (if provided).' },
+  { col: 'G  —  Employment Type',     note: 'Must match an existing Employment Type name exactly (if provided).' },
+  { col: 'H  —  Date Hired',          note: 'Format: MM/DD/YYYY (e.g. 01/15/2025) (if provided).' },
+  { col: 'I  —  Position',            note: 'Must match an existing Position name exactly.' },
+  { col: 'J  —  TIN Number',          note: undefined },
+  { col: 'K  —  SSS Number',          note: undefined },
+  { col: 'L  —  HDMF Number',         note: undefined },
+  { col: 'M  —  Philhealth Number',   note: undefined },
+  { col: 'N  —  Bank Account',        note: undefined },
 ];
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -622,7 +629,7 @@ function ExportModal({
     exit: { opacity: 0, y: -8 },
   };
 
-  return (
+  return createPortal(
     <motion.div
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
       transition={{ duration: 0.18 }}
@@ -815,7 +822,7 @@ function ExportModal({
         </div>
       </motion.div>
     </motion.div>
-  );
+  , document.body);
 }
 
 // ── ImportModal ─────────────────────────────────────────────────────────────────
@@ -825,11 +832,13 @@ function ImportModal({
   onSuccess,
   filterOptions,
   employmentTypes,
+  positions,
 }: {
   onClose:          () => void;
   onSuccess:        () => void;
   filterOptions:    FilterOptions | null;
   employmentTypes:  { id: number; name: string }[];
+  positions:        { id: number; name: string }[];
 }) {
   const [files,    setFiles   ] = useState<File[]>([]);
   const [phase,    setPhase   ] = useState<'idle' | 'uploading' | 'done' | 'error'>('idle');
@@ -846,19 +855,45 @@ function ImportModal({
       'Line',
       'Employment Type',
       'Date Hired',
+      'Position',
+      'TIN Number',
+      'SSS Number',
+      'HDMF Number',
+      'Philhealth Number',
+      'Bank Account',
     ];
 
-    const departmentNames = filterOptions?.departments.map(d => d.name) ?? [];
-    const lineNames = filterOptions?.lines.map(l => l.name) ?? [];
+    const departmentNames     = filterOptions?.departments.map(d => d.name) ?? [];
+    const lineNames           = filterOptions?.lines.map(l => l.name) ?? [];
     const employmentTypeNames = employmentTypes.map(e => e.name);
+    const positionNames       = positions.map(p => p.name);
 
     const validationLists = [
       { sqref: 'E2:E1000', list: departmentNames },
       { sqref: 'F2:F1000', list: lineNames },
       { sqref: 'G2:G1000', list: employmentTypeNames },
+      { sqref: 'I2:I1000', list: positionNames },
     ].filter(item => item.list.length > 0);
 
-    const blob = styledXlsx(headers, [], undefined, validationLists);
+    // Sample row — demonstrates expected values; ID numbers use standard PH formats with zeros.
+    const sampleRow = [
+      '00001',                         // ID Number
+      'Juan',                          // First Name
+      'Dela Cruz',                     // Last Name
+      'juan.delacruz@example.com',     // Email
+      departmentNames[0] ?? '',        // Department  (pick first valid option)
+      lineNames[0] ?? '',              // Line
+      employmentTypeNames[0] ?? '',    // Employment Type
+      '01/01/2024',                    // Date Hired (MM/DD/YYYY)
+      positionNames[0] ?? '',          // Position
+      '000-000-000-000',               // TIN Number
+      '00-0000000-0',                  // SSS Number
+      '0000-0000-0000',                // HDMF Number
+      '00-000000000-0',                // PhilHealth Number
+      '0000-0000-0000-0000',           // Bank Account
+    ];
+
+    const blob = styledXlsx(headers, [sampleRow], undefined, validationLists);
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement('a');
     a.href     = url;
@@ -933,7 +968,7 @@ function ImportModal({
     xhr.send(fd);
   }
 
-  return (
+  return createPortal(
     <motion.div
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
       transition={{ duration: 0.18 }}
@@ -950,10 +985,10 @@ function ImportModal({
           layout:  { duration: 0.32, ease: [0.25, 0.46, 0.45, 0.94] },
         }}
         onClick={e => e.stopPropagation()}
-        className="w-full max-w-lg rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-2xl overflow-hidden"
+        className="w-full max-w-lg rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
       >
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-[var(--color-border)] px-6 py-4">
+        <div className="flex items-center justify-between border-b border-[var(--color-border)] px-6 py-4 shrink-0">
           <h2 className="text-base font-semibold text-[var(--color-text-primary)]">Import Employees</h2>
           <button type="button" onClick={onClose} disabled={busy}
             className="flex h-7 w-7 items-center justify-center rounded-full text-[var(--color-text-muted)] hover:bg-[var(--color-bg-card)] transition-colors disabled:opacity-40">
@@ -962,7 +997,7 @@ function ImportModal({
         </div>
 
         {/* Instructions */}
-        <div className="bg-emerald-50 dark:bg-emerald-950/20 border-b border-emerald-200/70 dark:border-emerald-900/40 px-5 py-3">
+        <div className="bg-emerald-50 dark:bg-emerald-950/20 border-b border-emerald-200/70 dark:border-emerald-900/40 px-5 py-3 shrink-0">
           <div className="flex items-start justify-between gap-3">
             <div>
               <p className="text-xs font-semibold text-emerald-900 dark:text-emerald-200">Bulk create employee accounts</p>
@@ -981,8 +1016,8 @@ function ImportModal({
           </div>
         </div>
 
-        {/* Body */}
-        <div className="px-5 py-4 space-y-4">
+        {/* Body — scrollable */}
+        <div className="px-5 py-4 space-y-4 overflow-y-auto flex-1 min-h-0">
           <FileUploadDropzone
             files={files}
             onFilesChange={setFiles}
@@ -1026,7 +1061,7 @@ function ImportModal({
               animate={{ height: 'auto', opacity: 1 }}
               exit={{ height: 0, opacity: 0 }}
               transition={{ duration: 0.3, ease: [0.25, 0.46, 0.45, 0.94] }}
-              className="overflow-hidden border-t border-[var(--color-border)]"
+              className="overflow-hidden border-t border-[var(--color-border)] shrink-0"
             >
               <div className="px-6 py-3 space-y-1.5">
                 <p className="text-[11px] font-medium text-[var(--color-text-muted)]">Uploading {progress}%</p>
@@ -1043,7 +1078,7 @@ function ImportModal({
         </AnimatePresence>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t border-[var(--color-border)] flex items-center justify-end gap-3">
+        <div className="px-6 py-4 border-t border-[var(--color-border)] flex items-center justify-end gap-3 shrink-0">
           <button type="button" onClick={onClose} disabled={busy}
             className="h-9 px-5 rounded-lg text-sm font-medium border border-[var(--color-border)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-card)] transition-colors disabled:opacity-50">
             Cancel
@@ -1074,7 +1109,7 @@ function ImportModal({
         </div>
       </motion.div>
     </motion.div>
-  );
+  , document.body);
 }
 
 // ── Main page ──────────────────────────────────────────────────────────────────
@@ -1141,9 +1176,11 @@ export default function EmployeesAdminPage() {
   // ── Filter state ─────────────────────────────────────────────────────────────
   const [filterOptions, setFilterOptions] = useState<FilterOptions | null>(null);
   const [employmentTypes, setEmploymentTypes] = useState<{ id: number; name: string }[]>([]);
+  const [positions, setPositions] = useState<{ id: number; name: string }[]>([]);
   const [deptFilter,    setDeptFilter   ] = useState<number | null>(null);
   const [lineFilter,    setLineFilter   ] = useState<number | null>(null);
   const [statusFilter,  setStatusFilter ] = useState<string | null>(null);
+  const [typeFilter,    setTypeFilter   ] = useState<number | null>(null);
 
   // ── Action modal ─────────────────────────────────────────────────────────────
   const [actionModal,   setActionModal  ] = useState<ActionModalState>({ open: false, action: null, employee: null });
@@ -1204,6 +1241,11 @@ export default function EmployeesAdminPage() {
       .then(r => r.ok ? r.json() : null)
       .then((d: { id: number; name: string }[] | null) => { if (d) setEmploymentTypes(d); })
       .catch(() => {});
+
+    fetch('/api/general-settings/positions', { credentials: 'include' })
+      .then(r => r.ok ? r.json() : null)
+      .then((d: { id: number; name: string }[] | null) => { if (d) setPositions(d); })
+      .catch(() => {});
   }, [authPhase]);
 
   // ── Employee list fetch ──────────────────────────────────────────────────────
@@ -1221,10 +1263,11 @@ export default function EmployeesAdminPage() {
 
     try {
       const params = new URLSearchParams({ page: String(page), sort: sortField, dir: sortDir });
-      if (debouncedSearch)       params.set('q',             debouncedSearch);
-      if (deptFilter !== null)   params.set('department_id', String(deptFilter));
-      if (lineFilter !== null)   params.set('line_id',       String(lineFilter));
-      if (statusFilter)          params.set('status',        statusFilter);
+      if (debouncedSearch)       params.set('q',                  debouncedSearch);
+      if (deptFilter !== null)   params.set('department_id',      String(deptFilter));
+      if (lineFilter !== null)   params.set('line_id',            String(lineFilter));
+      if (statusFilter)          params.set('status',             statusFilter);
+      if (typeFilter !== null)   params.set('employment_type_id', String(typeFilter));
 
       const [res] = await Promise.all([
         fetch(`/api/auth/admin/employees?${params}`, { credentials: 'include' }),
@@ -1239,18 +1282,18 @@ export default function EmployeesAdminPage() {
       setTableLoading(false);
       setTableTransitioning(false);
     }
-  }, [authPhase, page, debouncedSearch, sortField, sortDir, deptFilter, lineFilter, statusFilter]);
+  }, [authPhase, page, debouncedSearch, sortField, sortDir, deptFilter, lineFilter, statusFilter, typeFilter]);
 
   // Mark next fetch as skeleton when search or any filter changes.
   // MUST be declared before the fetchEmployees effect to run first within the same render cycle.
   useEffect(() => {
     shouldSkeletonRef.current = true;
-  }, [debouncedSearch, deptFilter, lineFilter, statusFilter]);
+  }, [debouncedSearch, deptFilter, lineFilter, statusFilter, typeFilter]);
 
   useEffect(() => { fetchEmployees(); }, [fetchEmployees]);
 
   // Reset to page 1 on search/filter changes (keep sort/pagination-driven resets separate)
-  useEffect(() => { setPage(1); }, [debouncedSearch, deptFilter, lineFilter, statusFilter]);
+  useEffect(() => { setPage(1); }, [debouncedSearch, deptFilter, lineFilter, statusFilter, typeFilter]);
 
   // ── Reset password handler ──────────────────────────────────────────────────
   async function confirmResetPassword() {
@@ -1451,11 +1494,19 @@ export default function EmployeesAdminPage() {
     },
 
     {
-      key:         'employment_type',
-      label:       'Type',
-      sortField:   'employment_type',
-      thClassName: 'hidden xl:table-cell',
-      tdClassName: 'hidden xl:table-cell',
+      key:           'employment_type',
+      label:         'Type',
+      sortField:     'employment_type',
+      thClassName:   'hidden xl:table-cell',
+      tdClassName:   'hidden xl:table-cell',
+      filterContent: (
+        <FilterContentList
+          options={employmentTypes.map(e => ({ value: e.id, label: e.name }))}
+          selected={typeFilter}
+          onSelect={v => setTypeFilter(v as number | null)}
+        />
+      ),
+      filterActive: typeFilter !== null,
       render: row => (
         <span className="text-xs font-normal text-[var(--color-text-primary)]">{row.employment_type_name ?? '—'}</span>
       ),
@@ -1593,7 +1644,7 @@ export default function EmployeesAdminPage() {
           onSort={handleSort}
           emptyTitle="No employees found"
           emptyDescription={
-            search || deptFilter !== null || lineFilter !== null || statusFilter
+            search || deptFilter !== null || lineFilter !== null || statusFilter || typeFilter !== null
               ? 'Try adjusting your search or filters.'
               : 'No employee accounts have been created yet.'
           }
@@ -1632,6 +1683,7 @@ export default function EmployeesAdminPage() {
             }}
             filterOptions={filterOptions}
             employmentTypes={employmentTypes}
+            positions={positions}
           />
         )}
       </AnimatePresence>

@@ -6,6 +6,7 @@ import React, {
   useRef,
   useState,
 } from 'react';
+import { createPortal } from 'react-dom';
 import {
   AnimatePresence,
   LayoutGroup,
@@ -559,10 +560,12 @@ function QuestionCard({
     setErrors({});
     setSaving(true);
     try {
+      const isInstruction = ['section', 'subsection', 'statement'].includes(f.question_type);
       const body: Record<string, unknown> = {
         ...f,
         question_text: f.question_text.trim(),
         order: card.order,
+        ...(isInstruction ? { is_required: false } : {}),
       };
       if (currentNeedsOptions)
         body.options = options.filter(o => o.text.trim()).map((o, i) => ({ option_text: o.text.trim(), order: i }));
@@ -1285,11 +1288,12 @@ function TemplateBuilderContent({ templateId }: { templateId: number }) {
       }
     }
     const uid = newPendingId();
+    const isInstructionFieldType = ['section', 'subsection', 'statement'].includes(fieldType);
     const newCard: QuestionCardItem = {
       uid,
       question_text: '',
       question_type: fieldType,
-      is_required: true,
+      is_required: !isInstructionFieldType,
       show_percentage_summary: false,
       allow_other: false,
       options: [],
@@ -1758,7 +1762,7 @@ function TemplateBuilderContent({ templateId }: { templateId: number }) {
 
       {/* Off-canvas field panel — tablet/mobile only */}
       <AnimatePresence>
-        {isOffCanvasOpen && (
+        {isOffCanvasOpen && createPortal(
           <>
             <motion.div
               key="offcanvas-backdrop"
@@ -1827,7 +1831,7 @@ function TemplateBuilderContent({ templateId }: { templateId: number }) {
               </div>
             </motion.aside>
           </>
-        )}
+        , document.body)}
       </AnimatePresence>
     </DndContext>
   );

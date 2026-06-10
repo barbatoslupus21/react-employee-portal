@@ -19,7 +19,7 @@ from .serializers import (
     CertificateSerializer,
 )
 
-_FILENAME_RE = re.compile(r'^(\d+)_(.+)\.pdf$', re.IGNORECASE)
+_FILENAME_RE = re.compile(r'^([A-Za-z0-9-]+)_(.+)\.pdf$', re.IGNORECASE)
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 

@@ -6,6 +6,7 @@ import React, {
   useCallback,
   useRef,
 } from 'react';
+import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'motion/react';
 import {
@@ -332,7 +333,7 @@ function ViewCertModal({
   cert:    CertificateItem;
   onClose: () => void;
 }) {
-  return (
+  return createPortal(
     <motion.div
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
       transition={{ duration: 0.18 }}
@@ -372,7 +373,7 @@ function ViewCertModal({
         </div>
       </motion.div>
     </motion.div>
-  );
+  , document.body);
 }
 
 // ── Edit Certificate Modal ─────────────────────────────────────────────────────
@@ -445,7 +446,7 @@ function EditCertModal({
     }
   }
 
-  return (
+  return createPortal(
     <motion.div
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
       transition={{ duration: 0.18 }}
@@ -558,7 +559,7 @@ function EditCertModal({
         </div>
       </motion.div>
     </motion.div>
-  );
+  , document.body);
 }
 
 // ── Delete Certificate Modal ───────────────────────────────────────────────────
@@ -666,7 +667,7 @@ function UploadModal({
   const canSubmit =
     files.length > 0 && !!categoryId && !!title.trim() && !!objective.trim() && !titleErr && !uploading;
 
-  const certFilenamePattern = /^(\d+)_(.+)\.pdf$/i;
+  const certFilenamePattern = /^([A-Za-z0-9-]+)_(.+)\.pdf$/i;
 
   function downloadCertValidationErrorReport(errors: { file: string; issue: string }[]) {
     try {
@@ -792,7 +793,7 @@ function UploadModal({
     xhr.send(fd);
   }
 
-  return (
+  return createPortal(
     <motion.div
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
       transition={{ duration: 0.18 }}
@@ -990,7 +991,7 @@ function UploadModal({
         </div>
       </motion.div>
     </motion.div>
-  );
+  , document.body);
 }
 
 // ── Accordion Row ──────────────────────────────────────────────────────────────

@@ -218,7 +218,7 @@ export default function ChangePasswordPage() {
               type={showCurrent ? 'text' : 'password'}
               value={current}
               onChange={e => setCurrent(e.target.value)}
-              placeholder={`Repco_${user.idnumber}`}
+              placeholder="Enter your current password"
               disabled={saving}
               trailingIcon={
                 <button
@@ -318,10 +318,10 @@ export default function ChangePasswordPage() {
             <Button
               type="submit"
               disabled={!canSubmit}
-              className="w-full"
+              className="w-full text-xs font-normal"
             >
               {saving
-                ? <TextShimmer className="text-sm text-white" duration={1.2}>Updating…</TextShimmer>
+                ? <TextShimmer className="text-xs font-normal text-white" duration={1.2}>Updating…</TextShimmer>
                 : 'Set New Password'}
             </Button>
 

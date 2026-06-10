@@ -50,6 +50,16 @@ class CalendarEvent(models.Model):
     repetition = models.CharField(max_length=10, choices=REPETITION_CHOICES, default='once')
     note       = models.TextField(blank=True, default='', max_length=300)
 
+    MEMBER_SCOPE_CHOICES = [
+        ('all',      'All'),
+        ('selected', 'Selected'),
+    ]
+    member_scope = models.CharField(
+        max_length=10,
+        choices=MEMBER_SCOPE_CHOICES,
+        default='selected',
+    )
+
     owner = models.ForeignKey(
         loginCredentials,
         on_delete=models.CASCADE,

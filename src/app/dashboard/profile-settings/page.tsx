@@ -27,6 +27,7 @@ import { EmptyState } from "@/components/ui/interactive-empty-state";
 import { TextShimmer } from "@/components/ui/text-shimmer";
 import { toast } from "@/components/ui/toast";
 import { getCsrfToken } from "@/lib/csrf";
+import { randomUUID } from "@/lib/uuid";
 import {
   Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList,
 } from "@/components/ui/command";
@@ -102,6 +103,25 @@ const FIELD_VARIANTS: Variants = {
   visible: { opacity: 1, y: 0, transition: { duration: 0.18, ease: "easeOut" } },
 };
 
+// ── Scroll helper — scrolls nearest overflow-y-auto ancestor so dropdown fits ─
+
+function scrollToRevealDropdown(el: HTMLElement | null, dropdownHeight = 300) {
+  if (typeof window === "undefined" || !el) return;
+  const rect = el.getBoundingClientRect();
+  const spaceBelow = window.innerHeight - rect.bottom;
+  if (spaceBelow >= dropdownHeight) return;
+  const needed = dropdownHeight - spaceBelow + 16;
+  let parent = el.parentElement;
+  while (parent) {
+    const oy = getComputedStyle(parent).overflowY;
+    if ((oy === "auto" || oy === "scroll") && parent.scrollHeight > parent.clientHeight) {
+      parent.scrollTop += needed;
+      return;
+    }
+    parent = parent.parentElement;
+  }
+}
+
 // ── Countries / States / Cities (country-state-city) ───────────────────────
 
 const _ALL_COUNTRIES = Country.getAllCountries();
@@ -123,15 +143,24 @@ function CountryCombobox({ value, onChange, disabled, error }: {
   error?: string;
 }) {
   const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const selected = value;
+
+  function handleOpen(next: boolean) {
+    if (next) scrollToRevealDropdown(triggerRef.current);
+    setOpen(next);
+  }
 
   return (
     <div className="flex flex-col gap-1.5">
       <InputLabel label="Country" required value={value} />
-      <Popover open={open} onOpenChange={setOpen}>
+      <Popover open={open} onOpenChange={handleOpen}>
         <PopoverTrigger asChild>
           <button
+            ref={triggerRef}
             type="button"
+            role="combobox"
+            aria-expanded={open}
             disabled={disabled}
             className={`flex h-9 w-full items-center justify-between rounded-lg border px-3 py-2 text-sm transition-colors
               ${error ? "border-red-500" : "border-[var(--color-border-strong)]"}
@@ -159,6 +188,75 @@ function CountryCombobox({ value, onChange, disabled, error }: {
                   >
                     <Check size={13} className={`mr-2 shrink-0 ${c === value ? "opacity-100" : "opacity-0"}`} />
                     {c}
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            </CommandList>
+          </Command>
+        </PopoverContent>
+      </Popover>
+      {error && <span className="text-xs text-red-500">{error}</span>}
+    </div>
+  );
+}
+
+// ── Generic address combobox (searchable dropdown for province/city/barangay) ──
+
+function AddressCombobox({ label, placeholder, value, options, onChange, disabled, error, required }: {
+  label:       string;
+  placeholder: string;
+  value:       string;
+  options:     string[];
+  onChange:    (v: string) => void;
+  disabled?:   boolean;
+  error?:      string;
+  required?:   boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+
+  function handleOpen(next: boolean) {
+    if (next) scrollToRevealDropdown(triggerRef.current);
+    setOpen(next);
+  }
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <InputLabel label={label} required={required} value={value} />
+      <Popover open={open} onOpenChange={handleOpen}>
+        <PopoverTrigger asChild>
+          <button
+            ref={triggerRef}
+            type="button"
+            role="combobox"
+            aria-expanded={open}
+            disabled={disabled}
+            className={`flex h-9 w-full items-center justify-between rounded-lg border px-3 py-2 text-sm transition-colors
+              ${error ? "border-red-500" : "border-[var(--color-border-strong)]"}
+              bg-[var(--color-bg-elevated)] text-left
+              disabled:cursor-not-allowed disabled:opacity-50
+              focus:outline-none`}
+          >
+            <span className={value ? "text-[var(--color-text-primary)] truncate pr-2" : "text-[var(--color-text-muted)] italic"}>
+              {value || placeholder}
+            </span>
+            <ChevronsUpDown size={14} className="shrink-0 text-[var(--color-text-muted)]" />
+          </button>
+        </PopoverTrigger>
+        <PopoverContent className="w-[280px] p-0" align="start">
+          <Command>
+            <CommandInput placeholder={`Search ${label.toLowerCase()}…`} />
+            <CommandList className="max-h-[220px]">
+              <CommandEmpty>No {label.toLowerCase()} found.</CommandEmpty>
+              <CommandGroup>
+                {options.map((opt) => (
+                  <CommandItem
+                    key={opt}
+                    value={opt}
+                    onSelect={(v) => { onChange(v === value ? "" : v); setOpen(false); }}
+                  >
+                    <Check size={13} className={`mr-2 shrink-0 ${opt === value ? "opacity-100" : "opacity-0"}`} />
+                    {opt}
                   </CommandItem>
                 ))}
               </CommandGroup>
@@ -692,6 +790,18 @@ function SkillsPanel({ draftSkills, isEditing, onRemoveSkill, onAddSkill }: Skil
   );
 }
 
+// ── Address field labels per country ─────────────────────────────────────────
+
+function getAddressLabels(country: string) {
+  if (country === "Japan") {
+    return { province: "Prefecture", city: "City", barangay: "Ward / Area" };
+  }
+  if (country === "Philippines") {
+    return { province: "Province", city: "City / Municipality", barangay: "Barangay" };
+  }
+  return { province: "Province / State", city: "City / Municipality", barangay: "Area / District" };
+}
+
 // ── Address fields (shared, no card wrapper) ─────────────────────────────────
 
 interface AddrFieldsProps {
@@ -714,28 +824,32 @@ function AddressFields({
   fieldErrors, prefix,
 }: AddrFieldsProps) {
   const isPH = address.country === "Philippines";
+  const isJP = address.country === "Japan";
+  const labels = getAddressLabels(address.country);
 
-  // Derive province/state options from PSGC (PH) or country-state-city (others)
+  // Province / Prefecture options:
+  // Philippines → PSGC dropdown | Japan → country-state-city dropdown | Others → text input
   const provinceOptions = useMemo<string[]>(() => {
     if (!address.country) return [];
     if (isPH && psgcData) return Object.keys(psgcData);
-    const iso = COUNTRY_ISO_MAP[address.country];
-    if (!iso) return [];
-    return State.getStatesOfCountry(iso).map(s => s.name);
-  }, [address.country, isPH, psgcData]);
+    if (isJP) return State.getStatesOfCountry("JP").map(s => s.name);
+    return [];
+  }, [address.country, isPH, isJP, psgcData]);
 
-  // Derive city/municipality options
+  // City options:
+  // Philippines → PSGC dropdown | Japan → country-state-city dropdown | Others → text input
   const cityOptions = useMemo<string[]>(() => {
     if (!address.province) return [];
     if (isPH && psgcData) return Object.keys(psgcData[address.province] ?? {});
-    const countryIso = COUNTRY_ISO_MAP[address.country];
-    if (!countryIso) return [];
-    const stateIso = State.getStatesOfCountry(countryIso).find(s => s.name === address.province)?.isoCode;
-    if (!stateIso) return [];
-    return City.getCitiesOfState(countryIso, stateIso).map(c => c.name);
-  }, [address.country, address.province, isPH, psgcData]);
+    if (isJP) {
+      const stateIso = State.getStatesOfCountry("JP").find(s => s.name === address.province)?.isoCode;
+      if (!stateIso) return [];
+      return City.getCitiesOfState("JP", stateIso).map(c => c.name);
+    }
+    return [];
+  }, [address.country, address.province, isPH, isJP, psgcData]);
 
-  // Derive barangay options (Philippines only via PSGC)
+  // Barangay options: Philippines only (PSGC); Japan and others use text input
   const barangayOptions = useMemo<string[]>(() => {
     if (!isPH || !psgcData || !address.province || !address.city) return [];
     return psgcData[address.province]?.[address.city] ?? [];
@@ -756,94 +870,115 @@ function AddressFields({
         )}
       </AnimatePresence>
 
-      {/* Province / State — Select when options available, Input fallback */}
+      {/* Province / Prefecture / Province–State */}
       <AnimatePresence mode="wait">
         {isEditing ? (
           <motion.div key="e" variants={FIELD_VARIANTS} initial="hidden" animate="visible">
-            <div className="flex flex-col gap-1.5">
-              <InputLabel label="Province" required value={address.province} />
-              {provinceOptions.length > 0 ? (
-                <Select value={address.province} onValueChange={onProvinceChange} disabled={!address.country}>
-                  <SelectTrigger><SelectValue placeholder="Select province" /></SelectTrigger>
-                  <SelectContent>
-                    {provinceOptions.map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              ) : (
-                <Input maxLength={100} value={address.province}
+            {provinceOptions.length > 0 ? (
+              <AddressCombobox
+                label={labels.province}
+                placeholder={`Select ${labels.province.toLowerCase()}`}
+                value={address.province}
+                options={provinceOptions}
+                onChange={onProvinceChange}
+                disabled={!address.country}
+                error={fieldErrors[`${prefix}.province`]}
+                required
+              />
+            ) : (
+              <div className="flex flex-col gap-1.5">
+                <InputLabel label={labels.province} required value={address.province} />
+                <Input
+                  maxLength={100}
+                  value={address.province}
                   onChange={(e) => onProvinceChange(e.target.value)}
-                  placeholder="Enter province / state"
-                  disabled={!address.country} />
-              )}
-              {fieldErrors[`${prefix}.province`] && <span className="text-xs text-red-500">{fieldErrors[`${prefix}.province`]}</span>}
-            </div>
+                  placeholder={`Enter ${labels.province.toLowerCase()}`}
+                  disabled={!address.country}
+                />
+                {fieldErrors[`${prefix}.province`] && <span className="text-xs text-red-500">{fieldErrors[`${prefix}.province`]}</span>}
+              </div>
+            )}
           </motion.div>
         ) : (
           <motion.div key="v" initial={{ opacity: 1 }} exit={{ opacity: 0 }}>
-            <ReadField label="Province" value={address.province} />
+            <ReadField label={labels.province} value={address.province} />
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* City / Municipality — Select when options available, Input fallback */}
+      {/* City / Municipality */}
       <AnimatePresence mode="wait">
         {isEditing ? (
           <motion.div key="e" variants={FIELD_VARIANTS} initial="hidden" animate="visible">
-            <div className="flex flex-col gap-1.5">
-              <InputLabel label="City / Municipality" required value={address.city} />
-              {cityOptions.length > 0 ? (
-                <Select value={address.city} onValueChange={onCityChange} disabled={!address.province}>
-                  <SelectTrigger><SelectValue placeholder="Select city" /></SelectTrigger>
-                  <SelectContent>
-                    {cityOptions.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              ) : (
-                <Input maxLength={100} value={address.city}
+            {cityOptions.length > 0 ? (
+              <AddressCombobox
+                label={labels.city}
+                placeholder={`Select ${labels.city.toLowerCase()}`}
+                value={address.city}
+                options={cityOptions}
+                onChange={onCityChange}
+                disabled={!address.province}
+                error={fieldErrors[`${prefix}.city`]}
+                required
+              />
+            ) : (
+              <div className="flex flex-col gap-1.5">
+                <InputLabel label={labels.city} required value={address.city} />
+                <Input
+                  maxLength={100}
+                  value={address.city}
                   onChange={(e) => onCityChange(e.target.value)}
-                  placeholder="Enter city / municipality"
-                  disabled={!address.province} />
-              )}
-              {fieldErrors[`${prefix}.city`] && <span className="text-xs text-red-500">{fieldErrors[`${prefix}.city`]}</span>}
-            </div>
+                  placeholder={`Enter ${labels.city.toLowerCase()}`}
+                  disabled={!address.province}
+                />
+                {fieldErrors[`${prefix}.city`] && <span className="text-xs text-red-500">{fieldErrors[`${prefix}.city`]}</span>}
+              </div>
+            )}
           </motion.div>
         ) : (
           <motion.div key="v" initial={{ opacity: 1 }} exit={{ opacity: 0 }}>
-            <ReadField label="City / Municipality" value={address.city} />
+            <ReadField label={labels.city} value={address.city} />
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* Barangay — Select (PH via PSGC) or Input (other countries), disabled until city selected */}
+      {/* Barangay / Ward–Area / Area–District */}
       <AnimatePresence mode="wait">
         {isEditing ? (
           <motion.div key="e" variants={FIELD_VARIANTS} initial="hidden" animate="visible">
-            <div className="flex flex-col gap-1.5">
-              <InputLabel label="Barangay" required value={address.barangay} />
-              {barangayOptions.length > 0 ? (
-                <Select value={address.barangay} onValueChange={(v) => onChange({ barangay: v })} disabled={!address.city}>
-                  <SelectTrigger><SelectValue placeholder="Select barangay" /></SelectTrigger>
-                  <SelectContent>
-                    {barangayOptions.map((b) => <SelectItem key={b} value={b}>{b}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              ) : (
-                <Input maxLength={150} value={address.barangay}
+            {barangayOptions.length > 0 ? (
+              <AddressCombobox
+                label={labels.barangay}
+                placeholder={`Select ${labels.barangay.toLowerCase()}`}
+                value={address.barangay}
+                options={barangayOptions}
+                onChange={(v) => onChange({ barangay: v })}
+                disabled={!address.city}
+                error={fieldErrors[`${prefix}.barangay`]}
+                required
+              />
+            ) : (
+              <div className="flex flex-col gap-1.5">
+                <InputLabel label={labels.barangay} required value={address.barangay} />
+                <Input
+                  maxLength={150}
+                  value={address.barangay}
                   onChange={(e) => onChange({ barangay: e.target.value })}
-                  placeholder="Enter barangay / district"
-                  disabled={!address.city} />
-              )}
-              {fieldErrors[`${prefix}.barangay`] && <span className="text-xs text-red-500">{fieldErrors[`${prefix}.barangay`]}</span>}
-            </div>
+                  placeholder={`Enter ${labels.barangay.toLowerCase()}`}
+                  disabled={!address.city}
+                />
+                {fieldErrors[`${prefix}.barangay`] && <span className="text-xs text-red-500">{fieldErrors[`${prefix}.barangay`]}</span>}
+              </div>
+            )}
           </motion.div>
         ) : (
           <motion.div key="v" initial={{ opacity: 1 }} exit={{ opacity: 0 }}>
-            <ReadField label="Barangay" value={address.barangay} />
+            <ReadField label={labels.barangay} value={address.barangay} />
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* Street — free-text, disabled until barangay selected */}
+      {/* Street — free-text, disabled until barangay / ward selected */}
       <AnimatePresence mode="wait">
         {isEditing ? (
           <motion.div key="e" variants={FIELD_VARIANTS} initial="hidden" animate="visible">
@@ -863,7 +998,7 @@ function AddressFields({
         )}
       </AnimatePresence>
 
-      {/* Block / Lot — free-text, disabled until barangay selected */}
+      {/* Block / Lot — free-text, disabled until barangay / ward selected */}
       <AnimatePresence mode="wait">
         {isEditing ? (
           <motion.div key="e" variants={FIELD_VARIANTS} initial="hidden" animate="visible">
@@ -941,7 +1076,6 @@ function AccordionSection({
             animate={{ height: "auto", opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
             transition={{ duration: 0.28, ease: "easeInOut" }}
-            style={{ overflow: "hidden" }}
           >
             <div className="px-5 pb-5 space-y-1">
               {children}
@@ -1112,7 +1246,7 @@ function ProfileCompletionCard({ profile }: { profile: ProfileData }) {
                   <span className={`text-xs font-medium pl-1 ${done ? "text-[var(--color-text-secondary)]" : "text-[var(--color-text-muted)]"}`}>
                     {label}
                   </span>
-                  <span className={`inline-flex h-3 w-3 items-center justify-center rounded-full ${done ? "bg-emerald-500" : "bg-gray-300"}`}>
+                  <span className={`inline-flex h-3 w-3 items-center justify-center rounded-full ${done ? "bg-emerald-500" : "bg-gray-300 dark:bg-gray-600"}`}>
                     <Check size={9} className="text-white" />
                   </span>
                 </div>
@@ -1159,6 +1293,10 @@ export default function ProfileSettingsPage() {
   const [depts,     setDepts]     = useState<Dept[]>([]);
   const [lines,     setLines]     = useState<Line[]>([]);
   const [approvers, setApprovers] = useState<Approver[]>([]);
+
+  // ── scroll refs for auto-reveal dropdowns ─────────────────────────────────
+  const leftColRef  = useRef<HTMLDivElement>(null);
+  const rightColRef = useRef<HTMLDivElement>(null);
 
   // ── PSGC ──────────────────────────────────────────────────────────────────
   const [psgcData, setPsgcData] = useState<Record<string, Record<string, string[]>> | null>(null);
@@ -1320,6 +1458,34 @@ export default function ProfileSettingsPage() {
     return true;
   }, [draftProfile, fieldErrors]);
 
+  // ── Auto-scroll: scroll left / right column so dropdown fits on screen ──────
+  useEffect(() => {
+    function makeHandler(colEl: HTMLDivElement) {
+      return function handler(e: PointerEvent) {
+        const trigger = (e.target as HTMLElement).closest<HTMLElement>('[role="combobox"]');
+        if (!trigger) return;
+        const rect = trigger.getBoundingClientRect();
+        const spaceBelow = window.innerHeight - rect.bottom;
+        if (spaceBelow < 300) {
+          colEl.scrollTop += Math.max(0, 300 - spaceBelow + 16);
+        }
+      };
+    }
+
+    const left  = leftColRef.current;
+    const right = rightColRef.current;
+    const lh = left  ? makeHandler(left)  : null;
+    const rh = right ? makeHandler(right) : null;
+
+    left?.addEventListener("pointerdown",  lh!, { capture: true });
+    right?.addEventListener("pointerdown", rh!, { capture: true });
+
+    return () => {
+      left?.removeEventListener("pointerdown",  lh!, { capture: true });
+      right?.removeEventListener("pointerdown", rh!, { capture: true });
+    };
+  }, []);
+
   // ────────────────────────────────────────────────────────────────────────────
   // Tab switching with unsaved-changes guard
   // ────────────────────────────────────────────────────────────────────────────
@@ -1385,8 +1551,8 @@ export default function ProfileSettingsPage() {
     setSaving(true);
     // Each request gets its own unique idempotency key so the backend
     // never short-circuits a later call with a cached result from an earlier one.
-    const H = () => ({ "X-CSRFToken": getCsrfToken(), "X-Idempotency-Key": crypto.randomUUID() });
-    const J = () => ({ "X-CSRFToken": getCsrfToken(), "X-Idempotency-Key": crypto.randomUUID(), "Content-Type": "application/json" });
+    const H = () => ({ "X-CSRFToken": getCsrfToken(), "X-Idempotency-Key": randomUUID() });
+    const J = () => ({ "X-CSRFToken": getCsrfToken(), "X-Idempotency-Key": randomUUID(), "Content-Type": "application/json" });
 
     try {
       // Avatar
@@ -1409,7 +1575,14 @@ export default function ProfileSettingsPage() {
       // Personal info
       {
         const r = await fetch("/api/user-profile/personal-info", { method: "PATCH", credentials: "include", headers: J(), body: JSON.stringify(draftProfile.personal_info) });
-        if (!r.ok) { toast.error("Failed to save personal information."); setSaving(false); return; }
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          const fieldMsg = Object.entries(err)
+            .map(([field, errs]) => `${field}: ${Array.isArray(errs) ? errs[0] : errs}`)
+            .join(" | ");
+          toast.error(fieldMsg || "Failed to save personal information.");
+          setSaving(false); return;
+        }
       }
 
       // Addresses
@@ -1433,11 +1606,18 @@ export default function ProfileSettingsPage() {
       // Children + Education + Skills (bulk replace)
       for (const [url, body] of [
         ["/api/user-profile/children",  draftProfile.children.map((c) => ({ name: c.name }))],
-        ["/api/user-profile/education", draftProfile.education_records.map((e) => ({ institution: e.institution, education_level: e.education_level, degree: e.degree, year_attended: e.year_attended ? parseInt(e.year_attended, 10) : null }))],
+        ["/api/user-profile/education", draftProfile.education_records.map((e) => ({ institution: e.institution, education_level: e.education_level, degree: e.degree, year_attended: e.year_attended ? parseInt(String(e.year_attended), 10) : null }))],
         ["/api/user-profile/skills",    draftSkills.map((s) => ({ name: s.name }))],
       ] as [string, object[]][]) {
         const r = await fetch(url, { method: "PUT", credentials: "include", headers: J(), body: JSON.stringify(body) });
-        if (!r.ok) { toast.error("Failed to save records."); setSaving(false); return; }
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          const msg = err.detail ?? (Array.isArray(err) && err[0]
+            ? Object.entries(err[0]).map(([k, v]) => `${k}: ${Array.isArray(v) ? v[0] : v}`).join(" | ")
+            : null) ?? "Failed to save records.";
+          toast.error(msg);
+          setSaving(false); return;
+        }
       }
 
       // Work info
@@ -1571,7 +1751,7 @@ export default function ProfileSettingsPage() {
       <div className="flex-1 min-h-0 overflow-hidden rounded-lg px-2 lg:flex lg:h-full lg:flex-col lg:overflow-hidden">
 
         {/* Header: title + Edit/Save/Cancel + VercelTabs */}
-        <div className="shrink-0 pt-2 pb-0 border-b border-[var(--color-border)] bg-[var(--color-bg)]">
+        <div className="shrink-0 pt-2 pb-0 border-b border-[var(--color-border)] bg-transparent">
           <div className="flex items-center justify-between mb-2 min-h-[38px]">
             <h1 className="text-base font-bold text-[var(--color-text-secondary)]">User Profile Settings</h1>
 
@@ -1628,7 +1808,7 @@ export default function ProfileSettingsPage() {
 
                   {/* ── Left column (70% on desktop, full-width on tablet/mobile) — scrolls independently ── */}
                   {/* On tablet/mobile this is the only column; right column items are appended below Skills */}
-                  <div className="flex-[7] min-h-0 min-w-0 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden space-y-4 pb-6">
+                  <div ref={leftColRef} className="flex-[7] min-h-0 min-w-0 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden space-y-4 pb-6">
 
                     {/* Basic info */}
                     <AccordionSection title="Basic Information">
@@ -1715,10 +1895,21 @@ export default function ProfileSettingsPage() {
                               <div className="flex flex-col gap-1.5">
                                 <InputLabel label="Birth Date" required value={draftProfile.personal_info.birth_date} />
                                 <DateTimePicker
-                                  value={draftProfile.personal_info.birth_date ? new Date(draftProfile.personal_info.birth_date) : undefined}
-                                  onChange={(date) => updateDraft("personal_info", { birth_date: date.toISOString().split("T")[0] })}
-                                  placeholder="Select birth date"
-                                  displayFormat="MMMM d, yyyy"
+                                  value={(() => {
+                                    const s = draftProfile.personal_info.birth_date;
+                                    if (!s) return undefined;
+                                    // Parse as local midnight (not UTC) to prevent timezone-shift display
+                                    const [y, m, d] = s.split("-").map(Number);
+                                    return new Date(y, m - 1, d);
+                                  })()}
+                                  onChange={(date) => {
+                                    // Format using local date parts to avoid UTC-offset shift
+                                    const y = date.getFullYear();
+                                    const m = String(date.getMonth() + 1).padStart(2, "0");
+                                    const d = String(date.getDate()).padStart(2, "0");
+                                    updateDraft("personal_info", { birth_date: `${y}-${m}-${d}` });
+                                  }}
+                                  placeholder="MM/DD/YYYY"
                                   minDate={new Date(1900, 0, 1)}
                                   maxDate={new Date()}
                                 />
@@ -1792,9 +1983,21 @@ export default function ProfileSettingsPage() {
                         </div>
                         {draftProfile.provincial_address.same_as_present ? (
                           <div className="grid grid-cols-2 min-[480px]:grid-cols-3 gap-4">
-                            {(["country","province","city","barangay","street","block_lot"] as const).map((k) => (
-                              <ReadField key={k} label={k === "block_lot" ? "Block / Lot" : k.charAt(0).toUpperCase() + k.slice(1)} value={draftProfile.present_address[k]} />
-                            ))}
+                            {(() => {
+                              const addrLbls = getAddressLabels(draftProfile.present_address.country);
+                              return (["country","province","city","barangay","street","block_lot"] as const).map((k) => (
+                                <ReadField key={k}
+                                  label={
+                                    k === "block_lot" ? "Block / Lot" :
+                                    k === "province"  ? addrLbls.province :
+                                    k === "city"      ? addrLbls.city :
+                                    k === "barangay"  ? addrLbls.barangay :
+                                    k.charAt(0).toUpperCase() + k.slice(1)
+                                  }
+                                  value={draftProfile.present_address[k]}
+                                />
+                              ));
+                            })()}
                           </div>
                         ) : (
                           <AddressFields
@@ -1952,7 +2155,7 @@ export default function ProfileSettingsPage() {
                   </div>
 
                   {/* ── Right column (30% on desktop, hidden on tablet/mobile — items moved below Skills) ── */}
-                  <div className="hidden flex-[3] min-h-0 min-w-0 overflow-y-auto space-y-4 pb-6 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden lg:flex lg:flex-col">
+                  <div ref={rightColRef} className="hidden flex-[3] min-w-0 overflow-y-auto space-y-4 pb-6 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden lg:block lg:h-full lg:min-h-0">
 
                     {/* Profile Completion card — desktop only */}
                     <ProfileCompletionCard profile={savedProfile} />
@@ -2192,6 +2395,8 @@ export default function ProfileSettingsPage() {
                                             <SelectItem value="secondary">Secondary</SelectItem>
                                             <SelectItem value="vocational">Vocational</SelectItem>
                                             <SelectItem value="tertiary">Tertiary</SelectItem>
+                                            <SelectItem value="masteral">Masteral</SelectItem>
+                                            <SelectItem value="doctorate">Doctorate</SelectItem>
                                           </SelectContent>
                                         </Select>
                                       </div>

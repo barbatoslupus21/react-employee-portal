@@ -6,6 +6,7 @@ import React, {
   useCallback,
   useRef,
 } from 'react';
+import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Plus,
@@ -57,6 +58,8 @@ interface UserData {
   firstname: string | null;
   lastname: string | null;
   admin: boolean;
+  hr: boolean;
+  accounting: boolean;
 }
 
 interface PRFMeta {
@@ -321,7 +324,7 @@ function EmergencyLoanModal({
     }
   }
 
-  return (
+  return createPortal(
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
@@ -508,7 +511,7 @@ function EmergencyLoanModal({
         </div>
       </motion.div>
     </motion.div>
-  );
+  , document.body);
 }
 
 // ── Medicine Allowance Modal ───────────────────────────────────────────────────
@@ -645,7 +648,7 @@ function MedicineAllowanceModal({
     }
   }
 
-  return (
+  return createPortal(
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
@@ -814,7 +817,7 @@ function MedicineAllowanceModal({
         </div>
       </motion.div>
     </motion.div>
-  );
+  , document.body);
 }
 
 // ── Submit PRF Modal ───────────────────────────────────────────────────────────
@@ -1001,7 +1004,7 @@ function SubmitPRFModal({
     }
   }
 
-  return (
+  return createPortal(
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
@@ -1211,7 +1214,7 @@ function SubmitPRFModal({
         </div>
       </motion.div>
     </motion.div>
-  );
+  , document.body);
 }
 
 // ── PRF detail row (label + value) ─────────────────────────────────────────────
@@ -1247,7 +1250,7 @@ function ViewPRFModal({ request, onClose }: { request: PRFRequest; onClose: () =
     return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   }
 
-  return (
+  return createPortal(
     <motion.div
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
       transition={{ duration: 0.18 }}
@@ -1399,7 +1402,7 @@ function ViewPRFModal({ request, onClose }: { request: PRFRequest; onClose: () =
         </div>
       </motion.div>
     </motion.div>
-  );
+  , document.body);
 }
 
 // ── Edit PRF Modal ─────────────────────────────────────────────────────────────
@@ -1506,7 +1509,7 @@ function EditPRFModal({
     }
   }
 
-  return (
+  return createPortal(
     <motion.div
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
       transition={{ duration: 0.18 }}
@@ -1668,7 +1671,7 @@ function EditPRFModal({
         </div>
       </motion.div>
     </motion.div>
-  );
+  , document.body);
 }
 
 // ── Cancel Confirmation Modal ──────────────────────────────────────────────────
@@ -1714,7 +1717,7 @@ function CancelConfirmModal({
     }
   }
 
-  return (
+  return createPortal(
     <motion.div
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
       transition={{ duration: 0.18 }}
@@ -1754,7 +1757,7 @@ function CancelConfirmModal({
         </div>
       </motion.div>
     </motion.div>
-  );
+  , document.body);
 }
 
 
@@ -1876,7 +1879,7 @@ export default function PRFormPage() {
       })
       .then((data: UserData | null) => {
         if (!data) { router.replace('/'); return; }
-        if (data.admin) { router.replace('/dashboard/pr-form/admin'); return; }
+        if (data.admin || data.hr || data.accounting) { router.replace('/dashboard/pr-form/admin'); return; }
         setUser(data);
         setAuthLoaded(true);
       })

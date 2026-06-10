@@ -823,15 +823,15 @@ function NotificationPanel({
     unseen_certs.length;
 
   return (
-    <div className="overflow-hidden">
-      <div className="py-2 border-b border-[var(--color-border)] flex items-center justify-between">
+    <div className="h-full flex flex-col overflow-hidden">
+      <div className="shrink-0 py-2 border-b border-[var(--color-border)] flex items-center justify-between">
         <span className="text-xs font-semibold text-[var(--color-text-primary)]">
           Notifications
         </span>
       </div>
 
       <div
-        className="max-h-[320px] min-h-0 overflow-y-auto pr-1 [&::-webkit-scrollbar]:hidden"
+        className="flex-1 min-h-0 overflow-y-auto pr-1 [&::-webkit-scrollbar]:hidden"
         style={{ scrollbarWidth: "none" }}
       >
         <div className="divide-y divide-[var(--color-border)]">
@@ -1129,14 +1129,26 @@ function MemoAdvertisementPanel({
   // Start with a reasonable default; updated after off-screen measurement
   const [containerHeight, setContainerHeight] = useState(220);
   const measureRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
 
-  // Measure every card at natural height, use the tallest as the uniform height
+  // Measure every card at natural height, use the tallest as the uniform height.
+  // Re-runs when memos change or when the panel resizes (e.g. browser zoom).
   useEffect(() => {
     if (!measureRef.current || memos.length === 0) return;
-    const cards = Array.from(measureRef.current.children) as HTMLElement[];
-    const maxH = Math.max(...cards.map((el) => el.offsetHeight));
-    // +16 accounts for p-2 (8px top + 8px bottom) on the motion wrapper
-    if (maxH > 0) setContainerHeight(maxH + 16);
+
+    function measure() {
+      if (!measureRef.current) return;
+      const cards = Array.from(measureRef.current.children) as HTMLElement[];
+      const maxH = Math.max(...cards.map((el) => el.offsetHeight));
+      // +16 accounts for p-2 (8px top + 8px bottom) on the motion wrapper
+      if (maxH > 0) setContainerHeight(maxH + 16);
+    }
+
+    measure();
+
+    const observer = new ResizeObserver(measure);
+    if (panelRef.current) observer.observe(panelRef.current);
+    return () => observer.disconnect();
   }, [memos]);
 
   // Auto-advance every 60 seconds
@@ -1155,7 +1167,7 @@ function MemoAdvertisementPanel({
   };
 
   return (
-    <div className="mb-4 relative">
+    <div className="mb-4 relative overflow-hidden" ref={panelRef}>
       {/* Off-screen stack — invisible, no pointer events, used only to measure natural card heights */}
       {memos.length > 0 && !isLoading && (
         <div
@@ -2182,7 +2194,7 @@ function AnnouncementFeed({ user }: { user: UserData }) {
   const hasMore = data ? page < data.total_pages : false;
 
   return (
-    <div className="w-full h-full p-4 space-y-4 lg:mx-auto lg:w-4/5">
+    <div className="w-full h-full space-y-4 lg:mx-auto lg:w-4/5">
       {/* <div className="flex items-center gap-2">
         <Megaphone size={16} className="text-[#2845D6]" />
         <h2 className="text-sm font-semibold text-[var(--color-text-primary)]">
@@ -2474,8 +2486,13 @@ export default function DashboardPage() {
   ) : null;
 
   // ── Full layout ─────────────────────────────────────────────────────────────
+  // Explicit height anchors the column h-full chain; min-h-full on the layout
+  // wrapper is not a definite height so h-full children would resolve to auto.
   return (
-    <div className="flex w-full flex-col overflow-hidden p-4 lg:mx-auto lg:max-w-full lg:gap-2 h-full min-h-0">
+    <div
+      className="flex w-full flex-col overflow-hidden p-4 lg:mx-auto lg:max-w-full"
+      style={{ height: "calc(100vh - var(--header-height) - 0.5rem)" }}
+    >
       {/* ── Main area — switches between personal 3-col and full approver view ── */}
       <AnimatePresence mode="wait">
         {dashboardView === "approver" && overview?.is_approver ? (
@@ -2503,51 +2520,59 @@ export default function DashboardPage() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -8 }}
             transition={{ duration: 0.2 }}
-            className="flex flex-1 flex-col overflow-hidden lg:flex-row lg:gap-4 h-full min-h-0"
-            style={{ minHeight: "calc(100vh - var(--header-height) - 2rem)" }}
+            className="flex h-full overflow-hidden lg:flex-row lg:gap-4"
           >
-            {/* Left column */}
-            <div className="hidden lg:flex lg:flex-col lg:basis-[20%] lg:shrink-0 lg:h-full min-h-0">
-              <div className="flex-1 h-full min-h-0 space-y-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4">
-                {overview ? (
-                  <ProfileWidget user={user} overview={overview} router={router} />
-                ) : (
-                  <ProfileWidgetSkeleton />
-                )}
-                {overview ? (
-                  <MiniCalendar overview={overview} />
-                ) : (
-                  <MiniCalendarSkeleton />
-                )}
-                <NotificationPanel overview={overview} router={router} />
+            {/* Left column — greeting and calendar are fixed; only notifications scroll */}
+            <div className="hidden lg:flex lg:flex-col lg:basis-[20%] lg:shrink-0 h-full">
+              <div className="h-full flex flex-col overflow-hidden gap-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4">
+                <div className="shrink-0">
+                  {overview ? (
+                    <ProfileWidget user={user} overview={overview} router={router} />
+                  ) : (
+                    <ProfileWidgetSkeleton />
+                  )}
+                </div>
+                <div className="shrink-0">
+                  {overview ? (
+                    <MiniCalendar overview={overview} />
+                  ) : (
+                    <MiniCalendarSkeleton />
+                  )}
+                </div>
+                <div className="flex-1 min-h-0">
+                  <NotificationPanel overview={overview} router={router} />
+                </div>
               </div>
             </div>
 
-            {/* Center column */}
-            <div className="flex flex-col flex-1 lg:basis-[60%] lg:h-full min-h-0 overflow-hidden">
-              <div className="flex-1 h-full overflow-y-auto w-full min-h-0" style={{ scrollbarWidth: "none" }}>
+            {/* Center column — scrolls independently when posts overflow */}
+            <div className="flex flex-col flex-1 lg:basis-[60%] h-full overflow-hidden">
+              <div
+                className="h-full overflow-y-auto w-full"
+                style={{ scrollbarWidth: "none" }}
+              >
                 <AnnouncementFeed user={user} />
               </div>
             </div>
 
-            {/* Right column */}
-            <div className="hidden lg:flex lg:flex-col lg:basis-[20%] lg:shrink-0 lg:h-full min-h-0">
-              <div className="flex h-full min-h-0 flex-col overflow-hidden">
-                <div className="mb-4 flex shrink-0 items-center justify-end px-4">
-                  {approverToggle && <div className="mb-3">{approverToggle}</div>}
+            {/* Right column — scrolls independently when memo/calendar/notifs overflow */}
+            <div className="hidden lg:flex lg:flex-col lg:basis-[20%] lg:shrink-0 h-full overflow-hidden">
+              {approverToggle && (
+                <div className="mb-3 flex shrink-0 items-center justify-end px-4">
+                  {approverToggle}
                 </div>
-                <div
-                  className="flex-1 min-h-0 overflow-y-auto px-4"
-                  style={{ scrollbarWidth: "none" }}
-                >
-                  {memoAdvertisementEnabled && (
-                    <MemoAdvertisementPanel
-                      memos={activeMemoAdvertisements}
-                      isLoading={memoSettingsLoading || memoMemosLoading}
-                    />
-                  )}
-                  <BirthdayPanel overview={overview} />
-                </div>
+              )}
+              <div
+                className="flex-1 min-h-0 overflow-y-auto px-4"
+                style={{ scrollbarWidth: "none" }}
+              >
+                {memoAdvertisementEnabled && (
+                  <MemoAdvertisementPanel
+                    memos={activeMemoAdvertisements}
+                    isLoading={memoSettingsLoading || memoMemosLoading}
+                  />
+                )}
+                <BirthdayPanel overview={overview} />
               </div>
             </div>
           </motion.div>

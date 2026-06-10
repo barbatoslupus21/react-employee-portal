@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'motion/react';
 import type { ChartCategory } from '@/components/ui/multi-series-chart';
@@ -50,6 +51,7 @@ import {
 import { Tabs } from '@/components/ui/vercel-tabs';
 import { FileUploadDropzone } from '@/components/ui/file-upload-dropzone';
 import { DateTimePicker } from '@/components/ui/datetime-picker';
+import { LeaveRangePicker } from '@/components/ui/leave-range-picker';
 import { useDebounce } from '@/hooks/use-debounce';
 import { TextShimmer } from '@/components/ui/text-shimmer';
 import { ConfirmationModal } from '@/components/ui/confirmation-modal';
@@ -145,6 +147,36 @@ interface PayslipRecord {
   created_at:        string;
 }
 
+interface OJTPayslipRecord {
+  id:                  number;
+  period_start:        string | null;
+  period_end:          string | null;
+  regular_day:         string;
+  allowance_day:       string;
+  total_allowance:     string;
+  nd_allowance:        string;
+  grand_total:         string;
+  basic_school_share:  string;
+  basic_ojt_share:     string;
+  deduction:           string;
+  net_ojt_share:       string;
+  rice_allowance:      string;
+  ot_allowance:        string;
+  nd_ot_allowance:     string;
+  special_holiday:     string;
+  legal_holiday:       string;
+  satoff_allowance:    string;
+  rd_ot:               string;
+  adjustment:          string;
+  deduction_2:         string;
+  ot_pay_allowance:    string;
+  total_allow:         string;
+  perfect_attendance:  string;
+  holiday_date:        string;
+  rd_ot_date:          string;
+  created_at:          string;
+}
+
 interface DeductionDetail {
   loan_id:          number;
   loan_type_name:   string;
@@ -160,10 +192,11 @@ interface DeductionDetail {
 }
 
 interface EmployeeDetailRecords {
-  loans:      LoanRecord[];
-  allowances: AllowanceRecord[];
-  savings:    SavingsRecord[];
-  payslips:   PayslipRecord[];
+  loans:        LoanRecord[];
+  allowances:   AllowanceRecord[];
+  savings:      SavingsRecord[];
+  payslips:     PayslipRecord[];
+  ojt_payslips: OJTPayslipRecord[];
 }
 
 type FinanceTabKey = 'payslip' | 'loans' | 'allowance' | 'savings';
@@ -190,7 +223,7 @@ interface ChartResponse {
   data:     ChartDataPoint[];
 }
 
-type RecordType = 'allowance' | 'loan' | 'deduction' | 'savings' | 'payslip';
+type RecordType = 'allowance' | 'loan' | 'deduction' | 'savings' | 'payslip' | 'ojt-payslip';
 type ExportType = RecordType | 'all';
 type SortField  = 'idnumber' | 'lastname' | 'department' | 'line';
 type SortDir    = 'asc' | 'desc';
@@ -251,6 +284,32 @@ const IMPORT_COLUMNS: Record<RecordType, { col: string; required: boolean; note?
     { col: 'D  —  Savings',        required: true, note: 'Non-negative number.' },
   ],
   payslip: [], // payslip uses a dedicated PDF upload form, not xlsx columns
+  'ojt-payslip': [
+    { col: 'A  —  ID Number',          required: true },
+    { col: 'B  —  Regular Day',        required: false, note: 'Numeric; blank defaults to 0.' },
+    { col: 'C  —  Allowance Day',      required: false, note: 'Numeric; blank defaults to 0.' },
+    { col: 'D  —  Total Allowance',    required: false, note: 'Numeric; blank defaults to 0.' },
+    { col: 'E  —  ND Allowance',       required: false, note: 'Numeric; blank defaults to 0.' },
+    { col: 'F  —  Grand Total',        required: false, note: 'Numeric; blank defaults to 0.' },
+    { col: 'G  —  Basic School Share', required: false, note: 'Numeric; blank defaults to 0.' },
+    { col: 'H  —  Basic OJT Share',    required: false, note: 'Numeric; blank defaults to 0.' },
+    { col: 'I  —  Deduction',          required: false, note: 'Numeric; blank defaults to 0.' },
+    { col: 'J  —  Net OJT Share',      required: false, note: 'Numeric; blank defaults to 0.' },
+    { col: 'K  —  Rice Allowance',     required: false, note: 'Numeric; blank defaults to 0.' },
+    { col: 'L  —  OT Allowance',       required: false, note: 'Numeric; blank defaults to 0.' },
+    { col: 'M  —  ND OT Allowance',    required: false, note: 'Numeric; blank defaults to 0.' },
+    { col: 'N  —  Special Holiday',    required: false, note: 'Numeric; blank defaults to 0.' },
+    { col: 'O  —  Legal Holiday',      required: false, note: 'Numeric; blank defaults to 0.' },
+    { col: 'P  —  Satoff Allowance',   required: false, note: 'Numeric; blank defaults to 0.' },
+    { col: 'Q  —  RD OT',              required: false, note: 'Numeric; blank defaults to 0.' },
+    { col: 'R  —  Adjustment',         required: false, note: 'Numeric; blank defaults to 0.' },
+    { col: 'S  —  Deduction 2',        required: false, note: 'Numeric; blank defaults to 0.' },
+    { col: 'T  —  OT Pay Allowance',   required: false, note: 'Numeric; blank defaults to 0.' },
+    { col: 'U  —  Total Allow',        required: false, note: 'Numeric; blank defaults to 0.' },
+    { col: 'V  —  Holiday Date',       required: false, note: 'Text date e.g. 01/15/2026. Leave blank if none.' },
+    { col: 'W  —  RD OT Date',         required: false, note: 'Text date e.g. 01/22/2026. Leave blank if none.' },
+    { col: 'X  —  Perfect Attendance', required: false, note: 'Numeric; blank defaults to 0.' },
+  ],
 };
 
 // ── Week helpers ───────────────────────────────────────────────────────────────
@@ -340,10 +399,10 @@ const IMPORT_SECTIONS: {
     key:         'ojt-payslip',
     label:       'OJT Payslip',
     icon:        FileText,
-    recordType:  'payslip',
-    isPayslip:   true,
-    description: 'Upload OJT payslip PDF files for individual employees.',
-    acceptLabel: 'PDF format, up to 5 MB',
+    recordType:  'ojt-payslip',
+    isPayslip:   false,
+    description: 'Upload OJT payslip data records via XLSX. Use the template for the required column format.',
+    acceptLabel: 'XLSX, XLS, CSV formats, up to 10 MB',
   },
   {
     key:         'principal-balance',
@@ -499,7 +558,7 @@ function ImportModal({
     setErrorFileSet(new Set());
   }
 
-  const filenamePattern = /^([0-9]+)_([A-Za-z][A-Za-z ]+)\.pdf$/i;
+  const filenamePattern = /^([A-Za-z0-9-]+)_(.+)\.pdf$/i;
 
   async function checkEmployeeExists(idnumber: string): Promise<boolean> {
     try {
@@ -653,9 +712,17 @@ function ImportModal({
     if (recordType === 'deduction' && dcCutoffDate) {
       fd.append('cutoff_date', formatLocalDate(dcCutoffDate));
     }
+    if (activeSection === 'ojt-payslip' && psPeriodStart && psPeriodEnd) {
+      fd.append('period_start', formatLocalDate(psPeriodStart));
+      fd.append('period_end',   formatLocalDate(psPeriodEnd));
+    }
 
+    const isOjtImport = activeSection === 'ojt-payslip';
     const xhr = new XMLHttpRequest();
-    xhr.open('POST', `/api/finance/admin/import?record_type=${recordType}`);
+    xhr.open('POST', isOjtImport
+      ? '/api/finance/admin/import/ojt-payslip'
+      : `/api/finance/admin/import?record_type=${recordType}`,
+    );
     xhr.withCredentials = true;
     xhr.setRequestHeader('X-CSRFToken', getCsrfToken());
 
@@ -867,6 +934,17 @@ function ImportModal({
       }
       return;
     }
+    if (activeSection === 'ojt-payslip') {
+      try {
+        const res = await fetch('/api/finance/admin/template/ojt-payslip', { credentials: 'include' });
+        if (!res.ok) { toast.error('Failed to download template.'); return; }
+        const blob = await res.blob();
+        scheduleDownload(blob, 'ojt_payslip_template.xlsx');
+      } catch {
+        toast.error('Failed to download template.');
+      }
+      return;
+    }
     const cols = IMPORT_COLUMNS[recordType];
     const headers = cols.map(c => {
       const parts = c.col.split('—');
@@ -878,7 +956,7 @@ function ImportModal({
     scheduleDownload(blob, `${section.key}_template.xlsx`);
   }
 
-  return (
+  return createPortal(
     <motion.div
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
       transition={{ duration: 0.18 }}
@@ -1090,6 +1168,19 @@ function ImportModal({
                         {dcErrors.cutoff_date && <p className="text-xs text-red-500">{dcErrors.cutoff_date}</p>}
                       </div>
                     )}
+
+                    {/* OJT Payslip: Period range picker (required) */}
+                    {activeSection === 'ojt-payslip' && (
+                      <LeaveRangePicker
+                        dateStart={psPeriodStart}
+                        dateEnd={psPeriodEnd}
+                        onDateStartChange={(d) => { setPsPeriodStart(d); setPsErrors({}); }}
+                        onDateEndChange={(d) => { setPsPeriodEnd(d); setPsErrors({}); }}
+                        errorStart={psErrors.period_start}
+                        errorEnd={psErrors.period_end}
+                        closeOnSelect={false}
+                      />
+                    )}
                     <FileUploadDropzone
                       files={files}
                       onFilesChange={setFiles}
@@ -1216,6 +1307,7 @@ function ImportModal({
               || phase === 'uploading'
               || phase === 'validating'
               || (isPayslip && (!psType || !psPeriodStart || !psPeriodEnd))
+              || (activeSection === 'ojt-payslip' && (!psPeriodStart || !psPeriodEnd))
               || (!isPayslip && activeSection === 'deductions' && !dcCutoffDate)
             }
             className="h-9 px-4 py-2 rounded-lg text-xs font-normal bg-[#2845D6] text-white hover:bg-[#1e35b5] transition-colors disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2"
@@ -1235,7 +1327,7 @@ function ImportModal({
         </div>
       </motion.div>
     </motion.div>
-  );
+  , document.body);
 
 }
 
@@ -1279,7 +1371,7 @@ function ExportModal({ onClose }: { onClose: () => void }) {
     }
   }
 
-  return (
+  return createPortal(
     <motion.div
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
       transition={{ duration: 0.18 }}
@@ -1364,7 +1456,7 @@ function ExportModal({ onClose }: { onClose: () => void }) {
         </div>
       </motion.div>
     </motion.div>
-  );
+  , document.body);
 }
 
 
@@ -1576,7 +1668,7 @@ function TypesManageModal({
 
   return (
     <>
-    <motion.div
+    {createPortal(<motion.div
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
       transition={{ duration: 0.18 }}
       className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
@@ -1928,7 +2020,7 @@ function TypesManageModal({
           </button>
         </div>
       </motion.div>
-    </motion.div>
+    </motion.div>, document.body)}
     <AnimatePresence>
       {deleteConfirm && (
         <ConfirmationModal
@@ -2345,12 +2437,392 @@ function estimatedCompletion(
   return completion.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 }
 
+// ── OJT period label (e.g. "MAY 10-16, 2026") ────────────────────────────────
+
+function fmtOJTPeriod(start: string | null, end: string | null): string {
+  if (!start || !end) return '—';
+  const s = new Date(start + 'T00:00:00');
+  const e = new Date(end   + 'T00:00:00');
+  const MONTHS = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+  const sm = MONTHS[s.getMonth()];
+  const em = MONTHS[e.getMonth()];
+  const sd = s.getDate();
+  const ed = e.getDate();
+  const sy = s.getFullYear();
+  const ey = e.getFullYear();
+  if (s.getMonth() === e.getMonth() && sy === ey) return `${sm} ${sd}-${ed},${sy}`;
+  if (sy === ey) return `${sm} ${sd} - ${em} ${ed},${sy}`;
+  return `${sm} ${sd},${sy} - ${em} ${ed},${ey}`;
+}
+
+// ── OJTPayslipViewModal ────────────────────────────────────────────────────────
+
+function OJTPayslipViewModal({
+  payslip,
+  emp,
+  onClose,
+}: {
+  payslip: OJTPayslipRecord;
+  emp:     FinanceEmployeeRow;
+  onClose: () => void;
+}) {
+  const n = (v: string) => parseFloat(v).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  const fullName = [emp.firstname, emp.lastname].filter(Boolean).join(' ').toUpperCase() || emp.idnumber;
+
+  return createPortal(
+    <motion.div
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      transition={{ duration: 0.18 }}
+      className="fixed inset-0 z-[90] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95, y: 10 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.95, y: 10 }}
+        transition={{ type: 'spring', stiffness: 320, damping: 28 }}
+        onClick={e => e.stopPropagation()}
+        className="w-full max-w-2xl rounded-xl bg-[var(--color-bg-elevated)] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+      >
+        {/* Close button */}
+        <div className="flex items-center justify-end px-4 py-2 bg-[var(--color-bg-elevated)] border-b border-[var(--color-border)]">
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex h-7 w-7 items-center justify-center rounded-full text-[var(--color-text-muted)] hover:bg-[var(--color-bg-card)] transition-colors"
+          >
+            <X size={15} />
+          </button>
+        </div>
+
+        <div className="overflow-y-auto [scrollbar-width:thin] flex-1">
+          <div className="px-8 py-6 text-[var(--color-text-primary)]">
+
+            {/* ── Company header ── */}
+            <div className="flex items-center justify-center gap-3">
+              <img src="/ryonanlogo.png" alt="Ryonan Logo" className="h-20 w-20 object-contain" />
+              <div className="flex flex-col items-center">
+                <p className="text-lg font-bold uppercase text-center">RYONAN ELECTRIC PHILIPPINES CORPORATION</p>
+                <p className="text-[10px] font-normal text-[var(--color-text-muted)] text-center">
+                  105 East Main Avenue, Special Export Processing Zone
+                  Laguna, Technopark, Binan, Laguna
+                </p>
+              </div>
+            </div>
+
+            {/* ── Employee info grid ── */}
+            <div className="grid grid-cols-2 gap-x-6 mb-4 text-xs pt-3">
+              <div>
+                <p className="text-[var(--color-text-muted)] text-[10px]">ID Number:</p>
+                <p className="font-medium">{emp.idnumber}</p>
+              </div>
+              <div>
+                <p className="text-[var(--color-text-muted)] text-[10px]">Period Covered:</p>
+                <p className="font-medium">{fmtOJTPeriod(payslip.period_start, payslip.period_end)}</p>
+              </div>
+              <div className="mt-2">
+                <p className="text-[var(--color-text-muted)] text-[10px]">Name:</p>
+                <p className="font-medium">{fullName}</p>
+              </div>
+              <div className="mt-2">
+                <p className="text-[var(--color-text-muted)] text-[10px]">Line:</p>
+                <p className="font-medium">{emp.line || '—'}</p>
+              </div>
+            </div>
+
+            {/* ── Two-column tables ── */}
+            <div className="grid grid-cols-2 gap-3 text-[11px]">
+
+              {/* Regular Day */}
+              <table className="w-full border border-[var(--color-border)] border-collapse">
+                <thead>
+                  <tr>
+                    <th colSpan={2} className="text-center py-1.5 bg-[var(--color-bg-card)] border border-[var(--color-border)] text-xs font-bold">Regular Day</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[
+                    ['REGULAR # of Days Work', n(payslip.regular_day)],
+                    ['ALLOWANCE/DAY',           n(payslip.allowance_day)],
+                    ['Total:',                  n(payslip.total_allowance)],
+                    ['REG ND ALLOWANCE',        n(payslip.nd_allowance)],
+                    ['GRAND TOTAL',             n(payslip.grand_total)],
+                    ['BASIC ALLOW.SCHOOL SHARE',n(payslip.basic_school_share)],
+                    ['BASIC ALLOW. OJT SHARE',  n(payslip.basic_ojt_share)],
+                    ['DEDUCTION',               n(payslip.deduction)],
+                    ['NET BASIC ALLOW. OJT SHARE', n(payslip.net_ojt_share)],
+                  ].map(([label, val], i) => (
+                    <tr key={i} className={i === 2 || i === 8 ? 'font-semibold' : ''}>
+                      <td className="border border-[var(--color-border)] px-2 py-0.5 text-blue-500 text-[10px]">{label}</td>
+                      <td className="border border-[var(--color-border)] px-2 py-0.5 text-right">{val}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              {/* Allowances */}
+              <table className="w-full border border-[var(--color-border)] border-collapse">
+                <thead>
+                  <tr>
+                    <th colSpan={2} className="text-center py-1.5 bg-[var(--color-bg-card)] border border-[var(--color-border)] text-xs font-bold">Allowances</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[
+                    ['RICE ALLOWANCE',          n(payslip.rice_allowance)],
+                    ['Reg OT ALLOWANCE',         n(payslip.ot_allowance)],
+                    ['REG ND OT ALLOWANCE',      n(payslip.nd_ot_allowance)],
+                    ['SPECIAL HOLIDAY',          n(payslip.special_holiday)],
+                    ['LEGAL HOLIDAY',            n(payslip.legal_holiday)],
+                    ['SAT-OFF ALLOWANCE',        n(payslip.satoff_allowance)],
+                    ['RD OT',                    n(payslip.rd_ot)],
+                    ['PERFECT ATTENDANCE',       n(payslip.perfect_attendance)],
+                    ['ADJUSTMENT',               n(payslip.adjustment)],
+                    ['DEDUCTION 2',              n(payslip.deduction_2)],
+                    ['NET OJT OT PAY ALLOWANCE', n(payslip.ot_pay_allowance)],
+                  ].map(([label, val], i) => (
+                    <tr key={i} className={i === 10 ? 'font-semibold' : ''}>
+                      <td className="border border-[var(--color-border)] px-2 py-0.5 text-blue-500 text-[10px]">{label}</td>
+                      <td className="border border-[var(--color-border)] px-2 py-0.5 text-right">{val}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* ── Total Allowance footer ── */}
+            <div className="mt-3 border border-[var(--color-border)] rounded py-2.5 px-4 text-center">
+              <p className="text-sm font-bold tracking-wide">
+                TOTAL ALLOWANCE: <span className="text-blue-500">₱{n(payslip.total_allow)}</span>
+              </p>
+            </div>
+
+          </div>
+        </div>
+      </motion.div>
+    </motion.div>
+  , document.body);
+}
+
+// ── Loan History Modal ────────────────────────────────────────────────────────
+
+function LoanHistoryModal({
+  loan,
+  detail,
+  loadingDeducts,
+  loanSettings,
+  onClose,
+}: {
+  loan:           LoanRecord;
+  detail:         DeductionDetail | null;
+  loadingDeducts: boolean;
+  loanSettings:   LoanSettingsConfig | null;
+  onClose:        () => void;
+}) {
+  const principal  = parseFloat(loan.principal_amount) || 0;
+  const balance    = parseFloat(loan.current_balance)  || 0;
+  const deductAmt  = loan.monthly_deduction ? parseFloat(loan.monthly_deduction) : null;
+  const paidAmt    = Math.max(0, principal - balance);
+  const pctPaid    = principal > 0 ? Math.min(100, Math.round((paidAmt / principal) * 100)) : 0;
+  const isActive   = balance > 0;
+  const freq       = loanSettings?.deduction_frequency ?? 'monthly';
+  const completion = estimatedCompletion(balance, deductAmt, freq);
+
+  return createPortal(
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.2 }}
+      className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ scale: 0.95, opacity: 0, y: 12 }}
+        animate={{ scale: 1,    opacity: 1, y: 0  }}
+        exit={{    scale: 0.95, opacity: 0, y: 12 }}
+        transition={{ type: 'spring', stiffness: 340, damping: 30 }}
+        onClick={e => e.stopPropagation()}
+        className="w-full max-w-lg rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-2xl overflow-hidden flex flex-col max-h-[85vh]"
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--color-border)] shrink-0">
+          <div className="flex-1 min-w-0 pr-3">
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <h3 className="text-lg font-semibold text-[var(--color-text-primary)] truncate">
+                {loan.loan_type_name}
+              </h3>
+              <StatusPill className='text-[9px]' status={isActive ? 'approved' : 'disapproved'} label={isActive ? 'Approved' : 'Closed'} />
+            </div>
+            {loan.reference_number && (
+              <p className="text-[10px] text-[var(--color-text-muted)] mt-0.5">
+                Ref: {loan.reference_number}
+              </p>
+            )}
+          </div>
+          <button
+            onClick={onClose}
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-card)] transition-colors"
+          >
+            <X size={15} />
+          </button>
+        </div>
+
+        {/* Scrollable body */}
+        <div className="flex-1 overflow-y-auto [scrollbar-width:thin] [scrollbar-color:var(--color-border)_transparent]">
+          {/* Repayment Progress */}
+          <div className="px-5 pt-4 pb-3">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
+                Repayment Progress
+              </p>
+              <span className="text-xs font-bold text-[#2845D6]">{pctPaid}% repaid</span>
+            </div>
+            <div className="relative h-4 w-full rounded-full" style={{ background: 'var(--color-border)' }}>
+              <motion.div
+                initial={{ width: '0%' }}
+                animate={{ width: `${pctPaid}%` }}
+                transition={{ duration: 1.6, ease: [0.22, 1, 0.36, 1], delay: 0.2 }}
+                className="absolute inset-y-0 left-0 rounded-full"
+                style={{ background: 'linear-gradient(90deg, #1a35c5 0%, #2845D6 40%, #5B7FFF 100%)' }}
+              />
+            </div>
+            <div className="flex justify-between mt-1.5">
+              <span className="text-[10px] text-[var(--color-text-muted)]">
+                Paid: ₱{fmtCurrency(paidAmt.toFixed(2))}
+              </span>
+              <span className="text-[10px] text-[var(--color-text-muted)]">
+                Remaining: ₱{fmtCurrency(loan.current_balance)}
+              </span>
+            </div>
+          </div>
+
+          {/* Loan Summary */}
+          <div className="px-5 pt-3 pb-3 border-t border-[var(--color-border)]">
+            <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+              <div className="pb-3">
+                <p className="text-[10px] text-[var(--color-text-muted)] uppercase tracking-wide">Principal Amount</p>
+                <p className="text-xs font-bold text-[var(--color-text-primary)] mt-0.5">
+                  ₱{fmtCurrency(loan.principal_amount)}
+                </p>
+              </div>
+              <div className="pb-3">
+                <p className="text-[10px] text-[var(--color-text-muted)] uppercase tracking-wide">Outstanding Balance</p>
+                <p className={cn('text-xs font-bold mt-0.5', isActive ? 'text-amber-500' : 'text-emerald-500')}>
+                  ₱{fmtCurrency(loan.current_balance)}
+                </p>
+              </div>
+              <div>
+                <p className="text-[10px] text-[var(--color-text-muted)] uppercase tracking-wide">Deduction Frequency</p>
+                <p className="text-xs font-medium text-[var(--color-text-primary)] mt-0.5">
+                  {loanSettings ? freqLabel(freq) : (
+                    <span className="inline-block h-3 w-24 rounded bg-[var(--color-skeleton)] animate-pulse" />
+                  )}
+                </p>
+              </div>
+              <div>
+                <p className="text-[10px] text-[var(--color-text-muted)] uppercase tracking-wide">Per-Period Deduction</p>
+                <p className="text-xs font-medium text-[var(--color-text-primary)] mt-0.5">
+                  {deductAmt ? `₱${fmtCurrency(loan.monthly_deduction!)}` : '—'}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Estimated Completion */}
+          {isActive && (
+            <div className="px-5 py-3 border-t border-[var(--color-border)]">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)] mb-1.5">
+                Estimated Completion
+              </p>
+              <p className="text-sm font-semibold text-[var(--color-text-primary)]">
+                {loanSettings ? completion : (
+                  <span className="inline-block h-4 w-28 rounded bg-[var(--color-skeleton)] animate-pulse" />
+                )}
+              </p>
+              {loanSettings && completion !== '—' && (
+                <p className="text-[10px] text-[var(--color-text-muted)] mt-0.5">
+                  Based on {freqLabel(freq)} deductions of ₱{fmtCurrency(loan.monthly_deduction ?? '0')}
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* Deduction History */}
+          <div className="border-t border-[var(--color-border)]">
+            <p className="px-5 py-2 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
+              Deduction History
+            </p>
+            {loadingDeducts ? (
+              <div className="px-5 pb-4 space-y-2">
+                {[...Array(3)].map((_, i) => (
+                  <div key={i} className="flex items-center gap-3">
+                    <div className="h-3 rounded-full bg-[var(--color-skeleton)] animate-pulse" style={{ width: `${50 - i * 8}%` }} />
+                    <div className="h-3 rounded-full bg-[var(--color-skeleton)] animate-pulse ml-auto" style={{ width: '18%' }} />
+                  </div>
+                ))}
+              </div>
+            ) : !detail || detail.deductions.length === 0 ? (
+              <EmptyState
+                title="No deductions yet"
+                description="No deduction records have been recorded for this loan."
+                icons={[CreditCard, Receipt, DollarSign]}
+                className="py-6"
+              />
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="text-[10px] uppercase tracking-wide">Cut-off Date</TableHead>
+                    <TableHead className="text-right text-[10px] uppercase tracking-wide">Amount</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {detail.deductions.map(d => (
+                    <TableRow key={d.id}>
+                      <TableCell>{d.cutoff_date ? fmtDateShort(d.cutoff_date) : '—'}</TableCell>
+                      <TableCell className="text-right font-medium">₱{fmtCurrency(d.amount)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+                <TableFooter>
+                  <TableRow>
+                    <TableCell className="text-[12px] font-normal text-[var(--color-text-muted)]">Total Deductions</TableCell>
+                    <TableCell className="text-right text-xs font-bold text-[var(--color-text-primary)]">
+                      ₱{fmtCurrency(
+                        detail.deductions.reduce((sum, d) => sum + parseFloat(d.amount), 0).toFixed(2),
+                      )}
+                    </TableCell>
+                  </TableRow>
+                </TableFooter>
+              </Table>
+            )}
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="px-5 py-3 border-t border-[var(--color-border)] text-right shrink-0">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 text-xs font-normal rounded-lg border border-[var(--color-border)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg)] transition-colors"
+          >
+            Close
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
+  , document.body);
+}
+
+
 function TabContent({
   tab,
   records,
   fetchError,
   financeTypes,
   loanSettings,
+  emp,
   onRefresh,
 }: {
   tab:          FinanceTabKey;
@@ -2358,15 +2830,19 @@ function TabContent({
   fetchError:   boolean;
   financeTypes: FinanceTypesResponse | null;
   loanSettings: LoanSettingsConfig | null;
+  emp:          FinanceEmployeeRow;
   onRefresh:    () => void;
 }) {
   // ── Modal states ─────────────────────────────────────────────────────────
-  const [deletePayslip,   setDeletePayslip  ] = useState<PayslipRecord | null>(null);
-  const [deletingPs,      setDeletingPs     ] = useState(false);
-  const [viewLoan,        setViewLoan       ] = useState<LoanRecord | null>(null);
-  const [loanDetail,      setLoanDetail     ] = useState<DeductionDetail | null>(null);
-  const [loadingDeducts,  setLoadingDeducts ] = useState(false);
-  const [withdrawSavings, setWithdrawSavings] = useState<SavingsRecord | null>(null);
+  const [deletePayslip,    setDeletePayslip   ] = useState<PayslipRecord | null>(null);
+  const [deletingPs,       setDeletingPs      ] = useState(false);
+  const [deleteOJTPayslip, setDeleteOJTPayslip] = useState<OJTPayslipRecord | null>(null);
+  const [deletingOJT,      setDeletingOJT     ] = useState(false);
+  const [viewOJTPayslip,   setViewOJTPayslip  ] = useState<OJTPayslipRecord | null>(null);
+  const [viewLoan,         setViewLoan        ] = useState<LoanRecord | null>(null);
+  const [loanDetail,       setLoanDetail      ] = useState<DeductionDetail | null>(null);
+  const [loadingDeducts,   setLoadingDeducts  ] = useState(false);
+  const [withdrawSavings,  setWithdrawSavings ] = useState<SavingsRecord | null>(null);
   const [withdrawing,     setWithdrawing    ] = useState(false);
 
   // Fetch deductions when loan modal opens
@@ -2428,10 +2904,33 @@ function TabContent({
     }
   }
 
-  const payslipTypes = financeTypes?.payslip_types  ?? [];
-  const loanTypes    = financeTypes?.loan_types      ?? [];
-  const allowTypes   = financeTypes?.allowance_types ?? [];
-  const savingTypes  = financeTypes?.savings_types   ?? [];
+  async function handleDeleteOJTPayslip() {
+    if (!deleteOJTPayslip) return;
+    setDeletingOJT(true);
+    try {
+      const [res] = await Promise.all([
+        fetch(`/api/finance/admin/ojt-payslips/${deleteOJTPayslip.id}`, {
+          method: 'DELETE',
+          credentials: 'include',
+          headers: { 'X-CSRFToken': getCsrfToken() },
+        }),
+        new Promise<void>(resolve => setTimeout(resolve, 1000)),
+      ]);
+      if ((res as Response).ok || (res as Response).status === 204) {
+        toast.success('OJT payslip deleted.');
+        setDeleteOJTPayslip(null);
+        onRefresh();
+      } else {
+        toast.error('Failed to delete OJT payslip.');
+      }
+    } finally {
+      setDeletingOJT(false);
+    }
+  }
+
+  const loanTypes   = financeTypes?.loan_types      ?? [];
+  const allowTypes  = financeTypes?.allowance_types ?? [];
+  const savingTypes = financeTypes?.savings_types   ?? [];
 
   if (fetchError) {
     return (
@@ -2458,230 +2957,43 @@ function TabContent({
         )}
       </AnimatePresence>
 
+      {/* ── OJT payslip delete confirmation modal ─────────────────────── */}
+      <AnimatePresence>
+        {deleteOJTPayslip && (
+          <ConfirmationModal
+            title="Delete OJT Payslip"
+            message={`Delete the OJT payslip for ${deleteOJTPayslip.period_start && deleteOJTPayslip.period_end ? `${fmtDateShort(deleteOJTPayslip.period_start)} – ${fmtDateShort(deleteOJTPayslip.period_end)}` : 'this period'}? This cannot be undone.`}
+            confirmLabel="Yes, Delete It"
+            confirming={deletingOJT}
+            onConfirm={handleDeleteOJTPayslip}
+            onCancel={() => setDeleteOJTPayslip(null)}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* ── OJT payslip view modal ─────────────────────────────────────── */}
+      <AnimatePresence>
+        {viewOJTPayslip && (
+          <OJTPayslipViewModal
+            payslip={viewOJTPayslip}
+            emp={emp}
+            onClose={() => setViewOJTPayslip(null)}
+          />
+        )}
+      </AnimatePresence>
+
       {/* ── Loan deductions modal ──────────────────────────────────────── */}
       <AnimatePresence>
-        {viewLoan && (() => {
-          const principal   = parseFloat(viewLoan.principal_amount) || 0;
-          const balance     = parseFloat(viewLoan.current_balance)  || 0;
-          const deductAmt   = viewLoan.monthly_deduction ? parseFloat(viewLoan.monthly_deduction) : null;
-          const paidAmt     = Math.max(0, principal - balance);
-          const pctPaid     = principal > 0 ? Math.min(100, Math.round((paidAmt / principal) * 100)) : 0;
-          const isActive    = balance > 0;
-          const freq        = loanSettings?.deduction_frequency ?? 'monthly';
-          const completion  = estimatedCompletion(balance, deductAmt, freq);
-
-          return (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.2 }}
-              className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
-              onClick={() => setViewLoan(null)}
-            >
-              <motion.div
-                initial={{ scale: 0.95, opacity: 0, y: 12 }}
-                animate={{ scale: 1,    opacity: 1, y: 0  }}
-                exit={{    scale: 0.95, opacity: 0, y: 12 }}
-                transition={{ type: 'spring', stiffness: 340, damping: 30 }}
-                onClick={e => e.stopPropagation()}
-                className="w-full max-w-lg rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-2xl overflow-hidden flex flex-col max-h-[85vh]"
-              >
-                {/* ── Header ──────────────────────────────────────────── */}
-                <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--color-border)] shrink-0">
-                  <div className="flex-1 min-w-0 pr-3">
-                    <div className="flex items-center gap-2.5 flex-wrap">
-                      <h3 className="text-lg font-semibold text-[var(--color-text-primary)] truncate">
-                        {viewLoan.loan_type_name}
-                      </h3>
-                      <StatusPill className='text-[9px]' status={isActive ? 'approved' : 'disapproved'} label={isActive ? 'Approved' : 'Closed'} />
-                    </div>
-                    {viewLoan.reference_number && (
-                      <p className="text-[10px] text-[var(--color-text-muted)] mt-0.5">
-                        Ref: {viewLoan.reference_number}
-                      </p>
-                    )}
-                  </div>
-                  <button
-                    onClick={() => setViewLoan(null)}
-                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-card)] transition-colors"
-                  >
-                    <X size={15} />
-                  </button>
-                </div>
-
-                {/* ── Scrollable body ──────────────────────────────────── */}
-                <div className="flex-1 overflow-y-auto [scrollbar-width:thin] [scrollbar-color:var(--color-border)_transparent]">
-
-                  {/* ── Repayment Progress ─────────────────────────────── */}
-                  <div className="px-5 pt-4 pb-3">
-                    <div className="flex items-center justify-between mb-2">
-                      <p className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
-                        Repayment Progress
-                      </p>
-                      <span className="text-xs font-bold text-[#2845D6]">{pctPaid}% repaid</span>
-                    </div>
-                    {/* 3-D track — no overflow-hidden so the fill's rounded right cap is not clipped */}
-                    <div
-                      className="relative h-4 w-full rounded-full"
-                      style={{
-                        background: 'var(--color-border)',
-                        // boxShadow: 'inset 0 2px 5px rgba(0,0,0,0.22), inset 0 1px 2px rgba(0,0,0,0.14)',
-                      }}
-                    >
-                      {/* Animated fill */}
-                      <motion.div
-                        initial={{ width: '0%' }}
-                        animate={{ width: `${pctPaid}%` }}
-                        transition={{ duration: 1.6, ease: [0.22, 1, 0.36, 1], delay: 0.2 }}
-                        className="absolute inset-y-0 left-0 rounded-full"
-                        style={{
-                          background: 'linear-gradient(90deg, #1a35c5 0%, #2845D6 40%, #5B7FFF 100%)',
-                          // boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.25)',
-                        }}
-                      />
-                    </div>
-                    <div className="flex justify-between mt-1.5">
-                      <span className="text-[10px] text-[var(--color-text-muted)]">
-                        Paid: ₱{fmtCurrency(paidAmt.toFixed(2))}
-                      </span>
-                      <span className="text-[10px] text-[var(--color-text-muted)]">
-                        Remaining: ₱{fmtCurrency(viewLoan.current_balance)}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* ── Loan Summary grid ──────────────────────────────── */}
-                  <div className="px-5 pt-3 pb-3 border-t border-[var(--color-border)]">
-                    <div className="grid grid-cols-2 gap-x-4 gap-y-3">
-                      <div className="pb-3">
-                        <p className="text-[10px] text-[var(--color-text-muted)] uppercase tracking-wide">Principal Amount</p>
-                        <p className="text-xs font-bold text-[var(--color-text-primary)] mt-0.5">
-                          ₱{fmtCurrency(viewLoan.principal_amount)}
-                        </p>
-                      </div>
-                      <div className="pb-3">
-                        <p className="text-[10px] text-[var(--color-text-muted)] uppercase tracking-wide">Outstanding Balance</p>
-                        <p className={cn(
-                          'text-xs font-bold mt-0.5',
-                          isActive ? 'text-amber-500' : 'text-emerald-500',
-                        )}>
-                          ₱{fmtCurrency(viewLoan.current_balance)}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-[10px] text-[var(--color-text-muted)] uppercase tracking-wide">Deduction Frequency</p>
-                        <p className="text-xs font-medium text-[var(--color-text-primary)] mt-0.5">
-                          {loanSettings ? freqLabel(freq) : (
-                            <span className="inline-block h-3 w-24 rounded bg-[var(--color-skeleton)] animate-pulse" />
-                          )}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-[10px] text-[var(--color-text-muted)] uppercase tracking-wide">Per-Period Deduction</p>
-                        <p className="text-xs font-medium text-[var(--color-text-primary)] mt-0.5">
-                          {deductAmt ? `₱${fmtCurrency(viewLoan.monthly_deduction!)}` : '—'}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* ── Estimated Completion ──────────────────────────── */}
-                  {isActive && (
-                    <div className="px-5 py-3 border-t border-[var(--color-border)]">
-                      <p className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)] mb-1.5">
-                        Estimated Completion
-                      </p>
-                      <p className="text-sm font-semibold text-[var(--color-text-primary)]">
-                        {loanSettings ? completion : (
-                          <span className="inline-block h-4 w-28 rounded bg-[var(--color-skeleton)] animate-pulse" />
-                        )}
-                      </p>
-                      {loanSettings && completion !== '—' && (
-                        <p className="text-[10px] text-[var(--color-text-muted)] mt-0.5">
-                          Based on {freqLabel(freq)} deductions of ₱{fmtCurrency(viewLoan.monthly_deduction ?? '0')}
-                        </p>
-                      )}
-                    </div>
-                  )}
-
-                  {/* ── Deduction History ─────────────────────────────── */}
-                  <div className="border-t border-[var(--color-border)]">
-                    <p className="px-5 py-2 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
-                      Deduction History
-                    </p>
-                    {loadingDeducts ? (
-                      <div className="px-5 pb-4 space-y-2">
-                        {[...Array(3)].map((_, i) => (
-                          <div key={i} className="flex items-center gap-3">
-                            <div
-                              className="h-3 rounded-full bg-[var(--color-skeleton)] animate-pulse"
-                              style={{ width: `${50 - i * 8}%` }}
-                            />
-                            <div
-                              className="h-3 rounded-full bg-[var(--color-skeleton)] animate-pulse ml-auto"
-                              style={{ width: '18%' }}
-                            />
-                          </div>
-                        ))}
-                      </div>
-                    ) : !loanDetail || loanDetail.deductions.length === 0 ? (
-                      <EmptyState
-                        title="No deductions yet"
-                        description="No deduction records have been recorded for this loan."
-                        icons={[CreditCard, Receipt, DollarSign]}
-                        className="py-6"
-                      />
-                    ) : (
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead className="text-[10px] uppercase tracking-wide">Cut-off Date</TableHead>
-                            <TableHead className="text-right text-[10px] uppercase tracking-wide">Amount</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {loanDetail.deductions.map(d => (
-                            <TableRow key={d.id}>
-                              <TableCell>{d.cutoff_date ? fmtDateShort(d.cutoff_date) : '—'}</TableCell>
-                              <TableCell className="text-right font-medium">
-                                ₱{fmtCurrency(d.amount)}
-                              </TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                        <TableFooter>
-                          <TableRow>
-                            <TableCell className="text-[12px] font-normal text-[var(--color-text-muted)]">
-                              Total Deductions
-                            </TableCell>
-                            <TableCell className="text-right text-xs font-bold text-[var(--color-text-primary)]">
-                              ₱{fmtCurrency(
-                                loanDetail.deductions
-                                  .reduce((sum, d) => sum + parseFloat(d.amount), 0)
-                                  .toFixed(2),
-                              )}
-                            </TableCell>
-                          </TableRow>
-                        </TableFooter>
-                      </Table>
-                    )}
-                  </div>
-                </div>
-
-                {/* ── Footer ──────────────────────────────────────────── */}
-                <div className="px-5 py-3 border-t border-[var(--color-border)] text-right shrink-0">
-                  <button
-                    onClick={() => setViewLoan(null)}
-                    className="px-4 py-2 text-xs font-normal rounded-lg border border-[var(--color-border)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg)] transition-colors"
-                  >
-                    Close
-                  </button>
-                </div>
-              </motion.div>
-            </motion.div>
-          );
-        })()}
+        {viewLoan && (
+          <LoanHistoryModal
+            key="loan-history"
+            loan={viewLoan}
+            detail={loanDetail}
+            loadingDeducts={loadingDeducts}
+            loanSettings={loanSettings}
+            onClose={() => setViewLoan(null)}
+          />
+        )}
       </AnimatePresence>
 
       {/* ── Savings withdraw confirmation modal ────────────────────────── */}
@@ -2703,8 +3015,9 @@ function TabContent({
       {(() => {
         switch (tab) {
           case 'payslip': {
-            const items = records.payslips;
-            if (items.length === 0) return (
+            const regularItems = records.payslips;
+            const ojtItems     = records.ojt_payslips ?? [];
+            if (regularItems.length === 0 && ojtItems.length === 0) return (
               <EmptyState
                 title="No payslips"
                 description="This employee has no payslip records yet."
@@ -2719,18 +3032,14 @@ function TabContent({
                 variants={LIST_CONTAINER_VARIANTS}
                 className="divide-y divide-[var(--color-border)]"
               >
-                {items.map(p => {
-                  const color = typeColor(payslipTypes, p.payslip_type_name, '#2845D6');
-                  return (
+                {regularItems.map(p => (
                     <motion.li
-                      key={p.id}
+                      key={`regular-${p.id}`}
                       variants={LIST_ITEM_VARIANTS}
                       className="flex items-center gap-3 py-3"
                     >
-                      {/* Left color indicator */}
                       <div className="w-1 h-5 shrink-0 rounded-full" style={{ backgroundColor: '#8B5CF6' }} />
 
-                      {/* Main info */}
                       <div className="flex-1 min-w-0">
                         <p className="text-xs font-medium text-[var(--color-text-primary)] truncate">{p.payslip_type_name}</p>
                         <p className="text-[10px] text-[var(--color-text-muted)] mt-0.5">
@@ -2739,7 +3048,6 @@ function TabContent({
                         </p>
                       </div>
 
-                      {/* Actions */}
                       <div className="flex items-center gap-1 shrink-0">
                         {p.file_url && (
                           <a
@@ -2762,8 +3070,42 @@ function TabContent({
                         </button>
                       </div>
                     </motion.li>
-                  );
-                })}
+                ))}
+                {ojtItems.map(o => (
+                    <motion.li
+                      key={`ojt-${o.id}`}
+                      variants={LIST_ITEM_VARIANTS}
+                      className="flex items-center gap-3 py-3"
+                    >
+                      <div className="w-1 h-5 shrink-0 rounded-full" style={{ backgroundColor: '#8B5CF6' }} />
+
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-medium text-[var(--color-text-primary)] truncate">Payslip</p>
+                        <p className="text-[10px] text-[var(--color-text-muted)] mt-0.5">
+                          {o.period_start && o.period_end
+                            ? `${fmtDateShort(o.period_start)} – ${fmtDateShort(o.period_end)}`
+                            : '—'}
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          onClick={e => { e.stopPropagation(); setViewOJTPayslip(o); }}
+                          title="View OJT Payslip"
+                          className="flex h-6 w-6 items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[#2845D6] hover:bg-[#2845D6]/10 transition-colors"
+                        >
+                          <Eye size={13} />
+                        </button>
+                        <button
+                          onClick={e => { e.stopPropagation(); setDeleteOJTPayslip(o); }}
+                          title="Delete OJT Payslip"
+                          className="flex h-6 w-6 items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-red-500 hover:bg-red-500/10 transition-colors"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    </motion.li>
+                ))}
               </motion.ul>
             );
           }
@@ -2790,7 +3132,6 @@ function TabContent({
                 className="divide-y divide-[var(--color-border)]"
               >
                 {items.map(l => {
-                  const color = typeColor(loanTypes, l.loan_type_name, '#F59E0B');
                   return (
                     <motion.li
                       key={l.id}
@@ -2849,7 +3190,6 @@ function TabContent({
                 className="divide-y divide-[var(--color-border)]"
               >
                 {items.map(a => {
-                  const color = typeColor(allowTypes, a.allowance_type_name, '#10B981');
                   return (
                     <motion.li
                       key={a.id}
@@ -2906,7 +3246,6 @@ function TabContent({
                 className="divide-y divide-[var(--color-border)]"
               >
                 {items.map(s => {
-                  const color = typeColor(savingTypes, s.savings_type_name, '#8B5CF6');
                   return (
                     <motion.li
                       key={s.id}
@@ -3105,7 +3444,7 @@ function FinanceAccordionRow({
                         exit={{ opacity: 0, y: -4 }}
                         transition={{ duration: 0.16 }}
                       >
-                        <TabContent tab={activeTab} records={records} fetchError={fetchError} financeTypes={financeTypes} loanSettings={loanSettings} onRefresh={refreshRecords} />
+                        <TabContent tab={activeTab} records={records} fetchError={fetchError} financeTypes={financeTypes} loanSettings={loanSettings} emp={emp} onRefresh={refreshRecords} />
                       </motion.div>
                     </AnimatePresence>
                   )}

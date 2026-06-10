@@ -5,13 +5,15 @@ from typing import Any, Dict, cast
 
 from django.db import transaction
 from django.http import HttpResponse
-from django.db.models import Q, Count, Case, When, Value, IntegerField
+from django.db.models import Q, Count, Case, When, Value, IntegerField, Prefetch
 from django.db.models.functions import TruncDate, TruncMonth
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+
+from userProfile.models import workInformation as WorkInfo
 
 from decimal import Decimal
 
@@ -131,7 +133,8 @@ class PRFRequestListCreateView(APIView):
 
     @transaction.atomic
     def post(self, request):
-        if getattr(request.user, 'admin', False):
+        u = request.user
+        if getattr(u, 'admin', False) or getattr(u, 'hr', False) or getattr(u, 'accounting', False):
             return Response(
                 {'detail': 'Admins use the admin panel to manage PRF requests.'},
                 status=status.HTTP_403_FORBIDDEN,
@@ -233,7 +236,8 @@ class EmergencyLoanCreateView(APIView):
 
     @transaction.atomic
     def post(self, request):
-        if getattr(request.user, 'admin', False):
+        u = request.user
+        if getattr(u, 'admin', False) or getattr(u, 'hr', False) or getattr(u, 'accounting', False):
             return Response(
                 {'detail': 'Admins use the admin panel to manage PRF requests.'},
                 status=status.HTTP_403_FORBIDDEN,
@@ -354,7 +358,8 @@ class EmergencyLoanPreCheckView(APIView):
 
     @transaction.atomic
     def post(self, request):
-        if getattr(request.user, 'admin', False):
+        u = request.user
+        if getattr(u, 'admin', False) or getattr(u, 'hr', False) or getattr(u, 'accounting', False):
             return Response(
                 {'detail': 'Admins use the admin panel to manage PRF requests.'},
                 status=status.HTTP_403_FORBIDDEN,
@@ -429,7 +434,8 @@ class MedicineAllowancePreCheckView(APIView):
 
     @transaction.atomic
     def post(self, request):
-        if getattr(request.user, 'admin', False):
+        u = request.user
+        if getattr(u, 'admin', False) or getattr(u, 'hr', False) or getattr(u, 'accounting', False):
             return Response(
                 {'detail': 'Admins use the admin panel to manage PRF requests.'},
                 status=status.HTTP_403_FORBIDDEN,
@@ -498,7 +504,8 @@ class MedicineAllowanceCreateView(APIView):
 
     @transaction.atomic
     def post(self, request):
-        if getattr(request.user, 'admin', False):
+        u = request.user
+        if getattr(u, 'admin', False) or getattr(u, 'hr', False) or getattr(u, 'accounting', False):
             return Response(
                 {'detail': 'Admins use the admin panel to manage PRF requests.'},
                 status=status.HTTP_403_FORBIDDEN,
@@ -588,8 +595,9 @@ class MedicineAllowanceCreateView(APIView):
 # ── Admin views ────────────────────────────────────────────────────────────────────────────────
 
 def _require_admin(request):
-    """Returns None if admin; returns a 403 Response otherwise."""
-    if not getattr(request.user, 'admin', False):
+    """Returns None if the user has any admin-level PRF privilege (admin, hr, or accounting)."""
+    user = request.user
+    if not (getattr(user, 'admin', False) or getattr(user, 'hr', False) or getattr(user, 'accounting', False)):
         return Response({'detail': 'Admin access required.'}, status=status.HTTP_403_FORBIDDEN)
     return None
 
@@ -886,6 +894,8 @@ class PRFAdminExportView(APIView):
     Generates and streams an xlsx file of PRF requests within a given date range.
     Optional filters: prf_category, prf_type, status.
     Requires admin=True.
+    When no category/type filter is applied, adds separate sheets for Emergency Loan
+    and Medicine Allowance with their specialized column formats.
     """
     permission_classes = [IsAuthenticated]
 
@@ -893,6 +903,10 @@ class PRFAdminExportView(APIView):
         err = _require_admin(request)
         if err:
             return err
+
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
+        from openpyxl.utils import get_column_letter
 
         # ── Parse date range ──────────────────────────────────────────
         today = datetime.date.today()
@@ -911,11 +925,20 @@ class PRFAdminExportView(APIView):
         if date_to < date_from:
             date_from, date_to = date_to, date_from
 
-        # ── Queryset ──────────────────────────────────────────────────
-        qs = PRFRequest.objects.select_related('employee').filter(
+        # ── Queryset with prefetch for EL / MA / work info ────────────
+        qs = PRFRequest.objects.select_related('employee').prefetch_related(
+            'emergency_loan',
+            'medicine_allowance',
+            Prefetch(
+                'employee__workinformation_set',
+                queryset=WorkInfo.objects.select_related('position', 'department').order_by('-created_at'),
+                to_attr='wi_prefetch',
+            ),
+        ).filter(
             created_at__date__gte=date_from,
             created_at__date__lte=date_to,
         )
+
         cat_f  = request.GET.get('prf_category', '').strip()
         type_f = request.GET.get('prf_type',     '').strip()
         stat_f = request.GET.get('status',       '').strip()
@@ -927,47 +950,13 @@ class PRFAdminExportView(APIView):
             qs = qs.filter(status=stat_f)
         qs = qs.order_by('created_at')
 
-        # ── Build workbook ──────────────────────────────────────────
-        from openpyxl import Workbook
-        from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
-        from openpyxl.utils import get_column_letter
-
-        wb = Workbook()
-        ws = wb.active
-        ws.title = 'PRF Requests'
-
+        # ── Shared style helpers ──────────────────────────────────────
         def _side():
             return Side(style='thin', color='FF000000')
 
-        thin_border = Border(
-            left=_side(), right=_side(), top=_side(), bottom=_side()
-        )
+        thin_border = Border(left=_side(), right=_side(), top=_side(), bottom=_side())
 
-        MONTHS = [
-            '', 'January', 'February', 'March', 'April', 'May', 'June',
-            'July', 'August', 'September', 'October', 'November', 'December',
-        ]
-
-        def _fmt_date(d):
-            return f'{MONTHS[d.month]} {d.day}, {d.year}'
-
-        # ── Row 1: company name ───────────────────────────────────────
-        ws['A1'] = 'Ryonan Electric Philippines Corporation'
-        ws['A1'].font = Font(bold=True, size=13)
-
-        # ── Row 2: report title ──────────────────────────────────────
-        ws['A2'] = f'PRF Request for {_fmt_date(date_from)} to {_fmt_date(date_to)}'
-        ws['A2'].font = Font(size=11, italic=True)
-
-        # ── Row 4: column headers ───────────────────────────────────
-        HEADERS = [
-            'Date Requested', 'PRF Number', 'ID Number', 'Employee Name',
-            'PRF Category', 'PRF Type', 'Control Number',
-            'Purpose of Request', 'Status', 'Remarks',
-        ]
-        HEADER_FILL = PatternFill(
-            start_color='FF2845D6', end_color='FF2845D6', fill_type='solid'
-        )
+        HEADER_FILL = PatternFill(start_color='FF2845D6', end_color='FF2845D6', fill_type='solid')
         STATUS_FILL = {
             'approved':    PatternFill(start_color='FFC6EFCE', end_color='FFC6EFCE', fill_type='solid'),
             'disapproved': PatternFill(start_color='FFFFC7CE', end_color='FFFFC7CE', fill_type='solid'),
@@ -981,51 +970,225 @@ class PRFAdminExportView(APIView):
             'cancelled':   'FF595959',
         }
 
-        for col, h in enumerate(HEADERS, start=1):
-            cell           = ws.cell(row=4, column=col, value=h)
-            cell.font      = Font(bold=True, color='FFFFFFFF', size=10)
-            cell.fill      = HEADER_FILL
-            cell.border    = thin_border
-            cell.alignment = Alignment(horizontal='center', vertical='center')
+        MONTHS_FULL = [
+            '', 'January', 'February', 'March', 'April', 'May', 'June',
+            'July', 'August', 'September', 'October', 'November', 'December',
+        ]
+        MONTHS_ABB = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
-        # ── Data rows ─────────────────────────────────────────────────
-        for row_num, prf in enumerate(qs, start=5):
-            emp      = prf.employee
-            parts    = [x for x in [emp.lastname or '', emp.firstname or ''] if x]
-            emp_name = ', '.join(parts)
-            row_vals = [
-                _fmt_date(prf.created_at.date()),
-                prf.prf_control_number or '',
-                emp.idnumber           or '',
-                emp_name,
-                prf.get_prf_category_display(),
-                prf.get_prf_type_display(),
-                prf.control_number     or '-',
-                prf.purpose            or '',
-                prf.get_status_display(),
-                prf.admin_remarks      or '',
-            ]
-            for col, val in enumerate(row_vals, start=1):
-                cell           = ws.cell(row=row_num, column=col, value=val)
+        def _fmt_date_full(d):
+            return f'{MONTHS_FULL[d.month]} {d.day}, {d.year}'
+
+        def _fmt_date_abb(d):
+            return f'{MONTHS_ABB[d.month]} {d.day:02d}, {d.year}'
+
+        def _fmt_datetime_abb(dt):
+            local_dt = timezone.localtime(dt)
+            hour = local_dt.hour
+            am_pm = 'AM' if hour < 12 else 'PM'
+            hour_12 = hour % 12 or 12
+            return (
+                f'{MONTHS_ABB[local_dt.month]} {local_dt.day:02d}, {local_dt.year} '
+                f'{hour_12:02d}:{local_dt.minute:02d} {am_pm}'
+            )
+
+        def _fmt_period(start, end):
+            if not start or not end:
+                return 'N/A'
+            if start.year == end.year and start.month == end.month:
+                return f'{MONTHS_ABB[start.month]} {start.day:02d} - {end.day:02d}, {start.year}'
+            elif start.year == end.year:
+                return (
+                    f'{MONTHS_ABB[start.month]} {start.day:02d} - '
+                    f'{MONTHS_ABB[end.month]} {end.day:02d}, {start.year}'
+                )
+            else:
+                return (
+                    f'{MONTHS_ABB[start.month]} {start.day:02d}, {start.year} - '
+                    f'{MONTHS_ABB[end.month]} {end.day:02d}, {end.year}'
+                )
+
+        def _get_wi(prf):
+            wi_list = getattr(prf.employee, 'wi_prefetch', None) or []
+            return wi_list[0] if wi_list else None
+
+        def _apply_header(ws, title_text, headers, col_widths):
+            ws['A1'] = 'Ryonan Electric Philippines Corporation'
+            ws['A1'].font = Font(bold=True, size=13)
+            ws['A2'] = title_text
+            ws['A2'].font = Font(size=11, italic=True)
+            for col, h in enumerate(headers, start=1):
+                cell = ws.cell(row=4, column=col, value=h)
+                cell.font      = Font(bold=True, color='FFFFFFFF', size=10)
+                cell.fill      = HEADER_FILL
                 cell.border    = thin_border
-                cell.alignment = Alignment(vertical='top', wrap_text=(col in (8, 10)))
-                if col == 9:
-                    s_fill  = STATUS_FILL.get(prf.status)
-                    s_color = STATUS_FONT_COLOR.get(prf.status)
-                    if s_fill:
-                        cell.fill = s_fill
-                    if s_color:
-                        cell.font = Font(color=s_color)
-                elif col == 10:
-                    if prf.status == 'disapproved':
-                        cell.font = Font(color='FFFF0000')
-                    else:
-                        cell.font = Font(color='FF000000')
+                cell.alignment = Alignment(horizontal='center', vertical='center')
+            for idx, w in enumerate(col_widths, start=1):
+                ws.column_dimensions[get_column_letter(idx)].width = w
 
-        # ── Column widths ─────────────────────────────────────────────
-        col_widths = [18, 18, 15, 28, 26, 30, 20, 50, 18, 35]
-        for idx, w in enumerate(col_widths, start=1):
-            ws.column_dimensions[get_column_letter(idx)].width = w
+        # ── Sheet builders ────────────────────────────────────────────
+
+        def _build_main_sheet(ws, qs_main):
+            headers = [
+                'Date Requested', 'PRF Number', 'ID Number', 'Employee Name',
+                'PRF Category', 'PRF Type', 'Control Number',
+                'Purpose of Request', 'Status', 'Remarks',
+            ]
+            _apply_header(
+                ws,
+                f'PRF Request for {_fmt_date_full(date_from)} to {_fmt_date_full(date_to)}',
+                headers,
+                [18, 18, 15, 28, 26, 30, 20, 50, 18, 35],
+            )
+            for row_num, prf in enumerate(qs_main, start=5):
+                emp   = prf.employee
+                parts = [x for x in [emp.lastname or '', emp.firstname or ''] if x]
+                row_vals = [
+                    _fmt_date_full(prf.created_at.date()),
+                    prf.prf_control_number or '',
+                    emp.idnumber           or '',
+                    ', '.join(parts),
+                    prf.get_prf_category_display(),
+                    prf.get_prf_type_display(),
+                    prf.control_number     or '-',
+                    prf.purpose            or '',
+                    prf.get_status_display(),
+                    prf.admin_remarks      or '',
+                ]
+                for col, val in enumerate(row_vals, start=1):
+                    cell           = ws.cell(row=row_num, column=col, value=val)
+                    cell.border    = thin_border
+                    cell.alignment = Alignment(vertical='top', wrap_text=(col in (8, 10)))
+                    if col == 9:
+                        sf = STATUS_FILL.get(prf.status)
+                        sc = STATUS_FONT_COLOR.get(prf.status)
+                        if sf:
+                            cell.fill = sf
+                        if sc:
+                            cell.font = Font(color=sc)
+                    elif col == 10:
+                        cell.font = Font(color='FFFF0000' if prf.status == 'disapproved' else 'FF000000')
+
+        def _build_el_sheet(ws, qs_el):
+            headers = [
+                'PRF Number', 'Date Requested', 'ID Number', 'Employee Name',
+                'Position', 'Department', 'Purpose', 'Status',
+                'EL Control Number', 'Loan Amount', 'Terms of Deduction',
+                'Start of Deduction', 'Deduction Per Cutoff', 'Account Number',
+            ]
+            _apply_header(
+                ws,
+                f'Emergency Loan Report for {_fmt_date_abb(date_from)} to {_fmt_date_abb(date_to)}',
+                headers,
+                [15, 24, 13, 28, 22, 20, 40, 15, 20, 13, 22, 20, 22, 18],
+            )
+            for row_num, prf in enumerate(qs_el, start=5):
+                emp  = prf.employee
+                wi   = _get_wi(prf)
+                parts = [x for x in [emp.lastname or '', emp.firstname or ''] if x]
+                try:
+                    el = prf.emergency_loan
+                    loan_amount     = el.amount
+                    terms           = f'{el.number_of_cutoff} Cut-off(s)'
+                    start_ded       = _fmt_date_abb(el.starting_date)
+                    ded_per_cutoff  = float(el.deduction_per_cutoff)
+                except EmergencyLoan.DoesNotExist:
+                    loan_amount = terms = start_ded = ded_per_cutoff = ''
+                position       = wi.position.name   if wi and wi.position   else ''
+                department     = wi.department.name if wi and wi.department else ''
+                account_number = wi.bank_account    if wi else ''
+                row_vals = [
+                    prf.prf_control_number or '',
+                    _fmt_datetime_abb(prf.created_at),
+                    emp.idnumber           or '',
+                    ', '.join(parts),
+                    position,
+                    department,
+                    prf.purpose            or '',
+                    prf.get_status_display(),
+                    prf.control_number     or '',
+                    loan_amount,
+                    terms,
+                    start_ded,
+                    ded_per_cutoff,
+                    account_number,
+                ]
+                STATUS_COL = 8
+                for col, val in enumerate(row_vals, start=1):
+                    cell           = ws.cell(row=row_num, column=col, value=val)
+                    cell.border    = thin_border
+                    cell.alignment = Alignment(vertical='top', wrap_text=(col == 7))
+                    if col == STATUS_COL:
+                        sf = STATUS_FILL.get(prf.status)
+                        sc = STATUS_FONT_COLOR.get(prf.status)
+                        if sf:
+                            cell.fill = sf
+                        if sc:
+                            cell.font = Font(color=sc)
+
+        def _build_ma_sheet(ws, qs_ma):
+            headers = [
+                'Medicine Allowance Control Number', 'ID Number', 'Employee Name',
+                'Position', 'Department', 'Amount', 'Period Covered',
+            ]
+            _apply_header(
+                ws,
+                f'Medicine Allowance Report for {_fmt_date_abb(date_from)} to {_fmt_date_abb(date_to)}',
+                headers,
+                [32, 13, 28, 22, 20, 13, 30],
+            )
+            for row_num, prf in enumerate(qs_ma, start=5):
+                emp   = prf.employee
+                wi    = _get_wi(prf)
+                parts = [x for x in [emp.lastname or '', emp.firstname or ''] if x]
+                try:
+                    ma     = prf.medicine_allowance
+                    amount = float(ma.amount)
+                    period = _fmt_period(ma.start_date, ma.end_date)
+                except MedicineAllowance.DoesNotExist:
+                    amount = period = ''
+                position   = wi.position.name   if wi and wi.position   else ''
+                department = wi.department.name if wi and wi.department else ''
+                row_vals = [
+                    prf.control_number or '',
+                    emp.idnumber       or '',
+                    ', '.join(parts),
+                    position,
+                    department,
+                    amount,
+                    period,
+                ]
+                for col, val in enumerate(row_vals, start=1):
+                    cell           = ws.cell(row=row_num, column=col, value=val)
+                    cell.border    = thin_border
+                    cell.alignment = Alignment(vertical='top', wrap_text=(col == 7))
+
+        # ── Assemble workbook ─────────────────────────────────────────
+        wb  = Workbook()
+        show_all = not cat_f and not type_f
+
+        if type_f == 'emergency_loan':
+            ws = wb.active
+            ws.title = 'Emergency Loan'
+            _build_el_sheet(ws, qs)
+        elif type_f == 'medicine_allowance':
+            ws = wb.active
+            ws.title = 'Medicine Allowance'
+            _build_ma_sheet(ws, qs)
+        elif show_all:
+            ws_main = wb.active
+            ws_main.title = 'PRF Requests'
+            _build_main_sheet(ws_main, qs.exclude(prf_type__in=['emergency_loan', 'medicine_allowance']))
+
+            ws_el = wb.create_sheet(title='Emergency Loan')
+            _build_el_sheet(ws_el, qs.filter(prf_type='emergency_loan'))
+
+            ws_ma = wb.create_sheet(title='Medicine Allowance')
+            _build_ma_sheet(ws_ma, qs.filter(prf_type='medicine_allowance'))
+        else:
+            ws = wb.active
+            ws.title = 'PRF Requests'
+            _build_main_sheet(ws, qs)
 
         # ── Stream xlsx response ───────────────────────────────────────
         buf = io.BytesIO()

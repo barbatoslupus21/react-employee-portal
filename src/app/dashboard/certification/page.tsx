@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, Mail, FileText, Award, BadgeCheck } from 'lucide-react';
@@ -78,7 +79,7 @@ function PDFModal({
     setPdfLoading(true);
   }, [cert.id]);
 
-  return (
+  return createPortal(
     <motion.div
       key="pdf-overlay"
       initial={{ opacity: 0 }}
@@ -158,7 +159,7 @@ function PDFModal({
         </div>
       </motion.div>
     </motion.div>
-  );
+  , document.body);
 }
 
 // ── Page skeleton ──────────────────────────────────────────────────────────────

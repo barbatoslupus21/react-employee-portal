@@ -312,9 +312,7 @@ class AnnouncementReactionToggleView(APIView):
         # Collect top reactors
         reactors = []
         for r in AnnouncementReaction.objects.filter(announcement=ann).select_related('user').order_by('created_at')[:5]:
-            avatar = None
-            if r.user.avatar and request:
-                avatar = request.build_absolute_uri(r.user.avatar.url)
+            avatar = r.user.avatar.url if r.user.avatar else None
             reactors.append({'avatar': avatar})
 
         return Response({
@@ -438,9 +436,7 @@ class AnnouncementActivityView(APIView):
             return ' '.join(p for p in parts if p).strip() or u.email
 
         def _avatar(u):
-            if u.avatar:
-                return request.build_absolute_uri(u.avatar.url)
-            return None
+            return u.avatar.url if u.avatar else None
 
         def _preview(ann):
             if ann.title:

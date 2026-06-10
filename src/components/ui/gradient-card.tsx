@@ -130,13 +130,16 @@ export function GradientCard({
         {/* Icon */}
         <div
           className={cn(
-            'flex h-11 w-11 shrink-0 items-center justify-center rounded-xl',
-            'transition-transform duration-200 group-hover:scale-110',
+            "pointer-events-none absolute -right-11 -top-7 opacity-15",
             cfg.iconBg,
           )}
         >
-          <Icon size={22} className={cfg.iconText} />
+          <Icon size={180} className={cfg.iconText} />
         </div>
+
+        {/* <div className="pointer-events-none absolute -right-5 -bottom-8 opacity-15">
+          <span style={{ color: iconColor }}><Icon size={120} /></span>
+        </div> */}
 
         {/* Category badge */}
         <span

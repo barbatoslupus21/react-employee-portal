@@ -51,7 +51,7 @@ class CookieJWTAuthentication(JWTAuthentication):
         if request.method in SAFE_METHODS:
             return
 
-        check = _CSRFCheck(get_response=lambda r: None)
+        check = _CSRFCheck(get_response=lambda r: None)  # type: ignore[arg-type]
         check.process_request(request)
         reason = check.process_view(request, None, (), {})
         if reason:

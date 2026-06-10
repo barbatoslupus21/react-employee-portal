@@ -144,6 +144,18 @@ function surveyUserName(u: SurveyUser): string {
   return [u.firstname, u.lastname].filter(Boolean).join(' ') || u.idnumber;
 }
 
+function formatLocalDate(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function parseLocalDate(dateStr: string): Date {
+  const [y, mo, d] = dateStr.split('-').map(Number);
+  return new Date(y, mo - 1, d);
+}
+
 function FilterContentList({
   options,
   selected,
@@ -445,8 +457,8 @@ function SurveysPage({ user }: { user: UserData }) {
       if (!res.ok) throw new Error('Could not load survey details');
       const data = await res.json();
       setSurvTitle(data.title ?? '');
-      setSurvStartDate(data.start_date ? new Date(data.start_date) : undefined);
-      setSurvEndDate(data.end_date ? new Date(data.end_date) : undefined);
+      setSurvStartDate(data.start_date ? parseLocalDate(data.start_date) : undefined);
+      setSurvEndDate(data.end_date ? parseLocalDate(data.end_date) : undefined);
       setSurvIsAnonymous(Boolean(data.is_anonymous));
       setSurvTemplateType(data.template_type ?? row.template_type ?? '');
       setSurvStatus(data.status ?? row.status ?? '');
@@ -481,8 +493,8 @@ function SurveysPage({ user }: { user: UserData }) {
       const body: Record<string, unknown> = {
         title: survTitle.trim(),
         description: '',
-        start_date: survStartDate!.toISOString().split('T')[0],
-        end_date: survEndDate!.toISOString().split('T')[0],
+        start_date: formatLocalDate(survStartDate!),
+        end_date: formatLocalDate(survEndDate!),
         is_anonymous: survIsAnonymous,
         target_type: survTargetScope === 'all' ? 'all_users' : 'specific_users',
         target_user_ids: survTargetScope === 'selected' ? survMemberIds : [],
@@ -565,8 +577,8 @@ function SurveysPage({ user }: { user: UserData }) {
 
   const getSurveyStatus = (row: SurveyListItem) => {
     const today = new Date();
-    const start = row.start_date ? new Date(row.start_date) : null;
-    const end = row.end_date ? new Date(row.end_date) : null;
+    const start = row.start_date ? parseLocalDate(row.start_date) : null;
+    const end = row.end_date ? parseLocalDate(row.end_date) : null;
 
     if (row.status === 'closed') return { status: 'closed', label: 'Closed' };
     if (start && today < start) return { status: 'scheduled', label: 'Scheduled' };

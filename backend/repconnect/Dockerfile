@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     pkg-config \
     default-libmysqlclient-dev \
+    gosu \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
@@ -20,8 +21,8 @@ RUN sed -i 's/\r$//' entrypoint.sh && chmod +x entrypoint.sh
 # Non-root user (Finding #1 — containers must not run as root)
 RUN groupadd -r django && useradd -r -g django -d /app django
 RUN chown -R django:django /app
-USER django
 
 EXPOSE 8000
 
+# Entrypoint runs as root, fixes volume-mount ownership, then drops to django via gosu
 ENTRYPOINT ["./entrypoint.sh"]

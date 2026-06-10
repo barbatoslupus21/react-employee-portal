@@ -7,6 +7,7 @@ import React, {
   useMemo,
   useRef,
 } from 'react';
+import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   ChevronLeft,
@@ -82,6 +83,7 @@ interface CalendarEvent {
   owner_detail?: CalendarMember;
   members: number[];
   members_detail: CalendarMember[];
+  member_scope?: 'all' | 'selected';
   seen?: boolean;
 }
 
@@ -540,7 +542,7 @@ function EventModal({ event, form, setForm, onClose, onSave, onDelete, saving, i
   const eventTypeLabel = EVENT_TYPE_CONFIG[form.event_type]?.label ?? 'Event';
   const eventTypeColor = EVENT_TYPE_CONFIG[form.event_type]?.color ?? '#2845D6';
 
-  return (
+  return createPortal(
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
@@ -899,7 +901,8 @@ function EventModal({ event, form, setForm, onClose, onSave, onDelete, saving, i
           )}
         </div>
       </motion.div>
-    </motion.div>
+    </motion.div>,
+    document.body
   );
 }
 
@@ -957,7 +960,7 @@ function UserTimelogsModal({
     return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   }
 
-  return (
+  return createPortal(
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
@@ -1076,7 +1079,8 @@ function UserTimelogsModal({
           </button>
         </div>
       </motion.div>
-    </motion.div>
+    </motion.div>,
+    document.body
   );
 }
 
@@ -1325,7 +1329,7 @@ function TimelogsModal({ onClose }: { onClose: () => void }) {
       .catch(() => {});
   }
 
-  return (
+  return createPortal(
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
@@ -1713,7 +1717,8 @@ function TimelogsModal({ onClose }: { onClose: () => void }) {
           </motion.div>
         )}
       </AnimatePresence>
-    </motion.div>
+    </motion.div>,
+    document.body
   );
 }
 
@@ -2020,7 +2025,7 @@ export default function CalendarPage() {
       });
     }
     setEditingEvent(ev);
-    const hasMembers = ev.members && ev.members.length > 0;
+    const scope: 'all' | 'selected' = ev.member_scope ?? (isAdmin ? 'all' : 'selected');
     setForm({
       title:       ev.title,
       date:        ev.date,
@@ -2029,8 +2034,8 @@ export default function CalendarPage() {
       start_time:  fmt5(ev.start_time ?? '09:00'),
       end_time:    fmt5(ev.end_time ?? '10:00'),
       note:        ev.note,
-      memberScope: hasMembers ? 'selected' : (isAdmin ? 'all' : 'selected'),
-      memberIds:   ev.members ?? [],
+      memberScope: scope,
+      memberIds:   scope === 'all' ? [] : (ev.members ?? []),
     });
     setModalOpen(true);
   }
@@ -2040,20 +2045,18 @@ export default function CalendarPage() {
     setSaving(true);
     const csrf = getCsrfToken();
 
-    // Determine members payload: 'all' = every fetched user, 'selected' = chosen IDs
+    // For 'all' scope the backend expands members itself; no need to send IDs.
     const membersPayload: number[] =
-      form.memberScope === 'all'
-        ? allUsers.map(u => u.id)
-        : form.memberIds;
+      form.memberScope === 'all' ? [] : form.memberIds;
 
     const payload = {
-      title:      form.title.trim(),
-      date:       form.date,
-      event_type: form.event_type,
-      repetition: form.repetition,
-      note:       form.note,
+      title:        form.title.trim(),
+      date:         form.date,
+      event_type:   form.event_type,
+      repetition:   form.repetition,
+      note:         form.note,
       member_scope: form.memberScope,
-      members:    membersPayload,
+      members:      membersPayload,
     };
     try {
       if (editingEvent) {
@@ -2128,7 +2131,7 @@ export default function CalendarPage() {
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
-    <div className="h-[calc(100dvh-var(--header-height))] overflow-hidden p-4 md:p-6">
+    <div className="h-[calc(100dvh-var(--header-height)-0.5rem)] overflow-hidden p-4 md:p-6">
       {/*
         Two-column responsive layout:
         - mobile   (<640px)  → single column (calendar then scheduled below)
@@ -2269,7 +2272,7 @@ export default function CalendarPage() {
             animate="center"
             exit="exit"
             transition={{ duration: 0.22, ease: [0.4, 0, 0.2, 1] }}
-            className="grid grid-cols-7 gap-1 rounded-2xl h-full bg-[var(--color-bg)]"
+            className="grid grid-cols-7 gap-1 rounded-2xl h-full bg-transparent"
           >
             {cells.map((cell, idx) => {
               const col = idx % 7;

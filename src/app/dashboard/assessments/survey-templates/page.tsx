@@ -547,15 +547,15 @@ function TemplatesContent({ user }: { user: UserData }) {
                 type="button"
                 onClick={handleCreateTemplate}
                 disabled={newTemplateSaving || newTemplateRedirecting}
-                className="min-w-[160px] flex items-center justify-center gap-2 px-5 py-2 rounded-lg bg-[var(--btn-primary-bg,#2845D6)] text-white text-sm font-semibold hover:opacity-90 transition-opacity disabled:opacity-60"
+                className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[var(--btn-primary-bg,#2845D6)] text-white text-xs font-normal hover:opacity-90 transition-opacity disabled:opacity-60"
               >
                 {(newTemplateSaving || newTemplateRedirecting) ? (
-                  <TextShimmer duration={1.2} className="text-sm font-semibold text-white [--base-color:#a5b4fc] [--base-gradient-color:#ffffff]">
+                  <TextShimmer duration={1.2} className="text-xs font-normal text-white [--base-color:#a5b4fc] [--base-gradient-color:#ffffff]">
                     {newTemplateRedirecting ? 'Preparing Builder…' : 'Creating…'}
                   </TextShimmer>
                 ) : (
                   <>
-                    <Plus className="size-4" />
+                    <Plus className="size-3" />
                     Create Template
                   </>
                 )}

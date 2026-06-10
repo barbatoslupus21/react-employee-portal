@@ -2266,18 +2266,19 @@ class AdminPeriodExportView(APIView):
         )
         eligible_ids = [u.id for u in eligible_users]
 
-        # ── 3. Work information (department + line) per employee ──────────────
-        wi_map: dict[int, tuple[str | None, str | None]] = {}
+        # ── 3. Work information (department, position, line) per employee ────────
+        wi_map: dict[int, tuple[str | None, str | None, str | None]] = {}
         for wi in (
             workInformation.objects
             .filter(employee_id__in=eligible_ids)
-            .select_related('department', 'line')
+            .select_related('department', 'line', 'position')
             .order_by('employee_id')
         ):
             if wi.employee_id not in wi_map:
                 dept_name = wi.department.name if wi.department else None
                 line_name = wi.line.name if wi.line else None
-                wi_map[wi.employee_id] = (dept_name, line_name)
+                pos_name  = wi.position.name if wi.position else None
+                wi_map[wi.employee_id] = (dept_name, line_name, pos_name)
 
         # ── 4. Evaluation entries indexed by employee_id ──────────────────────
         entries_by_emp: dict[int, EvaluationEntry] = {}
@@ -2533,24 +2534,18 @@ class AdminPeriodExportView(APIView):
         ws['A2'].font = Font(size=11)
 
         # ── Column headers at row 4 ───────────────────────────────────────────
-        # Columns: ID Number | Employee Name | Department | Line | Status |
+        # Columns: ID Number | Employee Name | Department | Position | Line | Status |
         #          Q1 | Q2 | Q3 | Q4 | Average Evaluation | 65% |
         #          Average Behavioral | 25%
-        standard_headers = [
-            'ID Number', 'Employee Name', 'Department', 'Line', 'Status',
-            'Q1', 'Q2', 'Q3', 'Q4', 'Average Evaluation', 'Average Behavioral',
-        ]
-        # col indices: 1-10 standard, 11 = '65%' (after col 10), 12 = 'Average Behavioral' (→13 after shift), 13 = '25%'
-        # Build full ordered header list including weighted cols
         all_headers = [
-            'ID Number', 'Employee Name', 'Department', 'Line', 'Status',
+            'ID Number', 'Employee Name', 'Department', 'Position', 'Line', 'Status',
             'Q1', 'Q2', 'Q3', 'Q4',
-            'Average Evaluation',  # col 10
-            '65%',                 # col 11 — weighted, red header
-            'Average Behavioral',  # col 12
-            '25%',                 # col 13 — weighted, red header
+            'Average Evaluation',  # col 11
+            '65%',                 # col 12 — weighted, red header
+            'Average Behavioral',  # col 13
+            '25%',                 # col 14 — weighted, red header
         ]
-        _weighted_cols = {11, 13}  # 1-based column indices with red header font
+        _weighted_cols = {12, 14}  # 1-based column indices with red header font
         for col_idx, h in enumerate(all_headers, start=1):
             cell = ws.cell(row=4, column=col_idx)
             self._apply_header(cell, h)
@@ -2563,7 +2558,7 @@ class AdminPeriodExportView(APIView):
             first = (getattr(u, 'firstname', '') or '').strip()
             last  = (getattr(u, 'lastname',  '') or '').strip()
             emp_name = f'{last}, {first}'.strip(', ') or u.idnumber or ''
-            dept_name, line_name = wi_map.get(u.id, (None, None))
+            dept_name, line_name, pos_name = wi_map.get(u.id, (None, None, None))
             entry  = entries_by_emp.get(u.id)
             status = entry.status if entry else 'not_started'
             sup_eval = sup_eval_by_entry.get(entry.id) if entry else None
@@ -2598,24 +2593,25 @@ class AdminPeriodExportView(APIView):
                 if qual_avg_str != '—' else '—'
             )
 
-            # Column order: ID | Name | Dept | Line | Status | Q1-Q4 |
-            #               Avg Eval | 65% | Avg Behavioral | 25%
+            # Column order: ID | Name | Dept | Position | Line | Status |
+            #               Q1-Q4 | Avg Eval | 65% | Avg Behavioral | 25%
             data = [
                 u.idnumber or '',
                 emp_name,
                 dept_name or '—',
+                pos_name  or '—',   # col 4 — Position (from workInformation)
                 line_name or '—',
-                status,          # col 5 — rendered as coloured cell
-                *q_values_str,   # cols 6–9
-                avg_total_str,   # col 10
-                eval_65_str,     # col 11
-                qual_avg_str,    # col 12
-                qual_25_str,     # col 13
+                status,             # col 6 — rendered as coloured cell
+                *q_values_str,      # cols 7–10
+                avg_total_str,      # col 11
+                eval_65_str,        # col 12
+                qual_avg_str,       # col 13
+                qual_25_str,        # col 14
             ]
 
             for col_idx, val in enumerate(data, start=1):
                 cell = ws.cell(row=row_num, column=col_idx)
-                if col_idx == 5:  # Status column
+                if col_idx == 6:  # Status column (shifted from 5 to 6)
                     self._apply_status_cell(cell, status)
                 else:
                     self._apply_data_cell(cell, val if val != '' else '—')

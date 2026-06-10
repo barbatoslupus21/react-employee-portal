@@ -9,6 +9,7 @@ Split into three logical groups:
 
 import re
 from datetime import date
+from typing import Any, cast
 
 from django.contrib.auth.hashers import check_password, make_password
 from django.core.validators import RegexValidator
@@ -51,11 +52,28 @@ def _validate_no_special(value: str) -> str:
 
 
 def _validate_ph_contact(value: str) -> str:
-    if value and not _PH_CONTACT_RE.match(value):
-        raise serializers.ValidationError(
-            'Enter a valid Philippine mobile number (e.g. 09171234567 or +639171234567).'
-        )
-    return value
+    """
+    Normalise and validate a Philippine mobile number.
+
+    Normalisation steps:
+      1. Strip whitespace, dashes, dots, parentheses.
+      2. If the result is exactly 10 digits starting with '9' (the area-code
+         prefix was dropped during data entry), prepend '0'.
+    Accepts: 09XXXXXXXXX  or  +639XXXXXXXXX
+    Unrecognisable formats (e.g. short landlines, foreign numbers) are silently
+    cleared to '' so that a save is not blocked by legacy data — the user will
+    see an empty field and can correct it.
+    """
+    if not value:
+        return value
+    normalised = re.sub(r'[\s\-\.\(\)]', '', value)
+    # Auto-correct missing leading 0 (e.g. '9171234567' → '09171234567')
+    if re.match(r'^9\d{9}$', normalised):
+        normalised = '0' + normalised
+    if not _PH_CONTACT_RE.match(normalised):
+        # Silently clear instead of raising so legacy data does not block saves.
+        return ''
+    return normalised
 
 
 # ── 1. Sub-model serializers ───────────────────────────────────────────────────
@@ -87,6 +105,15 @@ class PersonalInfoSerializer(serializers.ModelSerializer):
     read-only from the user's perspective — they are excluded here.
     """
 
+    # Explicit CharField overrides so we can normalise legacy data before
+    # DRF's built-in field validators (and model-level RegexValidators) reject it.
+    gender = serializers.CharField(required=False, allow_blank=True, default='')
+    work_email = serializers.CharField(
+        max_length=254, required=False, allow_blank=True, default=''
+    )
+    birth_place = serializers.CharField(
+        max_length=150, required=False, allow_blank=True, default=''
+    )
     contact_number = serializers.CharField(
         max_length=15, required=False, allow_blank=True, default=''
     )
@@ -98,18 +125,48 @@ class PersonalInfoSerializer(serializers.ModelSerializer):
             'gender', 'birth_date', 'birth_place', 'contact_number',
         )
         extra_kwargs = {
-            'middle_name':    {'max_length': 50,  'required': False, 'allow_blank': True},
-            'nickname':       {'max_length': 50,  'required': False, 'allow_blank': True},
-            'work_email':     {'max_length': 254, 'required': False, 'allow_blank': True},
-            'gender':         {'required': False, 'allow_blank': True},
-            'birth_date':     {'required': False, 'allow_null': True},
-            'birth_place':    {'max_length': 150, 'required': False, 'allow_blank': True},
+            'middle_name': {'max_length': 50, 'required': False, 'allow_blank': True},
+            'nickname':    {'max_length': 50, 'required': False, 'allow_blank': True},
+            'birth_date':  {'required': False, 'allow_null': True},
         }
 
-    def validate_middle_name(self, v):   return _validate_no_special(v)
-    def validate_nickname(self, v):      return _validate_no_special(v)
-    def validate_birth_place(self, v):   return _validate_no_special(v)
+    def validate_gender(self, v: str) -> str:
+        """Normalise case ('Male'→'male') and validate against allowed choices."""
+        if not v:
+            return v
+        normalised = v.lower()
+        if normalised not in ('male', 'female'):
+            raise serializers.ValidationError('"male" or "female" expected.')
+        return normalised
+
+    def validate_work_email(self, v: str) -> str:
+        """Accept blank; silently clear placeholder text; validate real emails."""
+        if not v or not v.strip():
+            return ''
+        stripped = v.strip()
+        # Treat placeholder values as empty
+        if stripped.lower() in ('none', 'na', 'n/a', 'nil', '-', 'n.a.'):
+            return ''
+        # Reject obviously malformed values (no @, or more than one @)
+        if stripped.count('@') != 1:
+            return ''
+        return stripped
+
+    def validate_middle_name(self, v):    return _validate_no_special(v)
+    def validate_nickname(self, v):       return _validate_no_special(v)
+    def validate_birth_place(self, v):
+        # Strip blocked characters rather than raising so legacy data with
+        # stray brackets etc. does not prevent a save.
+        cleaned = re.sub(r'[<>{}\[\]\\|^~`"]', '', v) if v else v
+        return cleaned
     def validate_contact_number(self, v): return _validate_ph_contact(v) if v else v
+
+    def to_representation(self, instance):
+        """Always return gender in lowercase so the frontend Select matches."""
+        data = super().to_representation(instance)
+        if data.get('gender'):
+            data['gender'] = data['gender'].lower()
+        return data
 
 
 class SkillSerializer(serializers.ModelSerializer):
@@ -177,8 +234,13 @@ class ProvincialAddressSerializer(serializers.ModelSerializer):
 
 
 class EmergencyContactSerializer(serializers.ModelSerializer):
+    # Override fields that have model-level RegexValidators so legacy data with
+    # stray special characters or non-standard phone formats does not block saves.
     contact_number = serializers.CharField(
         max_length=15, required=False, allow_blank=True, default=''
+    )
+    address = serializers.CharField(
+        max_length=300, required=False, allow_blank=True, default=''
     )
 
     class Meta:
@@ -187,12 +249,12 @@ class EmergencyContactSerializer(serializers.ModelSerializer):
         extra_kwargs = {
             'name':         {'max_length': 100, 'required': False, 'allow_blank': True},
             'relationship': {'max_length': 50,  'required': False, 'allow_blank': True},
-            'address':      {'max_length': 300, 'required': False, 'allow_blank': True},
         }
 
     def validate_name(self, v):         return _validate_no_special(v)
     def validate_relationship(self, v): return _validate_no_special(v)
-    def validate_address(self, v):      return _validate_no_special(v)
+    def validate_address(self, v):
+        return re.sub(r'[<>{}\[\]\\|^~`"]', '', v) if v else v
     def validate_contact_number(self, v): return _validate_ph_contact(v) if v else v
 
 
@@ -376,33 +438,28 @@ class ProfileGetSerializer(serializers.Serializer):
     certificates       = serializers.SerializerMethodField()
 
     def get_avatar(self, obj) -> str | None:
-        request = self.context.get('request')
         av = obj['employee'].avatar
-        if not av:
-            return None
-        if request:
-            return request.build_absolute_uri(f'/media/{av}')
-        return f'/media/{av}'
+        return f'/media/{av}' if av else None
 
-    def get_work_info(self, obj) -> dict | None:
+    def get_work_info(self, obj) -> dict[Any, Any] | None:
         wi = obj.get('work_info')
         if wi is None:
             return None
-        return WorkInfoReadSerializer(wi, context=self.context).data
+        return cast(dict[Any, Any], WorkInfoReadSerializer(wi, context=self.context).data)
 
-    def get_skills(self, obj) -> list:
+    def get_skills(self, obj) -> list[Any]:
         user = obj['employee']
-        return SkillSerializer(
+        return cast(list[Any], SkillSerializer(
             Skill.objects.filter(employee=user), many=True
-        ).data
+        ).data)
 
-    def get_certificates(self, obj) -> list:
+    def get_certificates(self, obj) -> list[Any]:
         user = obj['employee']
-        return CertificateSimpleSerializer(
+        return cast(list[Any], CertificateSimpleSerializer(
             Certificate.objects.filter(employee=user).select_related('category'),
             many=True,
             context=self.context,
-        ).data
+        ).data)
 
     def to_representation(self, instance):
         # ``instance`` is expected to be the dict assembled by the view.

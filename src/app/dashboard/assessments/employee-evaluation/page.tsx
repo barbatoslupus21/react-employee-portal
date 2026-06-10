@@ -1723,7 +1723,7 @@ function EvalApprovalView() {
                             'text-sm font-semibold leading-snug truncate flex-1',
                             isSelected ? 'text-[#2845D6]' : 'text-[var(--color-text-primary)]',
                           )}>
-                            {item.employee_name}
+                            {item.employee_name}{item.employee_id_number ? ` (${item.employee_id_number})` : ''}
                           </p>
                           <div className="flex flex-wrap items-center gap-1 shrink-0">
                             {isReturned && !isPending && <StatusPill status="closed" label="Returned for Revision" />}

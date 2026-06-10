@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django.core.validators import MinValueValidator, MaxValueValidator, RegexValidator
 from django.db import models
 
@@ -326,7 +328,7 @@ class CompanyWorkdayConfiguration(models.Model):
     hours_per_day = models.DecimalField(
         max_digits=4,
         decimal_places=1,
-        default=8,
+        default=Decimal('8'),
         help_text='Configured number of working hours in one full leave day.',
     )
     weekday_durations = models.JSONField(

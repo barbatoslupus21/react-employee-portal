@@ -8,7 +8,7 @@ const API = '/api/mis';
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = { 'Content-Type': 'application/json', ...init?.headers };
-  const requestInit = {
+  const requestInit: RequestInit = {
     credentials: 'include',
     ...init,
     headers,

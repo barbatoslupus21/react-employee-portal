@@ -18,12 +18,21 @@ export async function GET(req: NextRequest) {
     return new NextResponse('Forbidden', { status: 403 });
   }
 
-  const djangoBase = process.env.DJANGO_BASE_URL ?? 'http://localhost:8000';
+  // Use the same backend URL as next.config.ts rewrites so this works in Docker
+  // (BACKEND_URL=http://backend:8000) and in local dev (defaults to 127.0.0.1:8000).
+  const djangoBase = process.env.BACKEND_URL ?? 'http://127.0.0.1:8000';
   const upstream = `${djangoBase}${filePath}`;
+
+  // Forward the JWT access-token cookie so ProtectedMediaView can authenticate.
+  const accessToken = req.cookies.get('access_token')?.value;
+  const cookieHeader = accessToken ? `access_token=${accessToken}` : '';
 
   let upstreamRes: Response;
   try {
-    upstreamRes = await fetch(upstream, { cache: 'no-store' });
+    upstreamRes = await fetch(upstream, {
+      cache: 'no-store',
+      headers: cookieHeader ? { cookie: cookieHeader } : {},
+    });
   } catch {
     return new NextResponse('Failed to fetch file from backend', { status: 502 });
   }

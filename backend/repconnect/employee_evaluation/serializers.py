@@ -70,10 +70,14 @@ class EmployeeTasklistSerializer(serializers.ModelSerializer):
         ]
 
     def get_employee_id_number(self, obj):
-        return getattr(obj.employee, 'id_number', None) or getattr(obj.employee, 'username', '')
+        return getattr(obj.employee, 'idnumber', None) or obj.employee.username
 
     def get_employee_name(self, obj):
-        return obj.employee.get_full_name() or obj.employee.username
+        u = obj.employee
+        last = getattr(u, 'lastname', None) or ''
+        first = getattr(u, 'firstname', None) or ''
+        name = f'{last}, {first}'.strip(', ')
+        return name if name else (getattr(u, 'idnumber', None) or u.username)
 
     def get_department(self, obj):
         from userProfile.models import workInformation
@@ -96,7 +100,7 @@ class EmployeeTasklistAdminListSerializer(serializers.ModelSerializer):
         ]
 
     def get_employee_id_number(self, obj):
-        return getattr(obj.employee, 'id_number', None) or getattr(obj.employee, 'username', '')
+        return getattr(obj.employee, 'idnumber', None) or obj.employee.username
 
     def get_employee_name(self, obj):
         first = getattr(obj.employee, 'firstname', None) or getattr(obj.employee, 'first_name', '')
@@ -122,7 +126,7 @@ class EmployeeTasklistUserAdminListSerializer(serializers.Serializer):
     updated_at = serializers.DateTimeField(allow_null=True)
 
     def get_employee_id_number(self, obj):
-        return getattr(obj, 'id_number', None) or getattr(obj, 'username', '')
+        return getattr(obj, 'idnumber', None) or obj.username
 
     def get_employee_name(self, obj):
         first = getattr(obj, 'firstname', None) or getattr(obj, 'first_name', '')
@@ -273,7 +277,11 @@ class EvaluationEntryAdminSerializer(serializers.ModelSerializer):
         ]
 
     def get_employee_name(self, obj):
-        return obj.employee.get_full_name() or obj.employee.username
+        u = obj.employee
+        last = getattr(u, 'lastname', None) or ''
+        first = getattr(u, 'firstname', None) or ''
+        name = f'{last}, {first}'.strip(', ')
+        return name if name else (getattr(u, 'idnumber', None) or u.username)
 
 
 def _build_period_labels(frequency: str) -> list:
@@ -325,10 +333,14 @@ class EvalApproverQueueItemSerializer(serializers.ModelSerializer):
         return None
 
     def get_employee_name(self, obj):
-        return obj.employee.get_full_name() or obj.employee.username
+        u = obj.employee
+        last = getattr(u, 'lastname', None) or ''
+        first = getattr(u, 'firstname', None) or ''
+        name = f'{last}, {first}'.strip(', ')
+        return name if name else (getattr(u, 'idnumber', None) or u.username)
 
     def get_employee_id_number(self, obj):
-        return getattr(obj.employee, 'id_number', None) or getattr(obj.employee, 'username', '')
+        return getattr(obj.employee, 'idnumber', None) or obj.employee.username
 
     def get_department(self, obj):
         from userProfile.models import workInformation
@@ -414,10 +426,14 @@ class EvalApproverEntryDetailSerializer(serializers.ModelSerializer):
         return None
 
     def get_employee_name(self, obj):
-        return obj.employee.get_full_name() or obj.employee.username
+        u = obj.employee
+        last = getattr(u, 'lastname', None) or ''
+        first = getattr(u, 'firstname', None) or ''
+        name = f'{last}, {first}'.strip(', ')
+        return name if name else (getattr(u, 'idnumber', None) or u.username)
 
     def get_employee_id_number(self, obj):
-        return getattr(obj.employee, 'id_number', None) or getattr(obj.employee, 'username', '')
+        return getattr(obj.employee, 'idnumber', None) or obj.employee.username
 
     def get_department(self, obj):
         from userProfile.models import workInformation

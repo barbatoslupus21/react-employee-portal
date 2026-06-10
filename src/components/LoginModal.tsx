@@ -120,6 +120,8 @@ export default function LoginModal({ open, onClose }: LoginModalProps) {
         } else {
           setError({ message: data.detail ?? "Access denied." });
         }
+      } else if (res.status === 401 && data.code === "wrong_password") {
+        setError({ message: "Incorrect Password" });
       } else {
         setError({ message: "Invalid ID number or password." });
       }
@@ -144,16 +146,17 @@ export default function LoginModal({ open, onClose }: LoginModalProps) {
           exit={{ opacity: 0 }}
           transition={{ duration: 0.25, ease: "easeOut" }}
           onClick={onClose}
-          className="fixed inset-0 z-[90] flex items-center justify-center
-            bg-[var(--color-modal-overlay)] backdrop-blur-md p-4"
+          className="fixed inset-0 z-[90] overflow-y-auto
+            bg-[var(--color-modal-overlay)] backdrop-blur-md"
         >
+          <div className="flex min-h-full items-center justify-center p-4 sm:p-6">
           <motion.div
             initial={{ opacity: 0, scale: 0.92 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.92 }}
             transition={{ duration: 0.25, ease: "easeOut" }}
             onClick={(e) => e.stopPropagation()}
-            className="relative w-full max-w-sm rounded-2xl border
+            className="relative w-full max-w-sm mx-auto rounded-2xl border
               border-[var(--color-border)] bg-[var(--color-bg-elevated)]
               shadow-2xl overflow-hidden"
           >
@@ -173,7 +176,7 @@ export default function LoginModal({ open, onClose }: LoginModalProps) {
             <div className="p-8">
               {/* Logo */}
               <div className="mb-8 text-center">
-                <span className="text-lg font-black tracking-tight">
+                <span className="text-2xl font-black tracking-tight">
                   <span className="text-[#2845D6]">REP</span>
                   <span className="text-filled text-[var(--color-text-primary)]">
                     Connect
@@ -194,8 +197,8 @@ export default function LoginModal({ open, onClose }: LoginModalProps) {
                     exit={{ opacity: 0, y: -6 }}
                     transition={{ duration: 0.2 }}
                     className={error.code === "account_locked"
-                      ? "mb-4 flex items-start gap-2.5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-700/40 dark:bg-amber-950/30 dark:text-amber-300"
-                      : "mb-4 flex items-start gap-2.5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800/40 dark:bg-red-950/30 dark:text-red-400"}
+                      ? "mb-4 flex items-start gap-2.5 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-800 dark:border-amber-700/40 dark:bg-amber-950/30 dark:text-amber-300"
+                      : "mb-4 flex items-start gap-2.5 rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-xs text-red-700 dark:border-red-800/40 dark:bg-red-950/30 dark:text-red-400"}
                   >
                     {error.code === "account_locked"
                       ? <Lock size={16} className="mt-0.5 shrink-0" />
@@ -210,7 +213,7 @@ export default function LoginModal({ open, onClose }: LoginModalProps) {
                 <div>
                   <label
                     htmlFor="login-idnumber"
-                    className="mb-1.5 block text-xs font-medium
+                    className="mb-1.5 block text-[11px] font-semibold
                       text-[var(--color-text-muted)] uppercase tracking-wider"
                   >
                     ID Number
@@ -224,8 +227,8 @@ export default function LoginModal({ open, onClose }: LoginModalProps) {
                     onChange={(e) => setIdnumber(e.target.value)}
                     disabled={loading}
                     required
-                    className="w-full rounded-xl border border-[var(--color-border)]
-                      bg-[var(--color-bg-card)] px-4 py-3 text-sm
+                    className="w-full rounded-lg border border-[var(--color-border)]
+                      bg-[var(--color-bg-card)] px-4 py-3 text-xs
                       text-[var(--color-text-primary)]
                       placeholder:text-[var(--color-text-muted)]
                       focus:border-[#2845D6] focus:outline-none
@@ -238,7 +241,7 @@ export default function LoginModal({ open, onClose }: LoginModalProps) {
                 <div>
                   <label
                     htmlFor="login-password"
-                    className="mb-1.5 block text-xs font-medium
+                    className="mb-1.5 block text-[11px] font-semibold
                       text-[var(--color-text-muted)] uppercase tracking-wider"
                   >
                     Password
@@ -253,8 +256,8 @@ export default function LoginModal({ open, onClose }: LoginModalProps) {
                       onChange={(e) => setPassword(e.target.value)}
                       disabled={loading}
                       required
-                      className="w-full rounded-xl border border-[var(--color-border)]
-                        bg-[var(--color-bg-card)] px-4 py-3 pr-12 text-sm
+                      className="w-full rounded-lg border border-[var(--color-border)]
+                        bg-[var(--color-bg-card)] px-4 py-3 pr-12 text-xs
                         text-[var(--color-text-primary)]
                         placeholder:text-[var(--color-text-muted)]
                         focus:border-[#2845D6] focus:outline-none
@@ -281,7 +284,7 @@ export default function LoginModal({ open, onClose }: LoginModalProps) {
                 <button
                   type="submit"
                   disabled={loading || !idnumber.trim() || !password}
-                  className="mt-2 w-full rounded-full bg-[#2845D6] py-3 text-sm
+                  className="mt-2 w-full rounded-lg bg-[#2845D6] py-3 text-xs
                     font-semibold text-white transition-all duration-200
                     hover:bg-[#1e38b0] active:scale-[0.98]
                     disabled:opacity-70 disabled:cursor-not-allowed
@@ -296,6 +299,7 @@ export default function LoginModal({ open, onClose }: LoginModalProps) {
               </form>
             </div>
           </motion.div>
+          </div>
         </motion.div>
       )}
     </AnimatePresence>

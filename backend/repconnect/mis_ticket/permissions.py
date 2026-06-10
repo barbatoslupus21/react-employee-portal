@@ -6,7 +6,7 @@ class IsMISAdmin(BasePermission):
 
     message = 'MIS administrator access required.'
 
-    def has_permission(self, request, view):
+    def has_permission(self, request, view) -> bool:  # type: ignore[override]
         return bool(
             request.user
             and request.user.is_authenticated

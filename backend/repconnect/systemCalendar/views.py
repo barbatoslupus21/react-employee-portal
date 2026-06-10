@@ -2,6 +2,7 @@ import calendar as _calendar
 import datetime
 import io
 import logging
+import re
 from typing import cast
 
 from django.db import transaction
@@ -170,13 +171,17 @@ def _build_template_wb() -> Workbook:
 
     ws.row_dimensions[1].height = 22
 
-    # Sample data row
-    sample = ['EMP-001', 'Juan Dela Cruz', '08/15/2025 9:00:00 AM', 'IN']
-    for col_idx, value in enumerate(sample, 1):
-        cell = ws.cell(row=2, column=col_idx, value=value)
-        cell.font      = _NORMAL_FONT
-        cell.alignment = _LEFT
-        cell.border    = _BORDER
+    # Sample data rows (demonstrate both accepted AM/PM formats)
+    samples = [
+        ['EMP-001', 'Juan Dela Cruz', '08/15/2025 9:00:00 AM', 'IN'],
+        ['EMP-001', 'Juan Dela Cruz', '08/15/2025 6:00:00pm', 'OUT'],
+    ]
+    for row_idx, sample in enumerate(samples, start=2):
+        for col_idx, value in enumerate(sample, 1):
+            cell = ws.cell(row=row_idx, column=col_idx, value=value)
+            cell.font      = _NORMAL_FONT
+            cell.alignment = _LEFT
+            cell.border    = _BORDER
 
     # Data validation on Entry column (col D = 4), row 2 onwards
     dv = DataValidation(
@@ -321,7 +326,7 @@ class TimelogsCompletenessView(APIView):
             return Response(data)
 
         # Fetch all timelogs for all target employees for the week (+ 1-day buffer)
-        tz = timezone.get_current_timezone()
+        tz = timezone.get_default_timezone()  # always Asia/Manila from settings
         range_start = timezone.make_aware(
             datetime.datetime.combine(week_start - datetime.timedelta(days=1), datetime.time.min), tz)
         range_end = timezone.make_aware(
@@ -561,8 +566,10 @@ class TimelogsUploadView(APIView):
                 parsed_dt = dt_val
             else:
                 dt_str = str(dt_val).strip()
+                # Normalize: ensure space before AM/PM and uppercase (accepts "9:00:00am", "9:00:00 am", etc.)
+                dt_str_norm = re.sub(r'\s*(am|pm)\s*$', lambda m: ' ' + m.group(1).upper(), dt_str, flags=re.IGNORECASE)
                 try:
-                    parsed_dt = datetime.datetime.strptime(dt_str, _DATE_FORMAT_STR)
+                    parsed_dt = datetime.datetime.strptime(dt_str_norm, _DATE_FORMAT_STR)
                 except ValueError:
                     errors.append((row_idx, 3, f'Invalid format "{dt_str}". Expected MM/DD/YYYY H:MM:SS AM/PM.'))
                     row_errors = True
@@ -606,10 +613,11 @@ class TimelogsUploadView(APIView):
                     active=True,
                 )
             }
+            manila_tz = timezone.get_default_timezone()
             Timelogs.objects.bulk_create([
                 Timelogs(
                     employee=user_map[r['idnumber']],
-                    time=timezone.make_aware(r['time']) if timezone.is_naive(r['time']) else r['time'],
+                    time=timezone.make_aware(r['time'], manila_tz) if timezone.is_naive(r['time']) else r['time'],
                     entry=r['entry'],
                 )
                 for r in parsed
@@ -623,7 +631,8 @@ class TimelogsUploadView(APIView):
 def _build_error_workbook(source_ws, errors: list[tuple[int, int, str]]) -> Workbook:
     """
     Copy the source worksheet into a new workbook and mark each invalid cell
-    with a red fill + bold red font.  The header row is re-styled normally.
+    with a red fill + bold red font.  Adds a Remarks column (col 5) with the
+    combined error messages for each invalid row.
     """
     wb_out = _build_template_wb()
     ws_out = wb_out.active
@@ -632,11 +641,22 @@ def _build_error_workbook(source_ws, errors: list[tuple[int, int, str]]) -> Work
     # Map (row, col) → error reason for fast lookup
     error_map: dict[tuple[int, int], str] = {(r, c): msg for r, c, msg in errors}
 
-    headers = ['ID Number', 'Employee', 'Date and Time', 'Entry']
+    # Per-row remarks: collect all error messages for each row
+    row_remarks: dict[int, list[str]] = {}
+    for r, _c, msg in errors:
+        row_remarks.setdefault(r, []).append(msg)
+
+    # Add Remarks header at column 5
+    remarks_header = ws_out.cell(row=1, column=5, value='Remarks')
+    remarks_header.font      = _HEADER_FONT
+    remarks_header.fill      = _HEADER_FILL
+    remarks_header.alignment = _CENTER
+    remarks_header.border    = _BORDER
+    ws_out.column_dimensions[get_column_letter(5)].width = 55
 
     # Re-write all data rows from source (skip header = row 1)
     for row in source_ws.iter_rows(min_row=2, values_only=True):
-        ws_out.append([''] * 4)   # placeholder — we'll set values below
+        ws_out.append([''] * 5)   # placeholder — we'll set values below
 
     for row_idx, row in enumerate(source_ws.iter_rows(min_row=2, values_only=True), start=2):
         for col_idx, value in enumerate(row[:4], start=1):
@@ -651,6 +671,18 @@ def _build_error_workbook(source_ws, errors: list[tuple[int, int, str]]) -> Work
             else:
                 cell.font      = _NORMAL_FONT
                 cell.alignment = _LEFT
+
+        # Remarks column (col 5)
+        row_msgs = row_remarks.get(row_idx, [])
+        remarks_text = '; '.join(row_msgs)
+        remarks_cell = ws_out.cell(row=row_idx, column=5, value=remarks_text)
+        remarks_cell.border    = _BORDER
+        remarks_cell.alignment = _LEFT
+        if row_msgs:
+            remarks_cell.fill = _ERROR_FILL
+            remarks_cell.font = _ERROR_FONT
+        else:
+            remarks_cell.font = _NORMAL_FONT
 
     return wb_out
 
@@ -716,7 +748,7 @@ class TimelogDailyStatusView(APIView):
         # ── Fetch timelogs ──────────────────────────────────────────────────
         # Extend range by 1 day on each side so night-shift OUTs that fall
         # just after midnight on the first/last day of the month are captured.
-        tz          = timezone.get_current_timezone()
+        tz          = timezone.get_default_timezone()  # always Asia/Manila from settings
         fetch_start = first_day - datetime.timedelta(days=1)
         fetch_end   = last_day  + datetime.timedelta(days=1)
         range_start = timezone.make_aware(
@@ -740,6 +772,12 @@ class TimelogDailyStatusView(APIView):
         # Works for both day and night shifts without needing shift configuration.
         # The work-day date is anchored to the IN record's local date.
         MAX_PAIR_HOURS = 16
+        # Night shifts genuinely start at or after this local hour (17:00 / 5 PM).
+        # Cross-midnight pairs where the IN is earlier than this threshold are treated
+        # as a regular completed day (the most common cause is timelogs stored without
+        # UTC conversion — Manila times stored as UTC — making a 5 PM OUT appear as
+        # 1 AM the next day after the +8 h re-conversion on read).
+        NIGHTSHIFT_START_HOUR = 17
         work_days: dict[datetime.date, dict] = {}
         nightshift_dates: set[datetime.date] = set()
         used = [False] * len(local_logs)
@@ -760,7 +798,9 @@ class TimelogDailyStatusView(APIView):
                     break  # logs are chronological — no closer OUT exists
                 work_days[work_date]['out'] = True
                 out_date = local_logs[j]['dt'].date()
-                if out_date != work_date:
+                if out_date != work_date and rec['dt'].hour >= NIGHTSHIFT_START_HOUR:
+                    # OUT falls on the next calendar day AND the shift started in the evening
+                    # — genuine night shift.
                     work_days[work_date]['night_shift'] = True
                     nightshift_dates.add(work_date)
                     nightshift_dates.add(out_date)
@@ -925,9 +965,13 @@ class CalendarEventListCreateView(APIView):
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         member_scope = serializer.validated_data.pop('member_scope', 'selected')
-        member_ids = [member.id for member in serializer.validated_data.get('members', [])]
-        # serializer.save() returns CalendarEvent instance; ignore uncertain return type
-        event = serializer.save(owner=request.user)  # type: ignore[assignment]
+        if member_scope == 'all':
+            all_active = list(loginCredentials.objects.filter(active=True))
+            serializer.validated_data['members'] = all_active
+            member_ids = [u.id for u in all_active]
+        else:
+            member_ids = [member.id for member in serializer.validated_data.get('members', [])]
+        event = serializer.save(owner=request.user, member_scope=member_scope)  # type: ignore[assignment]
         _sync_participant_seen(cast(CalendarEvent, event), owner_id=request.user.id)
         _create_event_notifications(
             event=cast(CalendarEvent, event),
@@ -977,6 +1021,17 @@ class CalendarEventDetailView(APIView):
         }
         return Response(CalendarEventSerializer(event, context={'request': request, 'seen_map': seen_map}).data)
 
+    def _apply_member_scope(self, serializer, event=None):
+        """Pop member_scope, expand members if 'all', return (member_scope, save_kwargs)."""
+        member_scope = serializer.validated_data.pop('member_scope', None)
+        if member_scope is None:
+            # Not supplied — keep existing scope when editing
+            member_scope = getattr(event, 'member_scope', 'selected') if event else 'selected'
+        if member_scope == 'all':
+            all_active = list(loginCredentials.objects.filter(active=True))
+            serializer.validated_data['members'] = all_active
+        return member_scope
+
     @transaction.atomic
     def put(self, request, pk: int):
         event = self._get_object(pk, request.user, for_write=True)
@@ -985,8 +1040,8 @@ class CalendarEventDetailView(APIView):
         serializer = CalendarEventSerializer(event, data=request.data)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-        serializer.validated_data.pop('member_scope', None)
-        serializer.save()
+        member_scope = self._apply_member_scope(serializer, event)
+        serializer.save(member_scope=member_scope)
         _sync_participant_seen(event, owner_id=request.user.id)
         return Response(CalendarEventSerializer(event, context={'request': request}).data)
 
@@ -998,8 +1053,8 @@ class CalendarEventDetailView(APIView):
         serializer = CalendarEventSerializer(event, data=request.data, partial=True)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-        serializer.validated_data.pop('member_scope', None)
-        serializer.save()
+        member_scope = self._apply_member_scope(serializer, event)
+        serializer.save(member_scope=member_scope)
         _sync_participant_seen(event, owner_id=request.user.id)
         return Response(CalendarEventSerializer(event, context={'request': request}).data)
 
@@ -1048,6 +1103,15 @@ class CalendarEventUnseenCountView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    # Holiday/company-wide event types shared with all users — excluded from the badge
+    # because they are not personal notifications but system-wide calendar entries.
+    _BADGE_EXCLUDED_TYPES = {'legal', 'special', 'day_off', 'company'}
+
     def get(self, request):
-        unseen_count = EventParticipantSeen.objects.filter(user=request.user, seen=False).count()
+        unseen_count = (
+            EventParticipantSeen.objects
+            .filter(user=request.user, seen=False)
+            .exclude(event__event_type__in=self._BADGE_EXCLUDED_TYPES)
+            .count()
+        )
         return Response({'count': unseen_count})

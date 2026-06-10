@@ -36,7 +36,6 @@ class CalendarEventSerializer(serializers.ModelSerializer):
     member_scope = serializers.ChoiceField(
         choices=['all', 'selected'],
         required=False,
-        write_only=True,
     )
 
     def get_seen(self, obj) -> bool:

@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'motion/react';
 import { MultiSeriesChart, ChartSkeleton } from '@/components/ui/multi-series-chart';
@@ -52,6 +53,8 @@ interface UserData {
   firstname: string | null;
   lastname: string | null;
   admin: boolean;
+  hr: boolean;
+  accounting: boolean;
 }
 
 interface AdminPRFItem {
@@ -296,7 +299,7 @@ function ReviewPRFModal({
   const fmtShort = (iso: string) =>
     new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
-  return (
+  return createPortal(
     <motion.div
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
       transition={{ duration: 0.18 }}
@@ -459,7 +462,7 @@ function ReviewPRFModal({
         </div>
       </motion.div>
     </motion.div>
-  );
+  , document.body);
 }
 
 // ── Admin View Modal (non-pending — read-only) ─────────────────────────────────
@@ -478,7 +481,7 @@ function AdminViewPRFModal({
   const fmtShort = (iso: string) =>
     new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
-  return (
+  return createPortal(
     <motion.div
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
       transition={{ duration: 0.18 }}
@@ -602,7 +605,7 @@ function AdminViewPRFModal({
         </div>
       </motion.div>
     </motion.div>
-  );
+  , document.body);
 }
 
 // ── Admin Cancel Confirm Modal ─────────────────────────────────────────────────
@@ -797,7 +800,7 @@ function ExportModal({ onClose }: { onClose: () => void }) {
     }
   }
 
-  return (
+  return createPortal(
     <motion.div
       className="fixed inset-0 z-50 flex items-center justify-center"
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
@@ -928,7 +931,7 @@ function ExportModal({ onClose }: { onClose: () => void }) {
         </div>
       </motion.div>
     </motion.div>
-  );
+  , document.body);
 }
 
 // ── Main Page ──────────────────────────────────────────────────────────────────
@@ -952,7 +955,7 @@ export default function PRFAdminPage() {
       })
       .then(u => {
         if (!u) return;
-        if (!u.admin) { router.replace('/dashboard/pr-form'); return; }
+        if (!u.admin && !u.hr && !u.accounting) { router.replace('/dashboard/pr-form'); return; }
         setUser(u);
         const elapsed = Date.now() - checkingShownAt;
         const remaining = checkingShownAt === 0 ? 600 : Math.max(0, 600 - elapsed);

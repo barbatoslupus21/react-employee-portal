@@ -1343,46 +1343,43 @@ export default function MISTicketPage() {
           />
         )}
         {deleteTarget && (
-          <div key="delete-confirm" className="fixed inset-0 z-50">
-            <ConfirmationModal
-              title={`Delete "${deleteTarget.device_name}"?`}
-              message="This will permanently remove the device record. Existing tickets referencing this device will not be affected."
-              confirmLabel="Delete Device"
-              confirming={confirmingDelete}
-              onConfirm={() => handleDeleteDevice(deleteTarget)}
-              onCancel={() => setDeleteTarget(null)}
-            />
-          </div>
+          <ConfirmationModal
+            key="delete-confirm"
+            title={`Delete "${deleteTarget.device_name}"?`}
+            message="This will permanently remove the device record. Existing tickets referencing this device will not be affected."
+            confirmLabel="Delete Device"
+            confirming={confirmingDelete}
+            onConfirm={() => handleDeleteDevice(deleteTarget)}
+            onCancel={() => setDeleteTarget(null)}
+          />
         )}
         {openTicketsWarning && (
-          <div key="open-tickets-warn" className="fixed inset-0 z-50">
-            <ConfirmationModal
-              title={`This device has ${openTicketsWarning.count} open ticket(s)`}
-              message={`"${openTicketsWarning.device.device_name}" has ${openTicketsWarning.count} open or in-progress ticket(s). Deleting the device won't cancel those tickets, but the reference will be retained. Are you sure?`}
-              confirmLabel="Delete Anyway"
-              confirming={confirmingDelete}
-              onConfirm={() => {
-                handleDeleteDevice(openTicketsWarning.device, true);
-                setOpenTicketsWarning(null);
-              }}
-              onCancel={() => {
-                setOpenTicketsWarning(null);
-                setDeleteTarget(null);
-              }}
-            />
-          </div>
+          <ConfirmationModal
+            key="open-tickets-warn"
+            title={`This device has ${openTicketsWarning.count} open ticket(s)`}
+            message={`"${openTicketsWarning.device.device_name}" has ${openTicketsWarning.count} open or in-progress ticket(s). Deleting the device won't cancel those tickets, but the reference will be retained. Are you sure?`}
+            confirmLabel="Delete Anyway"
+            confirming={confirmingDelete}
+            onConfirm={() => {
+              handleDeleteDevice(openTicketsWarning.device, true);
+              setOpenTicketsWarning(null);
+            }}
+            onCancel={() => {
+              setOpenTicketsWarning(null);
+              setDeleteTarget(null);
+            }}
+          />
         )}
         {cancelTarget && (
-          <div key="cancel-ticket-confirm" className="fixed inset-0 z-50">
-            <ConfirmationModal
-              title={`Cancel ticket ${cancelTarget.ticket_number}?`}
-              message="This will mark the ticket as closed. This action requires confirmation."
-              confirmLabel="Cancel Ticket"
-              confirming={cancelTicket.isPending}
-              onConfirm={() => handleCancelTicket(cancelTarget)}
-              onCancel={() => setCancelTarget(null)}
-            />
-          </div>
+          <ConfirmationModal
+            key="cancel-ticket-confirm"
+            title={`Cancel ticket ${cancelTarget.ticket_number}?`}
+            message="This will mark the ticket as closed. This action requires confirmation."
+            confirmLabel="Cancel Ticket"
+            confirming={cancelTicket.isPending}
+            onConfirm={() => handleCancelTicket(cancelTarget)}
+            onCancel={() => setCancelTarget(null)}
+          />
         )}
       </AnimatePresence>
     </>

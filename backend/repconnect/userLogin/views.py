@@ -1,6 +1,7 @@
 import calendar
 import datetime
 import logging
+import os
 from datetime import timedelta
 
 from django.conf import settings
@@ -21,6 +22,7 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from activityLog.models import ActivityLog
 from .models import LoginAttempt
 from .permissions import IsEmployeeAdmin
 from .serializers import EmployeeAdminSerializer, LoginSerializer, UserSerializer
@@ -47,7 +49,19 @@ def _get_client_ip(request):
     return request.META.get('REMOTE_ADDR', '127.0.0.1')
 
 
-def _cookie_secure():
+def _cookie_secure() -> bool:
+    """
+    Return True only when the site is served over HTTPS.
+
+    Checks JWT_COOKIE_SECURE env var first so Docker deployments on HTTP
+    can set JWT_COOKIE_SECURE=False without needing DEBUG=True.
+    Falls back to `not settings.DEBUG` when the env var is absent.
+    """
+    env_val = os.environ.get('JWT_COOKIE_SECURE', '').strip().lower()
+    if env_val in ('false', '0', 'no'):
+        return False
+    if env_val in ('true', '1', 'yes'):
+        return True
     return not settings.DEBUG
 
 
@@ -56,7 +70,7 @@ def _set_auth_cookies(response, access, refresh):
     access_max = int(jwt['ACCESS_TOKEN_LIFETIME'].total_seconds())
     refresh_max = int(jwt['REFRESH_TOKEN_LIFETIME'].total_seconds())
     secure = _cookie_secure()
-    same_site = 'Lax' if settings.DEBUG else 'Strict'
+    same_site = 'Lax' if not secure else 'Strict'
 
     response.set_cookie(
         key=_ACCESS_COOKIE,
@@ -100,13 +114,27 @@ def _get_password_lockout_settings() -> tuple[bool, int]:
         return True, MAX_FAILED_ATTEMPTS
 
 
-def _lock_user_account(user):
-    """Lock a user account and persist lock timestamp."""
+def _lock_user_account(user, request=None):
+    """Lock a user account, persist lock timestamp, and write an activity log entry."""
     if user.locked:
         return
     user.locked = True
     user.locked_at = timezone.now()
     user.save(update_fields=['locked', 'locked_at'])
+    ip = None
+    if request:
+        xff = request.META.get('HTTP_X_FORWARDED_FOR', '')
+        ip = xff.split(',')[0].strip() if xff else request.META.get('REMOTE_ADDR')
+    ActivityLog.objects.create(
+        user=None,
+        username=user.idnumber or '',
+        employee_id=user.idnumber or '',
+        ip_address=ip,
+        module='user_management',
+        action=f'Account auto-locked (too many failed login attempts): {user.idnumber}',
+        http_method='POST',
+        endpoint='/api/auth/login',
+    )
 
 
 @method_decorator(ensure_csrf_cookie, name='dispatch')
@@ -131,11 +159,12 @@ class LoginView(APIView):
     POST /api/auth/login/
     Authenticates with username + password.
     Returns user data and sets JWT tokens in HttpOnly cookies.
-    Enforces max 5 failed attempts per IP per 15-minute window.
+    Enforces max N failed attempts per (IP + user) per 15-minute window.
+    Scoped per-user so shared NAT IPs don't cause collateral 429s for other users.
     """
     permission_classes = [AllowAny]
     # Global DRF throttle is intentionally disabled here — this view already
-    # enforces per-IP and per-user rate limiting via LoginAttempt DB records.
+    # enforces per-(IP+user) rate limiting via LoginAttempt DB records.
     # The global anon throttle (shared per IP) would fire before the custom
     # logic and produce confusing 429s in office environments with shared NAT IPs.
     throttle_classes = []
@@ -144,16 +173,34 @@ class LoginView(APIView):
         ip = _get_client_ip(request)
         lockout_enabled, max_failed_attempts = _get_password_lockout_settings()
 
-        # Rate-limit check
+        # Rate-limit check scoped to (IP + user) so that a shared-NAT office IP
+        # does not block unrelated users when one person exhausts their attempts.
+        # For unknown/non-existent usernames we scope to (IP + null-user) so the
+        # two failure buckets are kept separate and never bleed into each other.
         window_start = timezone.now() - timedelta(minutes=LOGIN_WINDOW_MINUTES)
-        recent_failures = LoginAttempt.objects.filter(
-            ip_address=ip,
-            created_at__gte=window_start,
-            was_successful=False,
-        ).count()
+        raw_username = ''
+        if isinstance(request.data, dict):
+            raw_username = str(request.data.get('username', '')).strip()
+
+        rate_limit_user = User.objects.filter(idnumber=raw_username).first() if raw_username else None
+        if rate_limit_user:
+            recent_failures = LoginAttempt.objects.filter(
+                ip_address=ip,
+                user=rate_limit_user,
+                created_at__gte=window_start,
+                was_successful=False,
+            ).count()
+        else:
+            # Unknown username — count only null-user attempts from this IP.
+            recent_failures = LoginAttempt.objects.filter(
+                ip_address=ip,
+                user__isnull=True,
+                created_at__gte=window_start,
+                was_successful=False,
+            ).count()
 
         if recent_failures >= max_failed_attempts:
-            logger.warning('login rate-limit hit ip=%s failures=%d', ip, recent_failures)
+            logger.warning('login rate-limit hit ip=%s username=%s failures=%d', ip, raw_username, recent_failures)
             return Response(
                 {'detail': 'Too many failed attempts. Please wait 15 minutes and try again.'},
                 status=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -175,7 +222,7 @@ class LoginView(APIView):
                 was_successful=False,
             ).count()
             if user_failures >= max_failed_attempts and not user_record.locked:
-                _lock_user_account(user_record)
+                _lock_user_account(user_record, request)
 
             if user_record.locked:
                 logger.warning('locked account login attempt username=%s ip=%s', username, ip)
@@ -204,7 +251,7 @@ class LoginView(APIView):
 
                 if lockout_enabled and not user_record.locked:
                     if user_record.failed_login_attempts >= max_failed_attempts:
-                        _lock_user_account(user_record)
+                        _lock_user_account(user_record, request)
                         logger.warning('account locked (per-user counter) username=%s ip=%s', username, ip)
                         return Response(
                             {
@@ -221,7 +268,7 @@ class LoginView(APIView):
                     was_successful=False,
                 ).count()
                 if failures_after_attempt >= max_failed_attempts:
-                    _lock_user_account(user_record)
+                    _lock_user_account(user_record, request)
                     logger.warning('account locked username=%s ip=%s', username, ip)
                     return Response(
                         {
@@ -369,7 +416,7 @@ class UserListView(APIView):
     def get(self, request):
         query = request.GET.get('q', '').strip()
         qs = User.objects.filter(active=True).exclude(
-            Q(admin=True) & (Q(hr=True) | Q(accounting=True))
+            Q(admin=True) | Q(accounting=True) | Q(hr=True)
         ).order_by('firstname', 'lastname')
 
         if query:
@@ -377,9 +424,7 @@ class UserListView(APIView):
                 Q(firstname__icontains=query)
                 | Q(lastname__icontains=query)
                 | Q(idnumber__icontains=query)
-            )[:50]
-        else:
-            qs = qs[:200]
+            )
 
         data = [
             {
@@ -387,11 +432,7 @@ class UserListView(APIView):
                 'idnumber': u.idnumber,
                 'firstname': u.firstname,
                 'lastname': u.lastname,
-                'avatar': (
-                    request.build_absolute_uri(u.avatar.url)
-                    if u.avatar and u.avatar.name
-                    else None
-                ),
+                'avatar': (u.avatar.url if u.avatar and u.avatar.name else None),
             }
             for u in qs
         ]
@@ -578,6 +619,22 @@ class EmployeeAdminStatusView(APIView):
         if action == 'unlock':
             save_fields = ['active', 'locked', 'failed_login_attempts', 'last_failed_attempt']
         target.save(update_fields=save_fields)
+
+        if action in ('lock', 'unlock'):
+            actor = request.user
+            xff = request.META.get('HTTP_X_FORWARDED_FOR', '')
+            ip = xff.split(',')[0].strip() if xff else request.META.get('REMOTE_ADDR')
+            action_verb = 'locked' if action == 'lock' else 'unlocked'
+            ActivityLog.objects.create(
+                user=actor,
+                username=actor.idnumber or '',
+                employee_id=actor.idnumber or '',
+                ip_address=ip or None,
+                module='user_management',
+                action=f'Admin {action_verb} account: {target.idnumber}',
+                http_method=request.method,
+                endpoint=request.path,
+            )
 
         result = {
             'id':     target.pk,
@@ -908,11 +965,13 @@ class EmployeeAdminImportView(APIView):
     """
     POST /api/auth/admin/employees/import  (multipart/form-data, field: file)
 
-    Accepts XLSX, XLS, or CSV files.  All 8 columns are required in every row.
+    Accepts XLSX, XLS, or CSV files.  All columns are required in every row.
 
     Expected columns (row 1 = header, ignored):
       A: ID Number   B: First Name   C: Last Name   D: Email
       E: Department  F: Line         G: Employment Type  H: Date Hired (MM/DD/YYYY)
+      I: Position    J: TIN Number   K: SSS Number  L: HDMF Number
+      M: Philhealth Number  N: Bank Account
 
     Behaviour
     ---------
@@ -933,7 +992,7 @@ class EmployeeAdminImportView(APIView):
     """
     permission_classes = [IsAuthenticated, IsEmployeeAdmin]
 
-    def post(self, request) -> Response:
+    def post(self, request):
 
         uploaded = request.FILES.get('file')
         if not uploaded:
@@ -947,7 +1006,7 @@ class EmployeeAdminImportView(APIView):
             )
 
         # ── Parse file into list-of-lists ───────────────────────────────────
-        raw_rows: list[list[str]] = []
+        raw_rows: list[list] = []
         try:
             if ext == 'csv':
                 import csv as _csv
@@ -960,7 +1019,8 @@ class EmployeeAdminImportView(APIView):
                 wb = openpyxl.load_workbook(uploaded, data_only=True)
                 ws = wb.active
                 for row in ws.iter_rows(values_only=True):
-                    raw_rows.append([str(c).strip() if c is not None else '' for c in row])
+                    # Keep native cell types so date/datetime cells are parsed reliably.
+                    raw_rows.append([c if c is not None else '' for c in row])
         except Exception as exc:
             logger.error('Employee import parse error: %s', exc)
             return Response(
@@ -977,33 +1037,64 @@ class EmployeeAdminImportView(APIView):
         data_rows = raw_rows[1:]  # skip header
 
         # ── Prefetch master-data lookup tables ──────────────────────────────
-        from generalsettings.models import Department, EmploymentType, Line
+        from generalsettings.models import Department, EmploymentType, Line, Position
         dept_lookup: dict[str, int]   = {d.name.lower(): d.pk for d in Department.objects.all()}
         line_lookup: dict[str, int]   = {l.name.lower(): l.pk for l in Line.objects.all()}
         etype_lookup: dict[str, int]  = {e.name.lower(): e.pk for e in EmploymentType.objects.all()}
+        pos_lookup: dict[str, int]    = {p.name.lower(): p.pk for p in Position.objects.all()}
         existing_ids: set[str]        = set(User.objects.values_list('idnumber', flat=True))
 
         # ── Column indices ──────────────────────────────────────────────────
-        COL_IDNUMBER  = 0
-        COL_FIRSTNAME = 1
-        COL_LASTNAME  = 2
-        COL_EMAIL     = 3
-        COL_DEPT      = 4
-        COL_LINE      = 5
-        COL_ETYPE     = 6
-        COL_HIRED     = 7
-        NCOLS         = 8
+        COL_IDNUMBER   = 0
+        COL_FIRSTNAME  = 1
+        COL_LASTNAME   = 2
+        COL_EMAIL      = 3
+        COL_DEPT       = 4
+        COL_LINE       = 5
+        COL_ETYPE      = 6
+        COL_HIRED      = 7
+        COL_POSITION   = 8
+        COL_TIN        = 9
+        COL_SSS        = 10
+        COL_HDMF       = 11
+        COL_PHILHEALTH = 12
+        COL_BANK       = 13
+        NCOLS          = 14
 
         import re as _re
         _EMAIL_RE = _re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', _re.IGNORECASE)
 
-        def _parse_date(raw: str):
-            """Try MM/DD/YYYY then YYYY-MM-DD. Returns date or None."""
-            for fmt in ('%m/%d/%Y', '%Y-%m-%d', '%d/%m/%Y'):
+        def _to_text(value) -> str:
+            return str(value).strip() if value is not None else ''
+
+        def _parse_date(raw):
+            """Accept Excel date/datetime cells and common date string formats."""
+            if isinstance(raw, datetime.datetime):
+                return raw.date()
+            if isinstance(raw, datetime.date):
+                return raw
+
+            raw_text = _to_text(raw)
+            if not raw_text:
+                return None
+
+            for fmt in (
+                '%m/%d/%Y',
+                '%Y-%m-%d',
+                '%d/%m/%Y',
+                '%Y-%m-%d %H:%M:%S',
+                '%Y-%m-%d %H:%M:%S.%f',
+            ):
                 try:
-                    return datetime.datetime.strptime(raw.strip(), fmt).date()
+                    return datetime.datetime.strptime(raw_text, fmt).date()
                 except ValueError:
                     continue
+
+            try:
+                return datetime.datetime.fromisoformat(raw_text).date()
+            except ValueError:
+                return None
+
             return None
 
         # ── Validate every row ──────────────────────────────────────────────
@@ -1017,14 +1108,21 @@ class EmployeeAdminImportView(APIView):
             padded = list(raw) + [''] * max(0, NCOLS - len(raw))
             errs: dict[int, str] = {}
 
-            idnumber    = padded[COL_IDNUMBER ].strip()
-            firstname   = padded[COL_FIRSTNAME].strip()
-            lastname    = padded[COL_LASTNAME ].strip()
-            email       = padded[COL_EMAIL    ].strip()
-            dept_raw    = padded[COL_DEPT     ].strip()
-            line_raw    = padded[COL_LINE     ].strip()
-            etype_raw   = padded[COL_ETYPE    ].strip()
-            hired_raw   = padded[COL_HIRED    ].strip()
+            idnumber     = _to_text(padded[COL_IDNUMBER])
+            firstname    = _to_text(padded[COL_FIRSTNAME])
+            lastname     = _to_text(padded[COL_LASTNAME])
+            email        = _to_text(padded[COL_EMAIL])
+            dept_raw     = _to_text(padded[COL_DEPT])
+            line_raw     = _to_text(padded[COL_LINE])
+            etype_raw    = _to_text(padded[COL_ETYPE])
+            hired_cell   = padded[COL_HIRED]
+            hired_raw    = _to_text(hired_cell)
+            pos_raw      = _to_text(padded[COL_POSITION])
+            tin_raw      = _to_text(padded[COL_TIN])
+            sss_raw      = _to_text(padded[COL_SSS])
+            hdmf_raw     = _to_text(padded[COL_HDMF])
+            philhealth_raw = _to_text(padded[COL_PHILHEALTH])
+            bank_raw     = _to_text(padded[COL_BANK])
 
             # Required fields
             if not idnumber:
@@ -1069,21 +1167,50 @@ class EmployeeAdminImportView(APIView):
 
             hired_date = None
             if hired_raw:
-                hired_date = _parse_date(hired_raw)
+                hired_date = _parse_date(hired_cell)
                 if hired_date is None:
                     errs[COL_HIRED] = f'Date Hired "{hired_raw}" must be MM/DD/YYYY.'
+
+            pos_id: int | None = None
+            if not pos_raw:
+                errs[COL_POSITION] = 'Position is required.'
+            elif pos_raw.lower() not in pos_lookup:
+                errs[COL_POSITION] = f'Position "{pos_raw}" does not exist.'
+            else:
+                pos_id = pos_lookup[pos_raw.lower()]
+
+            if not tin_raw:
+                errs[COL_TIN] = 'TIN Number is required.'
+
+            if not sss_raw:
+                errs[COL_SSS] = 'SSS Number is required.'
+
+            if not hdmf_raw:
+                errs[COL_HDMF] = 'HDMF Number is required.'
+
+            if not philhealth_raw:
+                errs[COL_PHILHEALTH] = 'Philhealth Number is required.'
+
+            if not bank_raw:
+                errs[COL_BANK] = 'Bank Account is required.'
 
             row_errors.append(errs)
             if not errs:
                 valid_rows.append({
-                    'idnumber':  idnumber,
-                    'firstname': firstname,
-                    'lastname':  lastname,
-                    'email':     email,
-                    'dept_id':   dept_id,
-                    'line_id':   line_id,
-                    'etype_id':  etype_id,
-                    'hired':     hired_date,
+                    'idnumber':    idnumber,
+                    'firstname':   firstname,
+                    'lastname':    lastname,
+                    'email':       email,
+                    'dept_id':     dept_id,
+                    'line_id':     line_id,
+                    'etype_id':    etype_id,
+                    'hired':       hired_date,
+                    'pos_id':      pos_id,
+                    'tin':         tin_raw,
+                    'sss':         sss_raw,
+                    'hdmf':        hdmf_raw,
+                    'philhealth':  philhealth_raw,
+                    'bank':        bank_raw,
                 })
 
         # ── Build error report if any row has errors ────────────────────────
@@ -1093,8 +1220,8 @@ class EmployeeAdminImportView(APIView):
             from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
             from openpyxl.utils import get_column_letter
 
-            RED_FONT    = Font(color='FF0000', bold=False)
-            GREY_FONT   = Font(color='888888')
+            RED_FONT    = Font(color='FFFF0000', bold=False)
+            GREY_FONT   = Font(color='FF888888')
             HEADER_FONT = Font(bold=True, color='FF000000')
             HEADER_FILL = PatternFill(fill_type='solid', fgColor='FFDBE5FF')
             BORDER_SIDE = Side(style='thin', color='FF000000')
@@ -1111,7 +1238,9 @@ class EmployeeAdminImportView(APIView):
 
             # Header row (original headers + Remarks)
             hdr = ['ID Number', 'First Name', 'Last Name', 'Email',
-                   'Department', 'Line', 'Employment Type', 'Date Hired', 'Remarks']
+                   'Department', 'Line', 'Employment Type', 'Date Hired',
+                   'Position', 'TIN Number', 'SSS Number', 'HDMF Number',
+                   'Philhealth Number', 'Bank Account', 'Remarks']
             ws_out.append(hdr)
             for col_idx, _ in enumerate(hdr, start=1):
                 cell = ws_out.cell(row=1, column=col_idx)
@@ -1189,19 +1318,26 @@ class EmployeeAdminImportView(APIView):
                     email     = row['email'],
                     active    = True,
                     locked    = False,
+                    change_password = True,
                 )
                 user.set_password(f'Repco_{idnumber}')
                 user.save()
 
                 if row['dept_id']:
                     workInformation.objects.create(
-                        employee          = user,
-                        office            = default_office,
-                        shift             = default_shift,
-                        department_id     = row['dept_id'],
-                        line_id           = row['line_id'],
-                        employment_type_id= row['etype_id'],
-                        date_hired        = row['hired'],
+                        employee           = user,
+                        office             = default_office,
+                        shift              = default_shift,
+                        department_id      = row['dept_id'],
+                        line_id            = row['line_id'],
+                        employment_type_id = row['etype_id'],
+                        date_hired         = row['hired'],
+                        position_id        = row['pos_id'],
+                        tin_number         = row['tin'],
+                        sss_number         = row['sss'],
+                        hdmf_number        = row['hdmf'],
+                        philhealth_number  = row['philhealth'],
+                        bank_account       = row['bank'],
                     )
                 created_count += 1
 
@@ -1230,7 +1366,7 @@ class EmployeeAdminExportView(APIView):
     """
     permission_classes = [IsAuthenticated, IsEmployeeAdmin]
 
-    def post(self, request) -> Response:
+    def post(self, request):
 
         export_type = str(request.data.get('type', '')).strip()
         if export_type not in ('personal_info', 'work_info', 'summary', 'all'):
@@ -1292,7 +1428,8 @@ class EmployeeAdminExportView(APIView):
             return ', '.join(parts)
 
         wb = openpyxl.Workbook()
-        wb.remove(wb.active)          # discard default blank sheet
+        if wb.active is not None:
+            wb.remove(wb.active)      # discard default blank sheet
 
         # ── Personal Information + Emergency Contact sheets ───────────────────
         if export_type in ('personal_info', 'all'):

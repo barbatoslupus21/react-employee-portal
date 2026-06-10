@@ -253,13 +253,10 @@ def _resolve_rule_middle_steps(
             step_target_names = ', '.join(
                 step.target_positions.values_list('name', flat=True)
             )
-            raise ValidationError(
-                f'Leave request cannot be submitted: routing rule "{rule.description}" '
-                f'step {step.step_order} requires an approver with position '
-                f'[{step_target_names}] but no matching person was found in the '
-                f'approver chain of employee {employee}. '
-                'Please contact the system administrator to update the routing rule '
-                'or the approver chain.'
+            logger.warning(
+                'leave.routing: step %d of rule "%s" unresolvable for employee_id=%d '
+                '(positions [%s] not found in approver chain) — step skipped',
+                step.step_order, rule.description, employee.pk, step_target_names,
             )
 
     return resolved
@@ -331,6 +328,7 @@ def build_approval_chain(leave_request):
 
     # ── Determine which routing path to use ──────────────────────────────
     employee_position_id: int | None = None
+    emp_work = None
     try:
         emp_work = (
             workInformation.objects

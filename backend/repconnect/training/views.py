@@ -380,7 +380,7 @@ class TrainingAdminListCreateView(APIView):
                 return Response({'template_id': 'Template not found.'}, status=http_status.HTTP_400_BAD_REQUEST)
 
         training = Training.objects.create(
-            **data,
+            **data,  # type: ignore[arg-type]
             template=template,
             created_by=request.user,
         )
@@ -465,8 +465,8 @@ class TrainingAdminDetailView(APIView):
                 template = SurveyTemplate.objects.get(pk=template_id)
             except SurveyTemplate.DoesNotExist:
                 return Response({'template_id': 'Template not found.'}, status=http_status.HTTP_400_BAD_REQUEST)
-            if template != training.template:
-                # Replace questions
+            # Re-copy if template changed OR if questions were never copied (0 questions with a template)
+            if template != training.template or not training.questions.exists():
                 training.questions.all().delete()
                 training.template = template
                 _deep_copy_template_questions(training, template)
@@ -681,7 +681,10 @@ class TrainingDetailUserView(APIView):
                         'remarks': step.final_remarks or '',
                     })
 
-        approval_status = submission.status if submission else None
+        # Only expose approval status once formally submitted (is_complete=True).
+        # A pending submission (auto-saved answers, not yet submitted) should not
+        # block the submit button on the frontend.
+        approval_status = submission.status if (submission and submission.is_complete) else None
         requires_action = approval_status == 'user_confirmation'
 
         return Response({

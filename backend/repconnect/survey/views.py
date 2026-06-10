@@ -48,6 +48,7 @@ from survey.serializers import (
     SurveyQuestionSerializer,
     SurveyQuestionWriteSerializer,
     SurveyQuestionOptionSerializer,
+    SurveyQuestionRatingConfigSerializer,
     SurveyResponseSerializer,
     SurveyTemplateDetailSerializer,
     SurveyTemplateListSerializer,
@@ -133,6 +134,237 @@ def _paginate(qs, request, page_size: int = 20) -> tuple:
     }
 
 
+# ── Template propagation helpers ─────────────────────────────────────────────
+#
+# When admin edits a SurveyTemplate question/option, these helpers propagate the
+# change to all Training objects that reference the template AND to all Draft
+# Survey objects that were seeded from it (Survey.source_template).
+#
+# Rules:
+#  • For Training: only update when no completed (is_complete=True) submission
+#    exists, because question IDs must remain stable once answers are recorded.
+#  • For Survey:   only update when the survey is still in STATUS_DRAFT, as
+#    active/closed surveys may already have responses in progress.
+#  • Questions are matched by their `order` value (copied 1:1 at seeding time).
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _propagate_template_question_to_trainings(tmpl_q: SurveyQuestion, deleted: bool = False) -> None:
+    """Push a template question change into every eligible training."""
+    from training.models import (
+        Training, TrainingQuestion, TrainingQuestionOption,
+        TrainingQuestionRatingConfig, TrainingSubmission, TrainingAnswer,
+    )
+
+    template_id = tmpl_q.template_id
+    if not template_id:
+        return
+
+    locked_training_ids = set(
+        TrainingSubmission.objects
+        .filter(is_complete=True)
+        .values_list('training_id', flat=True)
+    )
+    trainings = Training.objects.filter(template_id=template_id).exclude(pk__in=locked_training_ids)
+
+    for training in trainings:
+        tq = TrainingQuestion.objects.filter(training=training, order=tmpl_q.order).first()
+
+        if deleted:
+            if tq and not TrainingAnswer.objects.filter(question=tq).exists():
+                tq.delete()
+            continue
+
+        if tq:
+            changed = False
+            for field in ('question_text', 'question_type', 'is_required', 'allow_other'):
+                val = getattr(tmpl_q, field, getattr(tq, field))
+                if getattr(tq, field) != val:
+                    setattr(tq, field, val)
+                    changed = True
+            if changed:
+                tq.save()
+            # Sync options for choice-based questions
+            if tmpl_q.question_type in CHOICE_BASED_TYPES:
+                _sync_training_options(tq, tmpl_q)
+            # Sync rating config
+            if tmpl_q.question_type == 'rating':
+                _sync_training_rating_config(tq, tmpl_q)
+        else:
+            # Template has a new question not yet in this training
+            tq = TrainingQuestion.objects.create(
+                training=training,
+                question_text=tmpl_q.question_text,
+                question_type=tmpl_q.question_type,
+                order=tmpl_q.order,
+                is_required=tmpl_q.is_required,
+                allow_other=getattr(tmpl_q, 'allow_other', False),
+            )
+            for opt in tmpl_q.options.order_by('order'):
+                TrainingQuestionOption.objects.create(
+                    question=tq, option_text=opt.option_text, order=opt.order,
+                )
+            if tmpl_q.question_type == 'rating':
+                try:
+                    rc = tmpl_q.rating_config
+                    TrainingQuestionRatingConfig.objects.create(
+                        question=tq,
+                        min_value=rc.min_value, max_value=rc.max_value,
+                        min_label=getattr(rc, 'min_label', ''),
+                        max_label=getattr(rc, 'max_label', ''),
+                    )
+                except Exception:
+                    pass
+
+
+def _sync_training_options(tq, tmpl_q: SurveyQuestion) -> None:
+    """Update/add/remove TrainingQuestionOption rows to match template options."""
+    from training.models import TrainingQuestionOption, TrainingAnswer
+
+    tmpl_opts = {opt.order: opt for opt in tmpl_q.options.all()}
+    existing  = {opt.order: opt for opt in tq.options.all()}
+
+    for order, t_opt in tmpl_opts.items():
+        ex = existing.get(order)
+        if ex:
+            if ex.option_text != t_opt.option_text:
+                ex.option_text = t_opt.option_text
+                ex.save()
+        else:
+            TrainingQuestionOption.objects.create(
+                question=tq, option_text=t_opt.option_text, order=order,
+            )
+
+    # Remove options no longer in template only when no answer selected them
+    tmpl_orders = set(tmpl_opts.keys())
+    for order, ex_opt in existing.items():
+        if order not in tmpl_orders and not ex_opt.user_answers.exists():
+            ex_opt.delete()
+
+
+def _sync_training_rating_config(tq, tmpl_q: SurveyQuestion) -> None:
+    """Sync rating scale config from template question to training question."""
+    from training.models import TrainingQuestionRatingConfig
+    try:
+        rc_src = tmpl_q.rating_config
+    except Exception:
+        return
+    try:
+        rc_tgt = tq.rating_config
+        for f in ('min_value', 'max_value', 'min_label', 'max_label'):
+            setattr(rc_tgt, f, getattr(rc_src, f))
+        rc_tgt.save()
+    except Exception:
+        TrainingQuestionRatingConfig.objects.create(
+            question=tq,
+            min_value=rc_src.min_value, max_value=rc_src.max_value,
+            min_label=getattr(rc_src, 'min_label', ''),
+            max_label=getattr(rc_src, 'max_label', ''),
+        )
+
+
+def _propagate_template_question_to_surveys(tmpl_q: SurveyQuestion, deleted: bool = False) -> None:
+    """Push a template question change into every eligible draft survey."""
+    template_id = tmpl_q.template_id
+    if not template_id:
+        return
+
+    surveys = Survey.objects.filter(source_template_id=template_id, status=Survey.STATUS_DRAFT)
+
+    for survey in surveys:
+        sq = SurveyQuestion.objects.filter(survey=survey, order=tmpl_q.order).first()
+
+        if deleted:
+            if sq and not SurveyAnswer.objects.filter(question=sq).exists():
+                sq.delete()
+            continue
+
+        if sq:
+            changed = False
+            for field in ('question_text', 'question_type', 'is_required', 'allow_other'):
+                val = getattr(tmpl_q, field, getattr(sq, field))
+                if getattr(sq, field) != val:
+                    setattr(sq, field, val)
+                    changed = True
+            if changed:
+                sq.save()
+            if tmpl_q.question_type in CHOICE_BASED_TYPES:
+                _sync_survey_options(sq, tmpl_q)
+            if tmpl_q.question_type == 'rating':
+                _sync_survey_rating_config(sq, tmpl_q)
+        else:
+            new_sq = SurveyQuestion.objects.create(
+                survey=survey,
+                question_text=tmpl_q.question_text,
+                question_type=tmpl_q.question_type,
+                order=tmpl_q.order,
+                is_required=tmpl_q.is_required,
+                allow_other=getattr(tmpl_q, 'allow_other', False),
+            )
+            for opt in tmpl_q.options.order_by('order'):
+                SurveyQuestionOption.objects.create(
+                    question=new_sq, option_text=opt.option_text, order=opt.order,
+                )
+            if tmpl_q.question_type == 'rating':
+                try:
+                    rc = tmpl_q.rating_config
+                    SurveyQuestionRatingConfig.objects.create(
+                        question=new_sq,
+                        min_value=rc.min_value, max_value=rc.max_value,
+                        min_label=getattr(rc, 'min_label', ''),
+                        max_label=getattr(rc, 'max_label', ''),
+                    )
+                except Exception:
+                    pass
+
+
+def _sync_survey_options(sq: SurveyQuestion, tmpl_q: SurveyQuestion) -> None:
+    tmpl_opts = {opt.order: opt for opt in tmpl_q.options.all()}
+    existing  = {opt.order: opt for opt in sq.options.all()}
+
+    for order, t_opt in tmpl_opts.items():
+        ex = existing.get(order)
+        if ex:
+            if ex.option_text != t_opt.option_text:
+                ex.option_text = t_opt.option_text
+                ex.save()
+        else:
+            SurveyQuestionOption.objects.create(
+                question=sq, option_text=t_opt.option_text, order=order,
+            )
+
+    tmpl_orders = set(tmpl_opts.keys())
+    for order, ex_opt in existing.items():
+        if order not in tmpl_orders and not ex_opt.answers.exists():
+            ex_opt.delete()
+
+
+def _sync_survey_rating_config(sq: SurveyQuestion, tmpl_q: SurveyQuestion) -> None:
+    try:
+        rc_src = tmpl_q.rating_config
+    except Exception:
+        return
+    try:
+        rc_tgt = sq.rating_config
+        for f in ('min_value', 'max_value', 'min_label', 'max_label'):
+            setattr(rc_tgt, f, getattr(rc_src, f))
+        rc_tgt.save()
+    except Exception:
+        SurveyQuestionRatingConfig.objects.create(
+            question=sq,
+            min_value=rc_src.min_value, max_value=rc_src.max_value,
+            min_label=getattr(rc_src, 'min_label', ''),
+            max_label=getattr(rc_src, 'max_label', ''),
+        )
+
+
+def _propagate_template_question_change(tmpl_q: SurveyQuestion, deleted: bool = False) -> None:
+    """Top-level propagation: push to trainings + surveys."""
+    if not tmpl_q.template_id:
+        return
+    _propagate_template_question_to_trainings(tmpl_q, deleted=deleted)
+    _propagate_template_question_to_surveys(tmpl_q, deleted=deleted)
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # PHASE 5 — Admin API Views
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -211,9 +443,10 @@ class AdminSurveyListCreateView(APIView):
         data['status'] = status_value
 
         survey = Survey.objects.create(
-            **data,
+            **data,  # type: ignore[arg-type]
             created_by=request.user,
             template_type=template_type,
+            source_template_id=template_id if template_id else None,
         )
         if survey.target_type == Survey.TARGET_SPECIFIC and target_user_ids:
             SurveyTargetUser.objects.bulk_create([
@@ -438,6 +671,9 @@ class AdminQuestionDetailView(APIView):
         ser = SurveyQuestionWriteSerializer(question, data=request.data, partial=True)
         ser.is_valid(raise_exception=True)
         question = ser.save()
+        # Propagate template question changes to linked trainings and draft surveys
+        if question.template_id:
+            transaction.on_commit(lambda q=question: _propagate_template_question_change(q))
         return Response(SurveyQuestionSerializer(question).data)
 
     @transaction.atomic
@@ -450,7 +686,14 @@ class AdminQuestionDetailView(APIView):
             return Response({'detail': 'Not found.'}, status=http_status.HTTP_404_NOT_FOUND)
         if question.survey and not question.survey.is_editable:
             return Response({'detail': 'Questions on non-Draft surveys cannot be deleted.'}, status=http_status.HTTP_400_BAD_REQUEST)
+        # Capture template_id and order before deleting so propagation can remove downstream copies
+        tmpl_id = question.template_id
+        q_order = question.order
         question.delete()
+        if tmpl_id:
+            # Build a minimal placeholder to pass to propagation helper
+            placeholder = SurveyQuestion(template_id=tmpl_id, order=q_order)
+            transaction.on_commit(lambda p=placeholder: _propagate_template_question_change(p, deleted=True))
         return Response(status=http_status.HTTP_204_NO_CONTENT)
 
 
@@ -516,6 +759,8 @@ class AdminTemplateQuestionListCreateView(APIView):
             if order <= max_order:
                 template.questions.filter(order__gte=order).update(order=F('order') + 1)
         question = ser.save(template=template, order=order)
+        # New template question → add it to all linked trainings/draft surveys
+        transaction.on_commit(lambda q=question: _propagate_template_question_change(q))
         return Response(SurveyQuestionSerializer(question).data, status=http_status.HTTP_201_CREATED)
 
 
@@ -555,6 +800,8 @@ class AdminQuestionRatingConfigView(APIView):
         for attr, val in ser.validated_data.items():
             setattr(question.rating_config, attr, val)
         question.rating_config.save()
+        if question.template_id:
+            transaction.on_commit(lambda q=question: _propagate_template_question_change(q))
         return Response(SurveyQuestionRatingConfigSerializer(question.rating_config).data)
 
 
@@ -582,7 +829,9 @@ class AdminOptionListCreateView(APIView):
             return Response({'detail': 'Options can only be added to choice-based question types.'}, status=http_status.HTTP_400_BAD_REQUEST)
         ser = SurveyQuestionOptionSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
-        option = SurveyQuestionOption.objects.create(question=question, **ser.validated_data, order=question.options.count())
+        option = SurveyQuestionOption.objects.create(question=question, **ser.validated_data, order=question.options.count())  # type: ignore[arg-type]
+        if question.template_id:
+            transaction.on_commit(lambda q=question: _propagate_template_question_change(q))
         return Response(SurveyQuestionOptionSerializer(option).data, status=http_status.HTTP_201_CREATED)
 
 
@@ -607,6 +856,8 @@ class AdminOptionDetailView(APIView):
         for attr, val in ser.validated_data.items():
             setattr(option, attr, val)
         option.save()
+        if option.question.template_id:
+            transaction.on_commit(lambda q=option.question: _propagate_template_question_change(q))
         return Response(SurveyQuestionOptionSerializer(option).data)
 
     @transaction.atomic
@@ -619,7 +870,10 @@ class AdminOptionDetailView(APIView):
             return Response({'detail': 'Not found.'}, status=http_status.HTTP_404_NOT_FOUND)
         if option.question.survey and not option.question.survey.is_editable:
             return Response({'detail': 'Options on non-Draft surveys are immutable.'}, status=http_status.HTTP_400_BAD_REQUEST)
+        tmpl_q = option.question if option.question.template_id else None
         option.delete()
+        if tmpl_q:
+            transaction.on_commit(lambda q=tmpl_q: _propagate_template_question_change(q))
         return Response(status=http_status.HTTP_204_NO_CONTENT)
 
 
@@ -644,7 +898,7 @@ class AdminTemplateListCreateView(APIView):
             return denied
         ser = SurveyTemplateWriteSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
-        template = SurveyTemplate.objects.create(**ser.validated_data, created_by=request.user)
+        template = SurveyTemplate.objects.create(**ser.validated_data, created_by=request.user)  # type: ignore[arg-type]
         return Response(SurveyTemplateDetailSerializer(template).data, status=http_status.HTTP_201_CREATED)
 
 
@@ -744,7 +998,7 @@ class AdminSurveyFromTemplateView(APIView):
         if not tmpl:
             return Response({'detail': 'Template not found.'}, status=http_status.HTTP_404_NOT_FOUND)
         title = request.data.get('title', '').strip() or f'Survey from "{tmpl.title}"'
-        survey = Survey.objects.create(title=title[:200], description=tmpl.description, created_by=request.user, status=Survey.STATUS_DRAFT)
+        survey = Survey.objects.create(title=title[:200], description=tmpl.description, created_by=request.user, status=Survey.STATUS_DRAFT, source_template=tmpl)
         for tmpl_q in tmpl.questions.order_by('order'):
             new_q = SurveyQuestion.objects.create(
                 survey=survey,
@@ -1167,7 +1421,7 @@ class AdminSurveyExportView(APIView):
 
         for resp in completed:
             emp = resp.employee
-            row_data = [
+            row_data: list[Any] = [
                 str(emp.idnumber) if emp else '',
                 f'{emp.lastname}, {emp.firstname}' if emp else 'Anonymous',
                 dept_map.get(emp.pk, '') if emp else '',

@@ -151,9 +151,10 @@ class PayslipSerializer(serializers.ModelSerializer):
         extra_kwargs = {'file': {'write_only': True}}
 
     def get_file_url(self, obj: Payslip) -> str | None:
-        request = self.context.get('request')
-        if obj.file and request:
-            return request.build_absolute_uri(obj.file.url)
+        # Return a relative path so the browser hits /media/... through nginx,
+        # which proxies to Django's ProtectedMediaView with auth cookies intact.
+        # build_absolute_uri() would embed the internal backend host, which is
+        # unreachable from the browser.
         return obj.file.url if obj.file else None
 
     def get_file_name(self, obj: Payslip) -> str | None:

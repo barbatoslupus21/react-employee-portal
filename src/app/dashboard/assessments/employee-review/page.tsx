@@ -7,6 +7,7 @@ import React, {
   useRef,
   useState,
 } from 'react';
+import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   BarChart2,
@@ -113,7 +114,7 @@ type CenteredModalProps = {
 };
 
 function CenteredModal({ open, onOpenChange, children, className }: CenteredModalProps) {
-  return (
+  return createPortal(
     <AnimatePresence>
       {open && (
         <motion.div
@@ -139,7 +140,8 @@ function CenteredModal({ open, onOpenChange, children, className }: CenteredModa
           </motion.div>
         </motion.div>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body
   );
 }
 
@@ -449,7 +451,7 @@ function TasklistViewModal({
 
   return (
     <>
-      <CenteredModal open={open} onOpenChange={(o) => { if (!o) handleClose(); }}>
+      <CenteredModal className='max-w-lg' open={open} onOpenChange={(o) => { if (!o) handleClose(); }}>
         <div className="flex items-center justify-between border-b border-[var(--color-border)] px-6 py-4">
           <h2 className="text-base font-semibold text-[var(--color-text-primary)]">Tasks — {localEmployeeName}</h2>
           <button

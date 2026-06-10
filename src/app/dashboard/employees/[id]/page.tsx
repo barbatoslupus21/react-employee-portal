@@ -6,16 +6,20 @@ import { motion, AnimatePresence, animate } from "motion/react";
 import {
   ChevronDown, Award, ChevronLeft,
   School, BookOpen, Wrench, GraduationCap,
-  ChevronUp, Pencil, Check, User, Users, X,
+  ChevronUp, Pencil, Check, User, Users, X, ChevronsUpDown,
 } from "lucide-react";
 import { Timeline } from "@/components/ui/timeline";
 import { Tabs as VercelTabs } from "@/components/ui/vercel-tabs";
 import { TextShimmer } from "@/components/ui/text-shimmer";
 import { Input } from "@/components/ui/input";
 import { DateTimePicker } from "@/components/ui/datetime-picker";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList,
+} from "@/components/ui/command";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { getCsrfToken } from "@/lib/csrf";
 import { useMediaQuery } from "@/hooks/use-media-query";
+import { cn } from "@/lib/utils";
 
 // ── Types (same shape as profile-settings ProfileData) ──────────────────────
 
@@ -88,6 +92,107 @@ function formatDisplayDate(value: string | null | undefined): string | null {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return value;
   return parsed.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+}
+
+// ── Scroll helper — scroll nearest overflow-y-auto ancestor so a dropdown fits ─
+
+function scrollToRevealDropdown(el: HTMLElement | null, dropdownHeight = 300) {
+  if (typeof window === "undefined" || !el) return;
+  const rect = el.getBoundingClientRect();
+  const spaceBelow = window.innerHeight - rect.bottom;
+  if (spaceBelow >= dropdownHeight) return;
+  const needed = dropdownHeight - spaceBelow + 16;
+  let parent = el.parentElement;
+  while (parent) {
+    const oy = getComputedStyle(parent).overflowY;
+    if ((oy === "auto" || oy === "scroll") && parent.scrollHeight > parent.clientHeight) {
+      parent.scrollTop += needed;
+      return;
+    }
+    parent = parent.parentElement;
+  }
+}
+
+// ── SearchableSelect — searchable combobox that replaces <Select> in edit forms ─
+
+function SearchableSelect({
+  label,
+  placeholder,
+  value,
+  options,
+  onValueChange,
+  disabled = false,
+  error,
+}: {
+  label: string;
+  placeholder: string;
+  value: string;
+  options: { value: string; label: string }[];
+  onValueChange: (v: string) => void;
+  disabled?: boolean;
+  error?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const selected = options.find((o) => o.value === value);
+
+  function handleOpenChange(next: boolean) {
+    if (next) scrollToRevealDropdown(triggerRef.current);
+    setOpen(next);
+  }
+
+  return (
+    <Popover open={open} onOpenChange={handleOpenChange}>
+      <PopoverTrigger asChild>
+        <button
+          ref={triggerRef}
+          type="button"
+          role="combobox"
+          aria-expanded={open}
+          disabled={disabled}
+          className={cn(
+            "flex h-8 w-full items-center justify-between rounded-lg border px-3 text-xs transition-colors",
+            error ? "border-red-500" : "border-[var(--color-border)]",
+            "bg-[var(--color-bg-elevated)] text-left",
+            "disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none",
+          )}
+        >
+          <span className={selected ? "truncate pr-2 text-[var(--color-text-primary)]" : "text-[var(--color-text-muted)]"}>
+            {selected ? selected.label : placeholder}
+          </span>
+          <ChevronsUpDown size={14} className="shrink-0 text-[var(--color-text-muted)]" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[240px] p-0" align="start">
+        <Command>
+          <CommandInput placeholder={`Search ${label.toLowerCase()}…`} className="text-xs" />
+          <CommandList className="max-h-[220px]">
+            <CommandEmpty className="py-3 text-center text-xs text-[var(--color-text-muted)]">
+              No {label.toLowerCase()} found.
+            </CommandEmpty>
+            <CommandGroup>
+              {options.map((o) => (
+                <CommandItem
+                  key={o.value}
+                  value={o.label}
+                  onSelect={() => {
+                    onValueChange(o.value === value ? "" : o.value);
+                    setOpen(false);
+                  }}
+                >
+                  <Check
+                    size={12}
+                    className={cn("mr-2 shrink-0", o.value === value ? "opacity-100" : "opacity-0")}
+                  />
+                  <span className="text-xs">{o.label}</span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
 }
 
 // ── Education helpers ─────────────────────────────────────────────────────────
@@ -967,7 +1072,7 @@ export default function EmployeeProfilePage() {
       <div className="flex-1 min-h-0 overflow-hidden rounded-lg px-2 lg:flex lg:h-full lg:flex-col lg:overflow-hidden">
 
         {/* Header: breadcrumb + tabs */}
-        <div className="shrink-0 pt-2 pb-0 border-b border-[var(--color-border)] bg-[var(--color-bg)]">
+        <div className="shrink-0 pt-2 pb-0 border-b border-[var(--color-border)] bg-transparent">
 
           {/* Breadcrumb */}
           <div className="flex items-center gap-1.5 mb-2 min-h-[38px]">
@@ -1169,23 +1274,18 @@ export default function EmployeeProfilePage() {
                                 <span className="text-[10px] font-semibold uppercase text-[var(--color-text-muted)]">
                                   Position{(wiTouched.position_id || saveAttempted) && (!draftWi.position_id || wiErrs.position_id) && <span className="ml-0.5 text-red-500">*</span>}
                                 </span>
-                                <Select
+                                <SearchableSelect
+                                  label="Position"
+                                  placeholder="Select position"
                                   value={draftWi.position_id?.toString() ?? ""}
+                                  options={positions.map((p) => ({ value: p.id.toString(), label: p.name }))}
                                   onValueChange={(v) => {
                                     const id = v ? Number(v) : null;
                                     setDraftWi((d) => d ? { ...d, position_id: id } : d);
                                     setWiTouched((t) => ({ ...t, position_id: true }));
                                   }}
-                                >
-                                  <SelectTrigger className="h-8 text-xs">
-                                    <SelectValue placeholder="Select position" />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    {positions.map((p) => (
-                                      <SelectItem key={p.id} value={p.id.toString()}>{p.name}</SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
+                                  error={wiErrs.position_id}
+                                />
                                 {wiErrs.position_id && <span className="text-[10px] text-red-500">{wiErrs.position_id}</span>}
                               </div>
 
@@ -1193,23 +1293,18 @@ export default function EmployeeProfilePage() {
                                 <span className="text-[10px] font-semibold uppercase text-[var(--color-text-muted)]">
                                   Employment Type{(wiTouched.employment_type_id || saveAttempted) && (!draftWi.employment_type_id || wiErrs.employment_type_id) && <span className="ml-0.5 text-red-500">*</span>}
                                 </span>
-                                <Select
+                                <SearchableSelect
+                                  label="Employment Type"
+                                  placeholder="Select employment type"
                                   value={draftWi.employment_type_id?.toString() ?? ""}
+                                  options={employmentTypes.map((e) => ({ value: e.id.toString(), label: e.name }))}
                                   onValueChange={(v) => {
                                     const id = v ? Number(v) : null;
                                     setDraftWi((d) => d ? { ...d, employment_type_id: id } : d);
                                     setWiTouched((t) => ({ ...t, employment_type_id: true }));
                                   }}
-                                >
-                                  <SelectTrigger className="h-8 text-xs">
-                                    <SelectValue placeholder="Select employment type" />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    {employmentTypes.map((e) => (
-                                      <SelectItem key={e.id} value={e.id.toString()}>{e.name}</SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
+                                  error={wiErrs.employment_type_id}
+                                />
                                 {wiErrs.employment_type_id && <span className="text-[10px] text-red-500">{wiErrs.employment_type_id}</span>}
                               </div>
 
@@ -1237,24 +1332,19 @@ export default function EmployeeProfilePage() {
                                 <span className="text-[10px] font-semibold uppercase text-[var(--color-text-muted)]">
                                   Department{(wiTouched.department_id || saveAttempted) && (!draftWi.department_id || wiErrs.department_id) && <span className="ml-0.5 text-red-500">*</span>}
                                 </span>
-                                <Select
+                                <SearchableSelect
+                                  label="Department"
+                                  placeholder="Select department"
                                   value={draftWi.department_id?.toString() ?? ""}
+                                  options={depts.map((d) => ({ value: d.id.toString(), label: d.name }))}
                                   onValueChange={(v) => {
                                     const id = v ? Number(v) : null;
                                     setDraftWi((d) => d ? { ...d, department_id: id, line_id: null } : d);
                                     setWiTouched((t) => ({ ...t, department_id: true }));
                                     loadLines(id);
                                   }}
-                                >
-                                  <SelectTrigger className="h-8 text-xs">
-                                    <SelectValue placeholder="Select department" />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    {depts.map((d) => (
-                                      <SelectItem key={d.id} value={d.id.toString()}>{d.name}</SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
+                                  error={wiErrs.department_id}
+                                />
                                 {wiErrs.department_id && <span className="text-[10px] text-red-500">{wiErrs.department_id}</span>}
                               </div>
 
@@ -1262,23 +1352,19 @@ export default function EmployeeProfilePage() {
                                 <span className="text-[10px] font-semibold uppercase text-[var(--color-text-muted)]">
                                   Line{(wiTouched.line_id || saveAttempted) && (!draftWi.line_id || wiErrs.line_id) && <span className="ml-0.5 text-red-500">*</span>}
                                 </span>
-                                <Select
+                                <SearchableSelect
+                                  label="Line"
+                                  placeholder="Select line"
                                   value={draftWi.line_id?.toString() ?? ""}
+                                  options={lines.map((l) => ({ value: l.id.toString(), label: l.name }))}
                                   onValueChange={(v) => {
                                     const id = v ? Number(v) : null;
                                     setDraftWi((d) => d ? { ...d, line_id: id } : d);
                                     setWiTouched((t) => ({ ...t, line_id: true }));
                                   }}
-                                >
-                                  <SelectTrigger className="h-8 text-xs">
-                                    <SelectValue placeholder="Select line" />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    {lines.map((l) => (
-                                      <SelectItem key={l.id} value={l.id.toString()}>{l.name}</SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
+                                  disabled={!draftWi.department_id}
+                                  error={wiErrs.line_id}
+                                />
                                 {wiErrs.line_id && <span className="text-[10px] text-red-500">{wiErrs.line_id}</span>}
                               </div>
 
@@ -1286,25 +1372,18 @@ export default function EmployeeProfilePage() {
                                 <span className="text-[10px] font-semibold uppercase text-[var(--color-text-muted)]">
                                   Approver{(wiTouched.approver_id || saveAttempted) && (!draftWi.approver_id || wiErrs.approver_id) && <span className="ml-0.5 text-red-500">*</span>}
                                 </span>
-                                <Select
+                                <SearchableSelect
+                                  label="Approver"
+                                  placeholder="Select approver"
                                   value={draftWi.approver_id?.toString() ?? ""}
+                                  options={approvers.map((a) => ({ value: a.id.toString(), label: a.name || a.idnumber }))}
                                   onValueChange={(v) => {
                                     const id = v ? Number(v) : null;
                                     setDraftWi((d) => d ? { ...d, approver_id: id } : d);
                                     setWiTouched((t) => ({ ...t, approver_id: true }));
                                   }}
-                                >
-                                  <SelectTrigger className="h-8 text-xs">
-                                    <SelectValue placeholder="Select approver" />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    {approvers.map((a) => (
-                                      <SelectItem key={a.id} value={a.id.toString()}>
-                                        {a.name || a.idnumber}
-                                      </SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
+                                  error={wiErrs.approver_id}
+                                />
                                 {wiErrs.approver_id && <span className="text-[10px] text-red-500">{wiErrs.approver_id}</span>}
                               </div>
                             </div>
