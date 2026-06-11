@@ -365,6 +365,49 @@ def _propagate_template_question_change(tmpl_q: SurveyQuestion, deleted: bool = 
     _propagate_template_question_to_surveys(tmpl_q, deleted=deleted)
 
 
+def _propagate_template_reorder_to_trainings(template_id: int, order_change_map: dict) -> None:
+    """Propagate question reorder from template into every eligible training.
+
+    Uses a temporary large offset to avoid collisions when swapping order values
+    (e.g. 1→2 and 2→1 would corrupt without the two-phase approach).
+    """
+    from training.models import Training, TrainingQuestion, TrainingSubmission
+
+    locked_ids = set(
+        TrainingSubmission.objects
+        .filter(is_complete=True)
+        .values_list('training_id', flat=True)
+    )
+    trainings = Training.objects.filter(template_id=template_id).exclude(pk__in=locked_ids)
+    OFFSET = 100000
+
+    for training in trainings:
+        for old_order in order_change_map:
+            TrainingQuestion.objects.filter(training=training, order=old_order).update(
+                order=old_order + OFFSET
+            )
+        for old_order, new_order in order_change_map.items():
+            TrainingQuestion.objects.filter(training=training, order=old_order + OFFSET).update(
+                order=new_order
+            )
+
+
+def _propagate_template_reorder_to_surveys(template_id: int, order_change_map: dict) -> None:
+    """Propagate question reorder from template into every eligible draft survey."""
+    surveys = Survey.objects.filter(source_template_id=template_id, status=Survey.STATUS_DRAFT)
+    OFFSET = 100000
+
+    for survey in surveys:
+        for old_order in order_change_map:
+            SurveyQuestion.objects.filter(survey=survey, order=old_order).update(
+                order=old_order + OFFSET
+            )
+        for old_order, new_order in order_change_map.items():
+            SurveyQuestion.objects.filter(survey=survey, order=old_order + OFFSET).update(
+                order=new_order
+            )
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # PHASE 5 — Admin API Views
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -776,8 +819,34 @@ class AdminTemplateQuestionReorderView(APIView):
         template = SurveyTemplate.objects.select_for_update().filter(pk=template_pk).first()
         if not template:
             return Response({'detail': 'Not found.'}, status=http_status.HTTP_404_NOT_FOUND)
-        for item in request.data.get('order', []):
+
+        order_items = request.data.get('order', [])
+
+        # Capture old orders before updating so we can build an old→new change map
+        pks = [item['id'] for item in order_items]
+        old_order_map = {
+            q.pk: q.order
+            for q in SurveyQuestion.objects.filter(pk__in=pks, template=template)
+        }
+
+        for item in order_items:
             SurveyQuestion.objects.filter(pk=item['id'], template=template).update(order=item['order'])
+
+        # Build {old_order: new_order} for every question whose order actually changed
+        order_change_map = {
+            old_order_map[item['id']]: item['order']
+            for item in order_items
+            if item['id'] in old_order_map and old_order_map[item['id']] != item['order']
+        }
+        if order_change_map:
+            tid = template.pk
+            transaction.on_commit(
+                lambda m=order_change_map: _propagate_template_reorder_to_trainings(tid, m)
+            )
+            transaction.on_commit(
+                lambda m=order_change_map: _propagate_template_reorder_to_surveys(tid, m)
+            )
+
         qs = template.questions.prefetch_related('options', 'rating_config').order_by('order')
         return Response(SurveyQuestionSerializer(qs, many=True).data)
 

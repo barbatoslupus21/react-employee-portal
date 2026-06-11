@@ -19,6 +19,7 @@ import uuid
 
 from django.conf import settings
 from django.db import models
+from django.db.models import Max
 from django.utils import timezone
 
 
@@ -127,27 +128,24 @@ class MISTicket(models.Model):
 
     @classmethod
     def generate_ticket_number(cls) -> str:
-        """Return a unique ticket number of the form TK-YY-NNN.
+        """Return a unique ticket number of the form TKT{YYYYMMDD}{NNNN}.
 
-        Orders by PK (not by ticket_number string) to avoid alphabetical sort
-        issues with sequences > 999 (audit fix C4).  Loops until a candidate
-        is confirmed absent (handles the tiny race window where two workers
-        pick the same seq before either commits — the unique constraint is the
-        final backstop).
+        Sequence resets daily and is zero-padded to 4 digits.
+        Uses Max aggregation on ticket_number string; the unique constraint
+        is the final backstop against race conditions.
         """
-        year = timezone.now().strftime('%y')
-        while True:
-            last = (
-                cls.objects
-                .filter(ticket_number__startswith=f'TK-{year}-')
-                .order_by('-id')
-                .first()
-            )
-            seq = 1 if not last else int(last.ticket_number.split('-')[2]) + 1
-            candidate = f'TK-{year}-{seq:03d}'
-            if not cls.objects.filter(ticket_number=candidate).exists():
-                return candidate
-            # Another worker claimed this number — increment and retry
+        prefix = 'TKT'
+        date_str = timezone.now().strftime('%Y%m%d')
+        result = (
+            cls.objects
+            .filter(ticket_number__startswith=f'{prefix}{date_str}')
+            .aggregate(max_seq=Max('ticket_number'))
+        )
+        if result['max_seq']:
+            new_seq = int(result['max_seq'][-4:]) + 1
+        else:
+            new_seq = 1
+        return f'{prefix}{date_str}{new_seq:04d}'
 
 
 # ── MISTicketDiagnosis ────────────────────────────────────────────────────────

@@ -436,7 +436,7 @@ function QuestionInput({
         <DateTimePicker
           value={dateValue}
           disabled={readOnly}
-          onChange={date => !readOnly && onChange({ ...answer, text_value: date.toISOString().slice(0, 10) })}
+          onChange={date => !readOnly && onChange({ ...answer, text_value: `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}` })}
           placeholder="Select a date"
           displayFormat="MMM d, yyyy"
           className="w-full"

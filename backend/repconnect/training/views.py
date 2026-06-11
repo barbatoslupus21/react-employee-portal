@@ -827,7 +827,15 @@ class TrainingSubmitView(APIView):
             submission.submitted_at = None
             submission.status = 'pending'
             submission.save()
-            return Response({'detail': str(exc)}, status=http_status.HTTP_400_BAD_REQUEST)
+            # DRF ValidationError.detail is a list of ErrorDetail (str subclass).
+            # str(list) gives the Python repr; extract the first element instead.
+            from rest_framework.exceptions import ValidationError as _DRFVError
+            if isinstance(exc, _DRFVError):
+                detail = exc.detail
+                msg = str(detail[0]) if isinstance(detail, (list, tuple)) and detail else str(detail)
+            else:
+                msg = str(exc)
+            return Response({'detail': msg}, status=http_status.HTTP_400_BAD_REQUEST)
 
         if not steps:
             submission.is_complete = False

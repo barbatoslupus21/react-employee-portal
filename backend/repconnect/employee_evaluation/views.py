@@ -1556,7 +1556,11 @@ class MySubmitView(APIView):
         try:
             chain = build_evaluation_approval_chain(entry)
         except DRFValidationError as exc:
-            return Response({'detail': str(exc.detail)}, status=http_status.HTTP_400_BAD_REQUEST)
+            # DRF ValidationError.detail is a list of ErrorDetail (str subclass).
+            # str(list) gives the Python repr; extract the first element instead.
+            detail = exc.detail
+            msg = str(detail[0]) if isinstance(detail, (list, tuple)) and detail else str(detail)
+            return Response({'detail': msg}, status=http_status.HTTP_400_BAD_REQUEST)
 
         # Restore supervisor eval data to new step 1 (preserves work done before disapproval)
         if saved_eval_data and chain:
