@@ -14,6 +14,7 @@ import {
   CalendarDays,
   GraduationCap,
   List,
+  Search,
   Send,
   Star,
   Users2,
@@ -1609,6 +1610,7 @@ function EvalApprovalView() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [leftPanelOpen, setLeftPanelOpen] = useState(false);
   const [showFormSkeleton, setShowFormSkeleton] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
   const skeletonTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isNarrow = useMediaQuery('(max-width: 780px)');
 
@@ -1660,10 +1662,19 @@ function EvalApprovalView() {
     if (isNarrow) setLeftPanelOpen(false);
   }
 
+  const filteredQueue = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return queue;
+    return queue.filter(i =>
+      i.employee_name.toLowerCase().includes(q) ||
+      (i.employee_id_number ?? '').toLowerCase().includes(q),
+    );
+  }, [queue, searchQuery]);
+
   const groups = [
-    { label: 'Re-evaluate',  items: queue.filter(i => i.status === 'returned') },
-    { label: 'For Approval', items: queue.filter(i => i.my_step_status === 'pending' && i.status !== 'returned') },
-    { label: 'Reviewed',     items: queue.filter(i => i.my_step_status === 'reviewed') },
+    { label: 'Re-evaluate',  items: filteredQueue.filter(i => i.status === 'returned') },
+    { label: 'For Approval', items: filteredQueue.filter(i => i.my_step_status === 'pending' && i.status !== 'returned') },
+    { label: 'Reviewed',     items: filteredQueue.filter(i => i.my_step_status === 'reviewed') },
   ].filter(g => g.items.length > 0);
 
   const isEmpty = !loadingQueue && queue.length === 0;
@@ -1684,6 +1695,29 @@ function EvalApprovalView() {
         )}
       </div>
 
+      {/* Search bar */}
+      <div className="px-4 py-2 border-b border-[var(--color-border)] shrink-0">
+        <div className="relative flex items-center">
+          <Search size={13} className="absolute left-2.5 text-[var(--color-text-muted)] pointer-events-none shrink-0" />
+          <input
+            type="text"
+            placeholder="Search employee…"
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-card)] pl-7 pr-3 py-1.5 text-xs text-[var(--color-text-primary)] placeholder:text-[var(--color-text-muted)] focus:outline-none focus:ring-1 focus:ring-[#2845D6]/40"
+          />
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => setSearchQuery('')}
+              className="absolute right-2 flex h-4 w-4 items-center justify-center rounded-full text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] transition-colors"
+            >
+              <X size={11} />
+            </button>
+          )}
+        </div>
+      </div>
+
       <div className="flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {loadingQueue ? (
           <QueueListSkeleton />
@@ -1691,6 +1725,11 @@ function EvalApprovalView() {
           <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
             <Users2 size={28} className="text-[var(--color-text-muted)] mb-2 opacity-40" />
             <p className="text-xs text-[var(--color-text-muted)]">No evaluations in your approval queue.</p>
+          </div>
+        ) : groups.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
+            <Search size={24} className="text-[var(--color-text-muted)] mb-2 opacity-40" />
+            <p className="text-xs text-[var(--color-text-muted)]">No results for &ldquo;{searchQuery}&rdquo;</p>
           </div>
         ) : (
           <div className="flex flex-col gap-5 p-4">

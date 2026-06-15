@@ -456,6 +456,61 @@ class UserTimelogsView(APIView):
         return Response(result)
 
 
+class UserDayTimelogView(APIView):
+    """
+    GET /api/timelogs/my-day?date=YYYY-MM-DD
+    Returns the current user's timelog (time_in, time_out) for a specific date.
+    Privileged users (admin/hr/accounting) receive null values as they are not tracked.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+
+        # Privileged users are not tracked — return empty
+        if (
+            getattr(user, 'admin', False)
+            or getattr(user, 'hr', False)
+            or getattr(user, 'accounting', False)
+        ):
+            return Response({'date': request.GET.get('date', ''), 'time_in': None, 'time_out': None})
+
+        date_str = request.GET.get('date', '').strip()
+        try:
+            target_date = datetime.date.fromisoformat(date_str)
+        except (ValueError, TypeError):
+            return Response({'detail': 'date is required (YYYY-MM-DD).'}, status=status.HTTP_400_BAD_REQUEST)
+
+        tz = timezone.get_current_timezone()
+        range_start = timezone.make_aware(
+            datetime.datetime.combine(target_date - datetime.timedelta(days=1), datetime.time.min), tz)
+        range_end = timezone.make_aware(
+            datetime.datetime.combine(target_date + datetime.timedelta(days=1), datetime.time.max), tz)
+
+        raw_logs = list(
+            Timelogs.objects
+            .filter(employee=user, time__range=(range_start, range_end))
+            .order_by('time')
+            .values('time', 'entry')
+        )
+
+        local_logs = [
+            {'dt': timezone.localtime(log['time'], tz), 'entry': log['entry']}
+            for log in raw_logs
+        ]
+
+        work_days = _pair_timelogs(local_logs)
+        slot = work_days.get(target_date, {})
+        time_in_dt = slot.get('in')
+        time_out_dt = slot.get('out')
+
+        return Response({
+            'date': date_str,
+            'time_in': time_in_dt.strftime('%I:%M %p') if time_in_dt else None,
+            'time_out': time_out_dt.strftime('%I:%M %p') if time_out_dt else None,
+        })
+
+
 class TimelogsTemplateView(APIView):
     permission_classes = [IsAuthenticated]
 

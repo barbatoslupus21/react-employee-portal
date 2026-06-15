@@ -1724,6 +1724,12 @@ function TimelogsModal({ onClose }: { onClose: () => void }) {
 
 // ── Scheduled Panel ────────────────────────────────────────────────────────────
 
+interface DayTimelog {
+  date: string;
+  time_in: string | null;
+  time_out: string | null;
+}
+
 function ScheduledPanel({
   selectedDate,
   events,
@@ -1733,6 +1739,7 @@ function ScheduledPanel({
   onEventClick,
   isAdmin = false,
   isHr = false,
+  isPrivileged = false,
 }: {
   selectedDate: Date;
   events: CalendarEvent[];
@@ -1742,6 +1749,7 @@ function ScheduledPanel({
   onEventClick: (e: CalendarEvent) => void;
   isAdmin?: boolean;
   isHr?: boolean;
+  isPrivileged?: boolean;
 }) {
   const dateLabel = selectedDate.toLocaleDateString('en-US', {
     day: 'numeric',
@@ -1749,6 +1757,16 @@ function ScheduledPanel({
     year: 'numeric',
   });
   const [timelogsOpen, setTimelogsOpen] = useState(false);
+  const [dayTimelog, setDayTimelog] = useState<DayTimelog | null>(null);
+
+  useEffect(() => {
+    if (isPrivileged) { setDayTimelog(null); return; }
+    const dateStr = toDateStr(selectedDate);
+    fetch(`/api/timelogs/my-day?date=${dateStr}`, { credentials: 'include' })
+      .then(r => r.ok ? r.json() : null)
+      .then(data => setDayTimelog(data ?? null))
+      .catch(() => setDayTimelog(null));
+  }, [selectedDate, isPrivileged]);
 
   // No start_time on backend — events displayed in the order they are provided
 
@@ -1864,6 +1882,37 @@ function ScheduledPanel({
                 </div>
               );
             })}
+          </div>
+        )}
+
+        {/* Timelogs section — shown only for non-privileged users with a timelog on the selected date */}
+        {!isPrivileged && dayTimelog && (dayTimelog.time_in || dayTimelog.time_out) && (
+          <div className="px-3 pb-3">
+            {/* Separator with title */}
+            <div className="flex items-center gap-2 my-3">
+              <div className="flex-1 h-px bg-[var(--color-border)]" />
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)] flex items-center gap-1">
+                <Clock size={10} />
+                Timelogs
+              </span>
+              <div className="flex-1 h-px bg-[var(--color-border)]" />
+            </div>
+            {/* Time in / out card */}
+            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-3 flex items-center justify-between gap-4">
+              <div className="flex flex-col items-center gap-0.5">
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Time In</span>
+                <span className="text-sm font-bold text-[var(--color-text-primary)] tabular-nums">
+                  {dayTimelog.time_in ?? '—'}
+                </span>
+              </div>
+              <div className="h-8 w-px bg-[var(--color-border)]" />
+              <div className="flex flex-col items-center gap-0.5">
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Time Out</span>
+                <span className="text-sm font-bold text-[var(--color-text-primary)] tabular-nums">
+                  {dayTimelog.time_out ?? '—'}
+                </span>
+              </div>
+            </div>
           </div>
         )}
       </div>
@@ -2408,6 +2457,7 @@ export default function CalendarPage() {
             onEventClick={openEdit}
             isAdmin={isAdmin}
             isHr={isHr}
+            isPrivileged={isPrivileged}
           />
         </div>
       </div>

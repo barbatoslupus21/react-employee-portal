@@ -1985,8 +1985,8 @@ class AdminBulkBalanceUploadView(APIView):
             # Entitled Leave
             try:
                 entitled = Decimal(str(entitled_raw or '')).quantize(Decimal('0.1'))
-                if entitled <= Decimal('0'):
-                    row_errors.append('Entitled Leave must be greater than 0.')
+                if entitled < Decimal('0'):
+                    row_errors.append('Entitled Leave must not be negative.')
             except Exception:
                 row_errors.append('Balance must be a valid positive number.')
 

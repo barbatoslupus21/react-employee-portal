@@ -6,6 +6,7 @@ from .views import (
     TimelogsUploadView,
     TimelogDailyStatusView,
     UserTimelogsView,
+    UserDayTimelogView,
 )
 
 urlpatterns = [
@@ -14,4 +15,5 @@ urlpatterns = [
     path('upload',        TimelogsUploadView.as_view(),        name='timelogs-upload'),
     path('daily-status',  TimelogDailyStatusView.as_view(),    name='timelogs-daily-status'),
     path('user-logs',     UserTimelogsView.as_view(),          name='timelogs-user-logs'),
+    path('my-day',        UserDayTimelogView.as_view(),        name='timelogs-my-day'),
 ]
