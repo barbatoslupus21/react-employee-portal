@@ -28,6 +28,7 @@ import { TextShimmer } from "@/components/ui/text-shimmer";
 import { toast } from "@/components/ui/toast";
 import { getCsrfToken } from "@/lib/csrf";
 import { randomUUID } from "@/lib/uuid";
+import { cn } from "@/lib/utils";
 import {
   Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList,
 } from "@/components/ui/command";
@@ -1293,6 +1294,8 @@ export default function ProfileSettingsPage() {
   const [depts,     setDepts]     = useState<Dept[]>([]);
   const [lines,     setLines]     = useState<Line[]>([]);
   const [approvers, setApprovers] = useState<Approver[]>([]);
+  const [approverPopoverOpenMobile,  setApproverPopoverOpenMobile]  = useState(false);
+  const [approverPopoverOpenDesktop, setApproverPopoverOpenDesktop] = useState(false);
 
   // ── scroll refs for auto-reveal dropdowns ─────────────────────────────────
   const leftColRef  = useRef<HTMLDivElement>(null);
@@ -2142,10 +2145,51 @@ export default function ProfileSettingsPage() {
                             <motion.div key="approver-e-m" variants={FIELD_VARIANTS} initial="hidden" animate="visible">
                               <div className="flex flex-col gap-1.5">
                                 <label className="text-[10px] font-semibold uppercase text-[var(--color-text-muted)]">Approver</label>
-                                <Select value={draftProfile.work_info?.approver_id?.toString() ?? "none"} onValueChange={(v) => { const id = v === "none" ? null : parseInt(v, 10); const a = approvers.find((x) => x.id === id); updateDraft("work_info", { approver_id: id, approver_name: a?.name ?? null } as WorkInfo); }} disabled={!draftProfile.work_info?.department_id}>
-                                  <SelectTrigger><SelectValue placeholder="Select approver" /></SelectTrigger>
-                                  <SelectContent><SelectItem value="none">— None —</SelectItem>{approvers.map((a) => <SelectItem key={a.id} value={a.id.toString()}>{a.name}</SelectItem>)}</SelectContent>
-                                </Select>
+                                <Popover open={approverPopoverOpenMobile} onOpenChange={setApproverPopoverOpenMobile}>
+                                  <PopoverTrigger asChild>
+                                    <button
+                                      type="button"
+                                      role="combobox"
+                                      aria-expanded={approverPopoverOpenMobile}
+                                      disabled={!draftProfile.work_info?.department_id}
+                                      className="flex h-9 w-full items-center justify-between rounded-lg border px-3 py-2 text-xs bg-[var(--color-bg-elevated)] border-[var(--color-border-strong)] text-[var(--color-text-primary)] hover:border-[var(--color-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)] disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                      <span className={draftProfile.work_info?.approver_name ? "" : "text-[var(--color-text-muted)]"}>
+                                        {draftProfile.work_info?.approver_name ?? "Select approver"}
+                                      </span>
+                                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 text-[var(--color-text-muted)]" />
+                                    </button>
+                                  </PopoverTrigger>
+                                  <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0 rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-bg-elevated)] shadow-lg" align="start" sideOffset={4}>
+                                    <Command>
+                                      <CommandInput placeholder="Search approver..." className="h-8 text-xs text-[var(--color-text-primary)] placeholder:text-[var(--color-text-muted)]" />
+                                      <CommandList className="overscroll-contain max-h-48">
+                                        <CommandEmpty className="py-4 text-center text-xs text-[var(--color-text-muted)]">No approver found.</CommandEmpty>
+                                        <CommandGroup>
+                                          <CommandItem
+                                            value="none"
+                                            onSelect={() => { updateDraft("work_info", { approver_id: null, approver_name: null } as WorkInfo); setApproverPopoverOpenMobile(false); }}
+                                            className="flex items-center gap-2 rounded-md px-3 py-2 text-xs cursor-pointer text-[var(--color-text-muted)] hover:bg-[var(--color-bg-card)]"
+                                          >
+                                            <Check className={cn("h-4 w-4 shrink-0", draftProfile.work_info?.approver_id == null ? "opacity-100" : "opacity-0")} />
+                                            — None —
+                                          </CommandItem>
+                                          {approvers.map((a) => (
+                                            <CommandItem
+                                              key={a.id}
+                                              value={a.name}
+                                              onSelect={() => { updateDraft("work_info", { approver_id: a.id, approver_name: a.name } as WorkInfo); setApproverPopoverOpenMobile(false); }}
+                                              className={cn("flex items-center gap-2 rounded-md px-3 py-2 text-xs cursor-pointer text-[var(--color-text-primary)] hover:bg-[var(--color-bg-card)]", draftProfile.work_info?.approver_id === a.id && "bg-[var(--color-bg-card)]")}
+                                            >
+                                              <Check className={cn("h-4 w-4 shrink-0", draftProfile.work_info?.approver_id === a.id ? "opacity-100" : "opacity-0")} />
+                                              {a.name}
+                                            </CommandItem>
+                                          ))}
+                                        </CommandGroup>
+                                      </CommandList>
+                                    </Command>
+                                  </PopoverContent>
+                                </Popover>
                               </div>
                             </motion.div>
                           ) : <motion.div key="approver-v-m" initial={{ opacity: 1 }} exit={{ opacity: 0 }}><ReadField label="Approver" value={draftProfile.work_info?.approver_name} /></motion.div>}
@@ -2246,10 +2290,51 @@ export default function ProfileSettingsPage() {
                           <motion.div key="e" variants={FIELD_VARIANTS} initial="hidden" animate="visible">
                             <div className="flex flex-col gap-1.5">
                               <label className="text-[10px] font-semibold uppercase text-[var(--color-text-muted)]">Approver</label>
-                              <Select value={draftProfile.work_info?.approver_id?.toString() ?? "none"} onValueChange={(v) => { const id = v === "none" ? null : parseInt(v, 10); const a = approvers.find((x) => x.id === id); updateDraft("work_info", { approver_id: id, approver_name: a?.name ?? null } as WorkInfo); }} disabled={!draftProfile.work_info?.department_id}>
-                                <SelectTrigger><SelectValue placeholder="Select approver" /></SelectTrigger>
-                                <SelectContent><SelectItem value="none">— None —</SelectItem>{approvers.map((a) => <SelectItem key={a.id} value={a.id.toString()}>{a.name}</SelectItem>)}</SelectContent>
-                              </Select>
+                              <Popover open={approverPopoverOpenDesktop} onOpenChange={setApproverPopoverOpenDesktop}>
+                                <PopoverTrigger asChild>
+                                  <button
+                                    type="button"
+                                    role="combobox"
+                                    aria-expanded={approverPopoverOpenDesktop}
+                                    disabled={!draftProfile.work_info?.department_id}
+                                    className="flex h-9 w-full items-center justify-between rounded-lg border px-3 py-2 text-xs bg-[var(--color-bg-elevated)] border-[var(--color-border-strong)] text-[var(--color-text-primary)] hover:border-[var(--color-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)] disabled:opacity-50 disabled:cursor-not-allowed"
+                                  >
+                                    <span className={draftProfile.work_info?.approver_name ? "" : "text-[var(--color-text-muted)]"}>
+                                      {draftProfile.work_info?.approver_name ?? "Select approver"}
+                                    </span>
+                                    <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 text-[var(--color-text-muted)]" />
+                                  </button>
+                                </PopoverTrigger>
+                                <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0 rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-bg-elevated)] shadow-lg" align="start" sideOffset={4}>
+                                  <Command>
+                                    <CommandInput placeholder="Search approver..." className="h-8 text-xs text-[var(--color-text-primary)] placeholder:text-[var(--color-text-muted)]" />
+                                    <CommandList className="overscroll-contain max-h-48">
+                                      <CommandEmpty className="py-4 text-center text-xs text-[var(--color-text-muted)]">No approver found.</CommandEmpty>
+                                      <CommandGroup>
+                                        <CommandItem
+                                          value="none"
+                                          onSelect={() => { updateDraft("work_info", { approver_id: null, approver_name: null } as WorkInfo); setApproverPopoverOpenDesktop(false); }}
+                                          className="flex items-center gap-2 rounded-md px-3 py-2 text-xs cursor-pointer text-[var(--color-text-muted)] hover:bg-[var(--color-bg-card)]"
+                                        >
+                                          <Check className={cn("h-4 w-4 shrink-0", draftProfile.work_info?.approver_id == null ? "opacity-100" : "opacity-0")} />
+                                          — None —
+                                        </CommandItem>
+                                        {approvers.map((a) => (
+                                          <CommandItem
+                                            key={a.id}
+                                            value={a.name}
+                                            onSelect={() => { updateDraft("work_info", { approver_id: a.id, approver_name: a.name } as WorkInfo); setApproverPopoverOpenDesktop(false); }}
+                                            className={cn("flex items-center gap-2 rounded-md px-3 py-2 text-xs cursor-pointer text-[var(--color-text-primary)] hover:bg-[var(--color-bg-card)]", draftProfile.work_info?.approver_id === a.id && "bg-[var(--color-bg-card)]")}
+                                          >
+                                            <Check className={cn("h-4 w-4 shrink-0", draftProfile.work_info?.approver_id === a.id ? "opacity-100" : "opacity-0")} />
+                                            {a.name}
+                                          </CommandItem>
+                                        ))}
+                                      </CommandGroup>
+                                    </CommandList>
+                                  </Command>
+                                </PopoverContent>
+                              </Popover>
                             </div>
                           </motion.div>
                         ) : <motion.div key="v" initial={{ opacity: 1 }} exit={{ opacity: 0 }}><ReadField label="Approver" value={draftProfile.work_info?.approver_name} /></motion.div>}

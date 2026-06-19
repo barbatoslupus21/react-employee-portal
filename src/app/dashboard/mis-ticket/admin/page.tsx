@@ -286,8 +286,10 @@ function DiagnoseModal({ ticket, onClose }: { ticket: MISTicket; onClose: () => 
         pk: ticket.id,
         data: form,
       });
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      await new Promise((resolve) => setTimeout(resolve, 600));
       onClose();
+    } catch {
+      // Error is handled by onError callback (toast.error). Keep modal open.
     } finally {
       setBusy(false);
     }

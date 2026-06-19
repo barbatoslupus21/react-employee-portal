@@ -708,7 +708,7 @@ class AdminMISDiagnoseView(APIView):
 
         data = request.data
         required_fields = ['diagnosis', 'action_taken', 'possible_reason', 'status']
-        errors = {f: ['This field is required.'] for f in required_fields if not data.get(f, '').strip()}
+        errors = {f: ['This field is required.'] for f in required_fields if not str(data.get(f) or '').strip()}
         if errors:
             return Response(errors, status=status.HTTP_400_BAD_REQUEST)
 

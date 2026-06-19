@@ -1380,6 +1380,7 @@ export default function DashboardLayout({
           const preferredTheme = userData.theme ? 'dark' : 'light';
           document.documentElement.setAttribute('data-theme', preferredTheme);
           localStorage.setItem('repconnect-theme', preferredTheme);
+          sessionStorage.setItem('mis_user', String(userData.mis ?? false));
         } catch {
           /* ignore */
         }

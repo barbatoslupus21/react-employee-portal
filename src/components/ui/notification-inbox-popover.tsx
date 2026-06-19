@@ -133,8 +133,14 @@ export function NotificationInboxPopover() {
       headers:     { 'X-CSRFToken': getCsrfToken() },
     }).catch(() => {/* silent */});
 
-    // Navigate to the relevant module page
-    const route = getModuleRoute(n.module);
+    // Navigate to the relevant module page.
+    // For MIS ticket notifications, MIS admins (mis=true) go to the admin page.
+    let route = getModuleRoute(n.module);
+    if (n.module === 'mis-ticket') {
+      const isMIS = typeof window !== 'undefined' &&
+        sessionStorage.getItem('mis_user') === 'true';
+      route = isMIS ? '/dashboard/mis-ticket/admin' : '/dashboard/mis-ticket';
+    }
     setOpen(false);
     router.push(route);
   }

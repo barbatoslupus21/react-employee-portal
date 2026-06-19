@@ -1129,14 +1129,15 @@ class PRFAdminExportView(APIView):
         def _build_ma_sheet(ws, qs_ma):
             headers = [
                 'Medicine Allowance Control Number', 'ID Number', 'Employee Name',
-                'Position', 'Department', 'Amount', 'Period Covered',
+                'Position', 'Department', 'Status', 'Amount', 'Period Covered',
             ]
             _apply_header(
                 ws,
                 f'Medicine Allowance Report for {_fmt_date_abb(date_from)} to {_fmt_date_abb(date_to)}',
                 headers,
-                [32, 13, 28, 22, 20, 13, 30],
+                [32, 13, 28, 22, 20, 15, 13, 30],
             )
+            STATUS_COL = 6
             for row_num, prf in enumerate(qs_ma, start=5):
                 emp   = prf.employee
                 wi    = _get_wi(prf)
@@ -1155,13 +1156,21 @@ class PRFAdminExportView(APIView):
                     ', '.join(parts),
                     position,
                     department,
+                    prf.get_status_display(),
                     amount,
                     period,
                 ]
                 for col, val in enumerate(row_vals, start=1):
                     cell           = ws.cell(row=row_num, column=col, value=val)
                     cell.border    = thin_border
-                    cell.alignment = Alignment(vertical='top', wrap_text=(col == 7))
+                    cell.alignment = Alignment(vertical='top', wrap_text=(col == 8))
+                    if col == STATUS_COL:
+                        sf = STATUS_FILL.get(prf.status)
+                        sc = STATUS_FONT_COLOR.get(prf.status)
+                        if sf:
+                            cell.fill = sf
+                        if sc:
+                            cell.font = Font(color=sc)
 
         # ── Assemble workbook ─────────────────────────────────────────
         wb  = Workbook()

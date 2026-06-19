@@ -21,7 +21,7 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
       csrfToken = await seedCsrfCookie();
     }
 
-    const refreshRes = await fetch(`${API}/auth/token/refresh`, {
+    const refreshRes = await fetch('/api/auth/token/refresh', {
       method: 'POST',
       credentials: 'include',
       headers: { 'X-CSRFToken': csrfToken },

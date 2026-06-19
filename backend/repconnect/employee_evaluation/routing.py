@@ -123,7 +123,15 @@ def _resolve_rule_middle_steps(employee, rule, full_chain: list) -> list[tuple]:
     """
     Resolve each EvaluationRoutingRuleStep to a concrete approver.
     Returns list of ('manager', approver_instance) tuples.
-    Raises ValidationError if a step cannot be resolved.
+
+    All steps are bypassable: if a step's target positions are not found
+    in the approver chain, it is silently skipped (logged at WARNING for
+    step 1, INFO for steps 2+). The empty-chain guard in
+    build_evaluation_approval_chain() catches the case where every step
+    is bypassed and raises a clear ValidationError.
+
+    A step with NO target_positions configured is always a hard error
+    (admin misconfiguration, not an org-chart gap).
     """
     from userProfile.models import workInformation
 
@@ -161,12 +169,17 @@ def _resolve_rule_middle_steps(employee, rule, full_chain: list) -> list[tuple]:
 
         if not matched:
             pos_names = ', '.join(step.target_positions.values_list('name', flat=True))
-            raise ValidationError(
-                f'Employee evaluation cannot be processed: routing rule "{rule.description}" '
-                f'step {step.step_order} requires a position [{pos_names}] in the approver chain '
-                f'of {employee}, but no matching person was found. '
-                'Please contact the system administrator.'
+            # Step 1 bypass is logged at WARNING so org-chart gaps are visible
+            # in ops logs even though the submission still proceeds.
+            log = logger.warning if step.step_order == 1 else logger.info
+            log(
+                'employee_evaluation.routing: step %d [%s] not found in approver chain '
+                'for employee_id=%d (rule_id=%d) — step bypassed',
+                step.step_order, pos_names, employee.pk, rule.pk,
             )
+            # chain_start_idx intentionally NOT advanced: the next step
+            # searches from the same position so it can pick up where
+            # the bypassed step left off.
 
     return resolved
 
@@ -179,7 +192,7 @@ def build_evaluation_approval_chain(entry):
     - Uses EvaluationRoutingRule (module='employee_evaluation').
     - Falls back to single direct approver if no rule matches.
     - Raises ValidationError if the chain is empty.
-    - Raises ValidationError if deduplication reduces chain below rule step count.
+    - Steps not found in the chain are bypassed (WARNING logged for step 1).
     """
     from training.models import EvaluationRoutingRule
     from employee_evaluation.models import EvaluationApprovalStep
@@ -270,17 +283,6 @@ def build_evaluation_approval_chain(entry):
         if deduped and step[1] and deduped[-1][1] and step[1].pk == deduped[-1][1].pk:
             continue
         deduped.append(step)
-
-    # ── Guard: deduplication must not reduce below the rule's step count ──
-    if matching_rule is not None:
-        expected_count = matching_rule.steps.count()
-        if len(deduped) < expected_count:
-            raise ValidationError(
-                f'Routing rule "{matching_rule.description}" requires {expected_count} '
-                f'approver(s), but only {len(deduped)} unique approver(s) could be resolved. '
-                'Two steps may have resolved to the same person. '
-                'Please review the routing rule configuration or contact HR.'
-            )
 
     # ── Persist approval steps ────────────────────────────────────────────
     created: list[EvaluationApprovalStep] = []

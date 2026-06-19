@@ -772,9 +772,9 @@ class AdminTasklistListView(APIView):
         eligible = _eligible_users_for_period(period.start_date)
         if search:
             eligible = eligible.filter(
-                Q(first_name__icontains=search) |
-                Q(last_name__icontains=search) |
-                Q(username__icontains=search)
+                Q(firstname__icontains=search) |
+                Q(lastname__icontains=search) |
+                Q(idnumber__icontains=search)
             )
 
         department_ids = [
@@ -1727,8 +1727,9 @@ class ApproverQueueView(APIView):
         search = request.query_params.get('search', '').strip()
         if search:
             qs = qs.filter(
-                Q(employee__first_name__icontains=search) |
-                Q(employee__last_name__icontains=search)
+                Q(employee__firstname__icontains=search) |
+                Q(employee__lastname__icontains=search) |
+                Q(employee__idnumber__icontains=search)
             )
 
         items, total, page, size = _paginate(qs, request)

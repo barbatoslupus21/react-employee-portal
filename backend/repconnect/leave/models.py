@@ -81,6 +81,7 @@ class LeaveBalance(models.Model):
     period_end = models.DateField()
     entitled_leave = models.DecimalField(max_digits=6, decimal_places=1)
     used_leave = models.DecimalField(max_digits=6, decimal_places=1, default=Decimal('0'))
+    uploaded_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

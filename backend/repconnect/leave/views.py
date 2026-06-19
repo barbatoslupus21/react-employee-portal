@@ -560,6 +560,12 @@ def _deduct_leave_balance(leave_request) -> tuple[Decimal, Decimal] | None:
         )
         return None
 
+    # Skip deduction for leaves approved before the balance was uploaded.
+    # The admin already accounted for those in the uploaded used_leave value.
+    if balance.uploaded_at and leave_request.hr_approved_at:
+        if leave_request.hr_approved_at < balance.uploaded_at:
+            return None
+
     deduct_hours = Decimal(str(getattr(leave_request, 'total_hours', leave_request.hours)))
     remaining = max(balance.entitled_leave - balance.used_leave, Decimal('0'))
     deduct = min(deduct_hours, remaining)
@@ -1055,6 +1061,23 @@ class LeaveRequestEditView(APIView):
         d = ser.validated_data
         leave_type = d['leave_type']
 
+        # lr.status stays 'pending' for the entire routing lifecycle (it only
+        # changes to approved/disapproved/cancelled at the very end), so it
+        # cannot be used to tell whether any approver has acted yet. Check the
+        # steps directly: once at least one has been approved/disapproved,
+        # the leave type is locked (changing it would require re-routing,
+        # e.g. adding/removing the Clinic step, which would discard real
+        # approval history). Other fields (dates, reason, remarks) remain
+        # editable regardless of routing progress.
+        leave_type_changed = leave_type.pk != lr.leave_type_id
+        routing_started = leave_type_changed and lr.approval_steps.exclude(status='pending').exists()
+        if routing_started:
+            return Response(
+                {'leave_type': 'Leave type can no longer be changed because at least one approver has '
+                               'already reviewed this request.'},
+                status=http_status.HTTP_400_BAD_REQUEST,
+            )
+
         # Overlap check — exclude the request being edited
         overlap = LeaveRequest.objects.filter(
             employee=request.user,
@@ -1083,6 +1106,16 @@ class LeaveRequestEditView(APIView):
             'leave_type', 'reason', 'subreason', 'date_start', 'date_end',
             'total_hours', 'total_days', 'hours', 'days_count', 'is_deductible', 'remarks', 'updated_at',
         ])
+
+        if leave_type_changed:
+            # Rebuild the approval chain so it reflects the new leave_type —
+            # e.g. switching to a leave type that requires_clinic_approval
+            # must add the Clinic step, which the stale chain built at
+            # original submission time would otherwise be missing. Safe
+            # because routing_started (checked above) was False here.
+            lr.approval_steps.all().delete()
+            build_approval_chain(lr)
+            transaction.on_commit(lambda: _notify_next_approver(lr.pk))
 
         return Response(
             LeaveRequestDetailSerializer(lr, context={'request': request}).data
@@ -1787,8 +1820,9 @@ class AdminLeaveBalanceTemplateView(APIView):
                 'Period Start',
                 'Period End',
                 'Balance (Days)',
+                'Used Leave (Days)',
             ]
-            sample_row = ['10001', 'Surname, Firstname', 'Vacation Leave', '2026-01-01', '2026-12-31', '10']
+            sample_row = ['10001', 'Surname, Firstname', 'Vacation Leave', '2026-01-01', '2026-12-31', '10', '0']
             header_fill = PatternFill(start_color='2845D6', end_color='2845D6', fill_type='solid')
             header_font = Font(color='FFFFFF', bold=True)
             border = Border(
@@ -1812,7 +1846,7 @@ class AdminLeaveBalanceTemplateView(APIView):
                 cell.border = border
                 cell.font = Font(color='FF888888', italic=True)
 
-            widths = [16, 24, 20, 14, 14, 16]
+            widths = [16, 24, 20, 14, 14, 16, 16]
             for idx, width in enumerate(widths, start=1):
                 ws.column_dimensions[openpyxl.utils.get_column_letter(idx)].width = width
 
@@ -1884,6 +1918,7 @@ class AdminBulkBalanceUploadView(APIView):
             'Period Start',
             'Period End',
             'Balance (Days)',
+            'Used Leave (Days)',
         ]
 
         def col(name, alternates=None):
@@ -1898,6 +1933,7 @@ class AdminBulkBalanceUploadView(APIView):
         col_ps = col('Period Start')
         col_pe = col('Period End')
         col_el = col('Balance (Days)', alternates=['Entitled Leave (days)', 'Entitled Leave'])
+        col_ul = col('Used Leave (Days)')  # optional column
 
         if any(c == -1 for c in [col_id, col_lt, col_ps, col_pe, col_el]):
             return Response(
@@ -1920,6 +1956,7 @@ class AdminBulkBalanceUploadView(APIView):
             period_start_raw = row[col_ps]
             period_end_raw = row[col_pe]
             entitled_raw = row[col_el]
+            used_raw = row[col_ul] if col_ul != -1 and col_ul < len(row) else None
 
             row_errors = []
             employee = None
@@ -1927,6 +1964,7 @@ class AdminBulkBalanceUploadView(APIView):
             period_start = None
             period_end = None
             entitled = None
+            used_days = Decimal('0')
 
             # ID Number
             if not id_number:
@@ -1982,13 +2020,26 @@ class AdminBulkBalanceUploadView(APIView):
             if period_start and period_end and period_end < period_start:
                 row_errors.append('Period End cannot be before Period Start.')
 
-            # Entitled Leave
+            # Entitled Leave — treat None and blank string as missing, but allow 0
             try:
-                entitled = Decimal(str(entitled_raw or '')).quantize(Decimal('0.1'))
+                if entitled_raw is None or (isinstance(entitled_raw, str) and not entitled_raw.strip()):
+                    raise ValueError('missing')
+                entitled = Decimal(str(entitled_raw)).quantize(Decimal('0.1'))
                 if entitled < Decimal('0'):
                     row_errors.append('Entitled Leave must not be negative.')
             except Exception:
-                row_errors.append('Balance must be a valid positive number.')
+                row_errors.append('Balance must be a valid number (0 or greater).')
+
+            # Used Leave — optional, defaults to 0; negative values are rejected
+            if used_raw is not None and not (isinstance(used_raw, str) and not str(used_raw).strip()):
+                try:
+                    used_days = Decimal(str(used_raw)).quantize(Decimal('0.1'))
+                    if used_days < Decimal('0'):
+                        row_errors.append('Used Leave (Days) must not be negative.')
+                    elif entitled is not None and used_days > entitled:
+                        row_errors.append('Used Leave (Days) cannot exceed Balance (Days).')
+                except Exception:
+                    row_errors.append('Used Leave (Days) must be a valid number (0 or greater).')
 
             if row_errors:
                 errors.append({'row': row_num, 'errors': '; '.join(row_errors), 'data': row})
@@ -1999,6 +2050,7 @@ class AdminBulkBalanceUploadView(APIView):
                     'period_start': period_start,
                     'period_end': period_end,
                     'entitled_leave_days': entitled,
+                    'used_leave_days': used_days,
                     'row': row_num,
                 })
 
@@ -2028,14 +2080,20 @@ class AdminBulkBalanceUploadView(APIView):
             return response
 
         # All rows valid — save
+        upload_time = timezone.now()
         for r in valid_rows:
             entitled_hours = (r['entitled_leave_days'] * hours_per_day).quantize(Decimal('0.1'))
+            used_hours = (r['used_leave_days'] * hours_per_day).quantize(Decimal('0.1'))
             LeaveBalance.objects.update_or_create(
                 employee=r['employee'],
                 leave_type=r['leave_type'],
                 period_start=r['period_start'],
                 period_end=r['period_end'],
-                defaults={'entitled_leave': entitled_hours},
+                defaults={
+                    'entitled_leave': entitled_hours,
+                    'used_leave': used_hours,
+                    'uploaded_at': upload_time,
+                },
             )
 
         return Response({'detail': f'{len(valid_rows)} balance record(s) saved successfully.'})
