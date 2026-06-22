@@ -1372,6 +1372,10 @@ class MyEvaluationBadgeView(APIView):
         if not _eligible_users_for_period(period.start_date).filter(pk=user.pk).exists():
             return Response({'pending_count': 0})
 
+        # No tasklist or empty tasklist → nothing to evaluate, badge stays 0.
+        if not EmployeeTask.objects.filter(tasklist__employee=user).exists():
+            return Response({'pending_count': 0})
+
         labels = _build_period_labels(period.frequency)
         today = date_cls.today()
 
