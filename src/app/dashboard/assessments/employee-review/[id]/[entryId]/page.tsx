@@ -516,7 +516,15 @@ function EvalReadOnlySection({ ev }: { ev: SupervisorEvalData }) {
 
 // ── Approval History Timeline ─────────────────────────────────────────────────
 
-function ApprovalHistoryTimeline({ entries, loading }: { entries: EvalTimelineEntry[]; loading: boolean }) {
+function ApprovalHistoryTimeline({
+  entries,
+  loading,
+  approvalSteps,
+}: {
+  entries: EvalTimelineEntry[];
+  loading: boolean;
+  approvalSteps: ApprovalStep[];
+}) {
   if (loading) {
     return (
       <div className="space-y-3">
@@ -533,7 +541,13 @@ function ApprovalHistoryTimeline({ entries, loading }: { entries: EvalTimelineEn
       </div>
     );
   }
-  if (!entries.length) return null;
+
+  // Find the current active (pending + activated) approver step to show as the current step in the timeline
+  const currentStep = approvalSteps.find(
+    s => s.status === 'pending' && s.activated_at !== null,
+  ) ?? null;
+
+  if (!entries.length && !currentStep) return null;
 
   const items: TimelineItem[] = entries.map(entry => {
     const tlStatus = EVAL_TIMELINE_STATUS[entry.action_type] ?? 'pending';
@@ -560,6 +574,29 @@ function ApprovalHistoryTimeline({ entries, loading }: { entries: EvalTimelineEn
       status: tlStatus,
     };
   });
+
+  // Append current pending approver as the last timeline item (yellow)
+  if (currentStep) {
+    items.push({
+      id: `current-step-${currentStep.id}`,
+      title: (
+        <p className="text-xs font-medium text-yellow-700 dark:text-yellow-400">
+          {currentStep.approver_name ?? 'Pending Approver'}
+        </p>
+      ),
+      description: (
+        <div className="flex flex-wrap items-center gap-2">
+          <StatusPill status="pending" label="Awaiting Review" />
+          {currentStep.activated_at && (
+            <span className="text-[11px] text-[var(--color-text-muted)]">
+              Since {formatDateTime(currentStep.activated_at)}
+            </span>
+          )}
+        </div>
+      ),
+      status: 'pending',
+    });
+  }
 
   return (
     <div className="space-y-3 border border-[var(--color-border)] rounded-lg bg-[var(--color-bg-elevated)] p-4 shadow-[var(--shadow-sm)]">
@@ -794,7 +831,11 @@ export default function AdminEvalEntryDetailPage() {
 
           {/* Section 5: Approval History Timeline */}
           <section>
-            <ApprovalHistoryTimeline entries={timeline} loading={loadingTimeline} />
+            <ApprovalHistoryTimeline
+              entries={timeline}
+              loading={loadingTimeline}
+              approvalSteps={detail.approval_steps}
+            />
           </section>
         </div>
       ) : (

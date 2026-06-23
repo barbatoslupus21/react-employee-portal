@@ -542,10 +542,44 @@ function ScoreTable({ tasks, scoreMap, onChange, readOnly, groups, frequency, pe
                     const supVal = supervisorScores?.[supKey];
 
                     if (hasSupervisorScores && isPast) {
-                      // Dual: Self (read-only) + Supervisor (read-only from API)
                       return [
-                        <td key={`${label}-self`} className={cn('border-r border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2 py-2 text-center', !isLastRow && 'border-b')}>
-                          <span className="text-xs text-[var(--color-text-muted)]">{formatScoreCellValue(selfVal)}</span>
+                        <td key={`${label}-self`} className={cn('border-r border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-1 text-center', !isLastRow && 'border-b')}>
+                          {readOnly ? (
+                            <span className="text-xs text-[var(--color-text-muted)]">{formatScoreCellValue(selfVal)}</span>
+                          ) : (
+                            <input
+                              data-score-input="true"
+                              data-task-index={taskIndex}
+                              data-label={label}
+                              type="number"
+                              step="1"
+                              min="0"
+                              max="5"
+                              value={selfVal ?? ''}
+                              onChange={e => {
+                                const raw = e.target.value;
+                                if (raw === '') { onChange(task.name, label, ''); return; }
+                                if (!/^[0-9]+$/.test(raw)) return;
+                                const n = parseInt(raw, 10);
+                                if (n < 0 || n > 5) return;
+                                onChange(task.name, label, String(n));
+                              }}
+                              onKeyDown={e => {
+                                if (e.key !== 'Enter') return;
+                                e.preventDefault();
+                                focusNextInputBelow(taskIndex, label);
+                              }}
+                              placeholder="—"
+                              className={cn(
+                                'rounded-sm border p-2 text-center w-full text-xs focus:outline-none focus:ring-1 focus:ring-[#CFECF3] transition-colors [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none',
+                                isScoreOutOfRange(selfVal)
+                                  ? 'border-orange-400 bg-orange-50 dark:bg-orange-950/20 focus:ring-orange-400'
+                                  : (submitAttempted && !isScoreValid(selfVal))
+                                    ? 'border-red-500 bg-red-50 dark:bg-red-950/20 focus:ring-red-500'
+                                    : 'border-[var(--color-border)] bg-[var(--color-bg-elevated)] focus:ring-[#2845D6]',
+                              )}
+                            />
+                          )}
                         </td>,
                         <td key={`${label}-sup`} className={cn('border-r border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2 py-2 text-center', !isLastRow && 'border-b')}>
                           <span className="text-xs text-[var(--color-text-primary)]">{formatScoreCellValue(supVal)}</span>
@@ -872,7 +906,8 @@ export default function SelfEvaluationPage() {
 
   const readOnly = useMemo(() => {
     if (!data) return true;
-    return data.entry.status !== 'pending';
+    // Allow editing both when pending (draft) and when returned for re-evaluation
+    return data.entry.status !== 'pending' && data.entry.status !== 'returned';
   }, [data]);
 
   const allValid = useMemo(() => {
@@ -1087,7 +1122,7 @@ export default function SelfEvaluationPage() {
   const { period, entry, tasklist, period_labels } = data;
   const hasAssignedTasks = tasklist.length > 0;
   const hasEditableColumns = !readOnly && hasAssignedTasks && period_labels.some(label => !futureLabels.has(label));
-  const canShowSubmitButton = entry.status === 'pending' && hasEditableColumns;
+  const canShowSubmitButton = (entry.status === 'pending' || entry.status === 'returned') && hasEditableColumns;
   const isReturned = entry.status === 'returned';
   const isCompleted = entry.status === 'completed' || entry.status === 'disapproved';
   const returnedRemarks = entry.approval_steps

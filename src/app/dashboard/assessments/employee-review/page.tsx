@@ -550,7 +550,7 @@ function TasklistViewModal({
                               <button
                                 onClick={cancelEditing}
                                 disabled={isSaving}
-                                className="shrink-0 flex items-center justify-center h-8 w-8 rounded-md text-[var(--color-text-muted)] hover:text-red-500 hover:bg-red-50 transition-colors disabled:opacity-50"
+                                className="shrink-0 flex items-center justify-center h-8 w-8 rounded-md text-[var(--color-text-muted)] hover:text-red-500 hover:bg-red-500/10 transition-colors disabled:opacity-50"
                                 title="Cancel"
                               >
                                 <X size={14} />
@@ -578,7 +578,7 @@ function TasklistViewModal({
                             <button
                               onClick={() => confirmDeleteTask(task)}
                               disabled={isBusy}
-                              className="shrink-0 flex items-center justify-center h-6 w-6 rounded-md text-[var(--color-text-muted)] opacity-0 group-hover:opacity-100 hover:text-red-500 hover:bg-red-50 transition-all disabled:opacity-30"
+                              className="shrink-0 flex items-center justify-center h-6 w-6 rounded-md text-[var(--color-text-muted)] opacity-0 group-hover:opacity-100 hover:text-red-500 hover:bg-red-500/10 transition-all disabled:opacity-30"
                               title="Delete task"
                             >
                               <X size={12} />

@@ -686,10 +686,11 @@ class AdminEntryListView(APIView):
 
 
 class AdminEntryDetailView(APIView):
-    """GET /api/employee-eval/admin/entries/<entry_id> — admin view of a single entry.
+    """GET /DELETE /api/employee-eval/admin/entries/<entry_id> — admin view or delete of a single entry.
 
     Equivalent to ApproverEntryDetailView but accessible to any admin or HR user
     without requiring them to be an approver on the entry.
+    DELETE removes both the employee's self-evaluation entry and the supervisor's evaluation.
     """
     permission_classes = [IsAuthenticated]
 
@@ -709,6 +710,20 @@ class AdminEntryDetailView(APIView):
             return Response({'detail': 'Not found.'}, status=http_status.HTTP_404_NOT_FOUND)
 
         return Response(EvalApproverEntryDetailSerializer(entry, context={'request': request}).data)
+
+    @transaction.atomic
+    def delete(self, request, entry_id):
+        err = _require_admin_or_hr(request)
+        if err:
+            return err
+
+        try:
+            entry = EvaluationEntry.objects.select_for_update().get(pk=entry_id)
+        except EvaluationEntry.DoesNotExist:
+            return Response({'detail': 'Not found.'}, status=http_status.HTTP_404_NOT_FOUND)
+
+        entry.delete()
+        return Response(status=http_status.HTTP_204_NO_CONTENT)
 
 
 class AdminChartView(APIView):
@@ -1466,8 +1481,9 @@ class MyScoreSaveView(APIView):
             return Response(serializer.errors, status=http_status.HTTP_400_BAD_REQUEST)
 
         valid_labels = set(_build_period_labels(period.frequency))
+        validated_items: list = serializer.validated_data if isinstance(serializer.validated_data, list) else []
 
-        for item in serializer.validated_data:
+        for item in validated_items:
             task_name    = item['task_name']
             period_label = item['period_label']
             score        = item.get('score')

@@ -9,6 +9,7 @@ import {
   ClipboardList,
   Download,
   Eye,
+  Trash2,
   Users,
 } from 'lucide-react';
 import { useParams, useRouter } from 'next/navigation';
@@ -19,7 +20,9 @@ import { AdminTableSection } from '@/components/ui/admin-table-section';
 import type { DataTableColumn } from '@/components/ui/data-table';
 import { FilterListContent } from '@/components/ui/admin-table-accordion';
 import type { FilterOption } from '@/components/ui/admin-table-accordion';
+import { ConfirmationModal } from '@/components/ui/confirmation-modal';
 import { toast } from '@/components/ui/toast';
+import { getCsrfToken } from '@/lib/csrf';
 import { cn } from '@/lib/utils';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -97,7 +100,6 @@ const ALL_STATUS_OPTIONS: FilterOption[] = [
   { value: 'not_started',           label: 'Not Started' },
   { value: 'pending',               label: 'Pending' },
   { value: 'supervisor_review',     label: 'Supervisor Review' },
-  { value: 'user_confirmation',     label: 'User Confirmation' },
   { value: 'final_approval',        label: 'Awaiting Final Approval' },
   { value: 'second_final_approval', label: 'Under Second Review' },
   { value: 'returned',              label: 'Returned for Revision' },
@@ -210,6 +212,8 @@ function PeriodResultsContent({ periodId }: { periodId: number }) {
   const [deptFilter, setDeptFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [exportPhase, setExportPhase] = useState<'idle' | 'checking' | 'downloading'>('idle');
+  const [deleteTarget, setDeleteTarget] = useState<EntryRow | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const skeletonRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -333,6 +337,30 @@ function PeriodResultsContent({ periodId }: { periodId: number }) {
     }
   };
 
+  const handleDeleteConfirm = async () => {
+    if (!deleteTarget?.id) return;
+    setDeleting(true);
+    try {
+      const csrf = await getCsrfToken();
+      const res = await fetch(`/api/employee-eval/admin/entries/${deleteTarget.id}`, {
+        method: 'DELETE',
+        headers: { 'X-CSRFToken': csrf },
+        credentials: 'include',
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as { detail?: string }).detail ?? 'Delete failed.');
+      }
+      toast.success(`Evaluation for ${deleteTarget.employee_name} has been deleted.`);
+      setDeleteTarget(null);
+      fetchResults(page, search, sortField, sortDir, deptFilter, statusFilter);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to delete evaluation.', { title: 'Error' });
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   const columns: DataTableColumn<EntryRow>[] = [
     {
       key: 'idnumber',
@@ -406,19 +434,31 @@ function PeriodResultsContent({ periodId }: { periodId: number }) {
       label: 'Action',
       headerAlign: 'center',
       thClassName: 'text-center',
-      tdClassName: 'text-center flex items-center justify-center',
+      tdClassName: 'text-center',
       render: (row: EntryRow) => (
         row.id === null ? (
           <span className="block text-center text-xs text-[var(--color-text-muted)]">—</span>
         ) : (
-          <button
-            type="button"
-            title="View evaluation"
-            onClick={() => router.push(`/dashboard/assessments/employee-review/${periodId}/${row.id}`)}
-            className="flex h-6 w-6 items-center justify-center rounded-md text-[var(--color-text-muted)] hover:bg-[#2845D6]/10 hover:text-[#2845D6] transition-colors"
-          >
-            <Eye size={12} />
-          </button>
+          <div className="flex items-center justify-center gap-1">
+            <button
+              type="button"
+              title="View evaluation"
+              onClick={() => router.push(`/dashboard/assessments/employee-review/${periodId}/${row.id}`)}
+              className="flex h-6 w-6 items-center justify-center rounded-md text-[var(--color-text-muted)] hover:bg-[#2845D6]/10 hover:text-[#2845D6] transition-colors"
+            >
+              <Eye size={12} />
+            </button>
+            {row.status !== 'not_started' && row.status !== 'pending' && (
+              <button
+                type="button"
+                title="Delete evaluation"
+                onClick={() => setDeleteTarget(row)}
+                className="flex h-6 w-6 items-center justify-center rounded-md text-[var(--color-text-muted)] hover:bg-red-500/10 hover:text-red-500 transition-colors"
+              >
+                <Trash2 size={12} />
+              </button>
+            )}
+          </div>
         )
       ),
     },
@@ -540,6 +580,19 @@ function PeriodResultsContent({ periodId }: { periodId: number }) {
           emptyIcons={[Users, ClipboardList, BarChart2]}
         />
       </section>
+
+      {/* Delete confirmation modal */}
+      {deleteTarget && (
+        <ConfirmationModal
+          title="Delete Evaluation?"
+          message={`This will permanently delete the self-evaluation and supervisor evaluation for ${deleteTarget.employee_name}. This action cannot be undone.`}
+          confirmLabel="Yes, delete evaluation"
+          confirmVariant="danger"
+          onConfirm={handleDeleteConfirm}
+          onCancel={() => setDeleteTarget(null)}
+          confirming={deleting}
+        />
+      )}
     </div>
   );
 }
