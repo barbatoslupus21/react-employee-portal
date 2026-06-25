@@ -530,7 +530,7 @@ function ApprovalHistoryTimeline({
       <div className="space-y-3">
         <div className="flex items-center gap-2">
           <div className="h-px flex-1 bg-[var(--color-border)]" />
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)] shrink-0">Approval History</p>
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)] shrink-0">Approval Timeline</p>
           <div className="h-px flex-1 bg-[var(--color-border)]" />
         </div>
         <div className="space-y-2 pl-2">
@@ -542,12 +542,17 @@ function ApprovalHistoryTimeline({
     );
   }
 
-  // Find the current active (pending + activated) approver step to show as the current step in the timeline
+  // Current active step: pending + activated
   const currentStep = approvalSteps.find(
     s => s.status === 'pending' && s.activated_at !== null,
   ) ?? null;
 
-  if (!entries.length && !currentStep) return null;
+  // Future steps: pending but not yet activated, sorted by sequence
+  const futureSteps = approvalSteps
+    .filter(s => s.status === 'pending' && s.activated_at === null)
+    .sort((a, b) => a.sequence - b.sequence);
+
+  if (!entries.length && !currentStep && !futureSteps.length) return null;
 
   const items: TimelineItem[] = entries.map(entry => {
     const tlStatus = EVAL_TIMELINE_STATUS[entry.action_type] ?? 'pending';
@@ -575,7 +580,7 @@ function ApprovalHistoryTimeline({
     };
   });
 
-  // Append current pending approver as the last timeline item (yellow)
+  // Current pending approver — yellow "Awaiting Review"
   if (currentStep) {
     items.push({
       id: `current-step-${currentStep.id}`,
@@ -598,11 +603,29 @@ function ApprovalHistoryTimeline({
     });
   }
 
+  // Future approvers — light "Queued" (not yet activated)
+  for (const step of futureSteps) {
+    items.push({
+      id: `future-step-${step.id}`,
+      title: (
+        <p className="text-xs font-medium text-[var(--color-text-muted)]">
+          {step.approver_name ?? 'Pending Approver'}
+        </p>
+      ),
+      description: (
+        <div className="flex flex-wrap items-center gap-2">
+          <StatusPill status="routing" label="Queued" />
+        </div>
+      ),
+      status: 'waiting',
+    });
+  }
+
   return (
     <div className="space-y-3 border border-[var(--color-border)] rounded-lg bg-[var(--color-bg-elevated)] p-4 shadow-[var(--shadow-sm)]">
       <div className="flex items-center gap-2">
         <div className="h-px flex-1 bg-[var(--color-border)]" />
-        <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)] shrink-0">Approval History</p>
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)] shrink-0">Approval Timeline</p>
         <div className="h-px flex-1 bg-[var(--color-border)]" />
       </div>
       <Timeline items={items} variant="compact" showTimestamps={false} />

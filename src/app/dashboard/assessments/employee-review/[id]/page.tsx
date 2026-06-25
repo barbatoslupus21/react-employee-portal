@@ -448,7 +448,7 @@ function PeriodResultsContent({ periodId }: { periodId: number }) {
             >
               <Eye size={12} />
             </button>
-            {row.status !== 'not_started' && row.status !== 'pending' && (
+            {row.status !== 'not_started' && (
               <button
                 type="button"
                 title="Delete evaluation"

@@ -674,7 +674,7 @@ const SE_RATING_FIELDS = [
 
 // ── SupervisorEvalReadOnly (single-instance, no quarterly segmentation) ───────
 
-function SupervisorEvalReadOnly({ ev, timeline }: { ev: SupervisorEvalData; timeline?: SelfEvalTimelineEntry[] }) {
+function SupervisorEvalReadOnly({ ev }: { ev: SupervisorEvalData }) {
   function getLatestText(field: string): string {
     for (const q of [...SELF_EVAL_QUARTERS].reverse()) {
       const value = (ev as unknown as Record<string, string>)[`${field}_${q}`] ?? '';
@@ -759,38 +759,6 @@ function SupervisorEvalReadOnly({ ev, timeline }: { ev: SupervisorEvalData; time
         </section>
       )}
 
-      {timeline && timeline.length > 0 && (
-        <section className="space-y-6 pt-4">
-          <div className="flex items-center gap-2">
-            <div className="h-px flex-1 bg-[var(--color-border)]" />
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)] shrink-0">Approval History</p>
-            <div className="h-px flex-1 bg-[var(--color-border)]" />
-          </div>
-          <Timeline items={timeline.map(entry => {
-            const tlStatus = SELF_TIMELINE_STATUS[entry.action_type] ?? 'pending';
-            const pillStatus = tlStatus === 'waiting' ? 'routing' : tlStatus;
-            const actionLabel = SELF_TIMELINE_LABEL[entry.action_type] ?? entry.action_type;
-            return {
-              id: String(entry.id),
-              title: <p className="text-[10px] text-normal text-[var(--color-text-muted)]">{formatDateTime(entry.acted_at)}</p>,
-              description: (
-                <div className="space-y-1">
-                  <p className="text-xs font-medium text-[var(--color-text-primary)]">
-                    {entry.actor_name ?? (entry.action_type === 'returned' || entry.action_type === 'completed' ? 'System' : 'Unknown')}
-                  </p>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <StatusPill status={pillStatus} label={actionLabel} />
-                  </div>
-                  {entry.remarks?.trim() && (
-                    <p className="pt-2 text-[11px] text-[var(--color-text-muted)] italic">&ldquo;{entry.remarks}&rdquo;</p>
-                  )}
-                </div>
-              ),
-              status: tlStatus,
-            };
-          })} variant="spacious" showTimestamps={false} />
-        </section>
-      )}
     </div>
   );
 }
@@ -837,6 +805,98 @@ const SELF_TIMELINE_LABEL: Record<SelfEvalTimelineEntry['action_type'], string> 
   completed:    'Completed',
 };
 
+// ── Self Approval Timeline (read-only view, full chain) ───────────────────────
+
+function SelfApprovalTimeline({
+  entries,
+  approvalSteps,
+}: {
+  entries: SelfEvalTimelineEntry[];
+  approvalSteps: SelfApprovalStep[];
+}) {
+  const currentStep = approvalSteps.find(s => s.status === 'pending' && s.activated_at != null) ?? null;
+  const futureSteps = approvalSteps
+    .filter(s => s.status === 'pending' && s.activated_at == null)
+    .sort((a, b) => a.sequence - b.sequence);
+
+  if (!entries.length && !currentStep && !futureSteps.length) return null;
+
+  const items: TimelineItem[] = entries.map(entry => {
+    const tlStatus = SELF_TIMELINE_STATUS[entry.action_type] ?? 'pending';
+    const pillStatus = tlStatus === 'waiting' ? 'routing' : tlStatus;
+    const actionLabel = SELF_TIMELINE_LABEL[entry.action_type] ?? entry.action_type;
+    return {
+      id: String(entry.id),
+      title: (
+        <p className="text-xs font-medium text-[var(--color-text-primary)]">
+          {entry.actor_name ?? (entry.action_type === 'returned' || entry.action_type === 'completed' ? 'System' : 'Unknown')}
+        </p>
+      ),
+      description: (
+        <div className="space-y-1.5">
+          <div className="flex flex-wrap items-center gap-2">
+            <StatusPill status={pillStatus} label={actionLabel} />
+            <span className="text-[11px] text-[var(--color-text-muted)]">{formatDateTime(entry.acted_at)}</span>
+          </div>
+          {entry.remarks?.trim() && (
+            <p className="text-xs text-[var(--color-text-muted)] italic">&ldquo;{entry.remarks}&rdquo;</p>
+          )}
+        </div>
+      ),
+      status: tlStatus,
+    };
+  });
+
+  if (currentStep) {
+    items.push({
+      id: `current-step-${currentStep.id}`,
+      title: (
+        <p className="text-xs font-medium text-yellow-700 dark:text-yellow-400">
+          {currentStep.approver_name ?? 'Pending Approver'}
+        </p>
+      ),
+      description: (
+        <div className="flex flex-wrap items-center gap-2">
+          <StatusPill status="pending" label="Awaiting Review" />
+          {currentStep.activated_at && (
+            <span className="text-[11px] text-[var(--color-text-muted)]">
+              Since {formatDateTime(currentStep.activated_at)}
+            </span>
+          )}
+        </div>
+      ),
+      status: 'pending',
+    });
+  }
+
+  for (const step of futureSteps) {
+    items.push({
+      id: `future-step-${step.id}`,
+      title: (
+        <p className="text-xs font-medium text-[var(--color-text-muted)]">
+          {step.approver_name ?? 'Pending Approver'}
+        </p>
+      ),
+      description: (
+        <div className="flex flex-wrap items-center gap-2">
+          <StatusPill status="routing" label="Queued" />
+        </div>
+      ),
+      status: 'waiting',
+    });
+  }
+
+  return (
+    <div className="space-y-3 p-4 bg-[var(--color-bg-elevated)] rounded-md border border-[var(--color-border)] shadow-md">
+      <div className="flex items-center gap-2">
+        <div className="h-px flex-1 bg-[var(--color-border)]" />
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)] shrink-0">Approval Timeline</p>
+        <div className="h-px flex-1 bg-[var(--color-border)]" />
+      </div>
+      <Timeline items={items} variant="compact" showTimestamps={false} />
+    </div>
+  );
+}
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
@@ -1234,9 +1294,17 @@ export default function SelfEvaluationPage() {
                 Feedback provided by your supervisor. This section is read-only and cannot be edited.
               </p>
             </div>
-            <SupervisorEvalReadOnly ev={entry.supervisor_evaluation} timeline={evalTimeline} />
+            <SupervisorEvalReadOnly ev={entry.supervisor_evaluation} />
           </div>
         </>
+      )}
+
+      {/* Approval Timeline — visible in read-only mode (submitted evaluation) */}
+      {readOnly && (
+        <SelfApprovalTimeline
+          entries={evalTimeline}
+          approvalSteps={entry.approval_steps}
+        />
       )}
 
       {/* Confirm submit modal */}

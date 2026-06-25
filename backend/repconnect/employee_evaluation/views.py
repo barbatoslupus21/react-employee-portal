@@ -1752,14 +1752,14 @@ class ApproverQueueView(APIView):
                 Q(employee__idnumber__icontains=search)
             )
 
-        items, total, page, size = _paginate(qs, request)
+        all_items = list(qs)
         return Response({
             'results': EvalApproverQueueItemSerializer(
-                items, many=True, context={'request': request}
+                all_items, many=True, context={'request': request}
             ).data,
-            'count': total,
-            'page': page,
-            'page_size': size,
+            'count': len(all_items),
+            'page': 1,
+            'page_size': len(all_items),
         })
 
 
