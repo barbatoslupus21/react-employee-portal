@@ -72,13 +72,15 @@ def compute_snapshot_counts(target_date: datetime.date) -> dict:
     # ── Employment type (most-recent WI per employee up to target_date) ──────
     # Cross-DB safe: iterate sorted by (employee_id, -created_at); first
     # occurrence per employee is the most recent record.
+    # Include records where date_hired is NULL so that OJT/probationary
+    # employees who haven't had a formal hire date set are still classified.
     etype_map: dict[int, str] = {}
     seen: set[int] = set()
     for wi in (
         workInformation.objects
+        .filter(employee_id__in=employee_ids)
         .filter(
-            employee_id__in=employee_ids,
-            date_hired__lte=target_date,
+            Q(date_hired__isnull=True) | Q(date_hired__lte=target_date)
         )
         .select_related('employment_type')
         .order_by('employee_id', '-created_at')
@@ -89,17 +91,24 @@ def compute_snapshot_counts(target_date: datetime.date) -> dict:
             )
             seen.add(wi.employee_id)
 
-    ojt          = sum(1 for v in etype_map.values() if 'ojt'          in v)
+    def _is_ojt(name: str) -> bool:
+        # Matches "OJT", "On Job Training", "On-Job Training", and similar.
+        return 'ojt' in name or 'on job training' in name.replace('-', ' ')
+
+    ojt          = sum(1 for v in etype_map.values() if _is_ojt(v))
     regular      = sum(1 for v in etype_map.values() if 'regular'      in v)
     probationary = sum(1 for v in etype_map.values() if 'probationary' in v)
 
+    # Total = only the three core employment-type groups.
+    core_total = regular + probationary + ojt
+
     return {
-        'total':        max(0, total),
-        'regular':      max(0, min(regular,      total)),
-        'probationary': max(0, min(probationary, total)),
-        'ojt':          max(0, min(ojt,          total)),
-        'male':         max(0, min(male,         total)),
-        'female':       max(0, min(female,       total)),
+        'total':        max(0, core_total),
+        'regular':      max(0, regular),
+        'probationary': max(0, probationary),
+        'ojt':          max(0, ojt),
+        'male':         max(0, male),
+        'female':       max(0, female),
     }
 
 

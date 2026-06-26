@@ -100,7 +100,13 @@ function ChartTooltipContent({
   categories: ChartCategory[];
 }) {
   if (!active || !payload?.length) return null;
-  const total = payload.reduce((s, p) => s + (p.value || 0), 0);
+  // When a 'total' series exists it already represents the intended sum
+  // (e.g. Regular + Probationary + OJT on the employees chart).  Using its
+  // value avoids double-counting with the individual breakdown series.
+  const totalEntry = payload.find(p => p.dataKey === 'total');
+  const total = totalEntry != null
+    ? (totalEntry.value || 0)
+    : payload.reduce((s, p) => s + (p.value || 0), 0);
   return (
     <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2.5 shadow-lg text-[11px] min-w-[148px]">
       <p className="font-semibold text-[var(--color-text-primary)] mb-1.5">{label}</p>
