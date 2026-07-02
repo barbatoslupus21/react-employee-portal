@@ -3264,7 +3264,7 @@ function MyRequestsTab({ user, balances, refreshKey, onApply, onViewDetail, onEd
     setLoading(true);
     skeletonTimerRef.current = setTimeout(() => {
       fetchRequests(p, q, status, field, dir, ltId).catch(() => {});
-    }, 1000);
+    }, 300);
   }, [fetchRequests]);
 
   useEffect(() => {
@@ -3687,7 +3687,7 @@ function ApprovalQueueTab({ user, refreshKey = 0, onViewDetail }: QueueProps) {
     setLoading(true);
     skeletonTimerRef.current = setTimeout(() => {
       fetchQueue(p, q, status, field, dir, ltId).catch(() => {});
-    }, 1000);
+    }, 300);
   }, [fetchQueue]);
 
   useEffect(() => {

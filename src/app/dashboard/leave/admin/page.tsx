@@ -1345,7 +1345,7 @@ function LeaveRequestsTable({ onViewDetail, refreshKey }: {
     setLoading(true);
     skeletonTimerRef.current = setTimeout(() => {
       fetchQueue(p, q, status, field, dir, ltId).catch(() => {});
-    }, 1000);
+    }, 300);
   }, [fetchQueue]);
 
   useEffect(() => {

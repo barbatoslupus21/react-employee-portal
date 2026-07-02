@@ -602,19 +602,19 @@ def _finalize_leave(leave_request) -> None:
     """
     Called when the last approval step is completed.
 
-    Guard: if the overall leave request status is already 'disapproved' (set by
-    a manager, clinic, or IAD step earlier in the chain), or the manager_disapproved
-    flag is set, the final status must remain 'disapproved' regardless of the
-    current routing step action — even if HR records their step as 'approved'.
-    No balance deduction is applied and the disapproval email is sent.
+    Determines the final outcome via three guards (ANY one is enough to disapprove):
+      1. lr.status == 'disapproved'  — set only by HR disapproval or legacy data
+      2. lr.manager_disapproved      — set when any manager-role step was disapproved
+      3. any step recorded as 'disapproved' — catches clinic / IAD disapprovals
+
+    Even if HR approves, conditions 2 or 3 override the outcome to 'disapproved'.
+    No balance deduction is applied when the final status is 'disapproved'.
 
     Must be called inside a transaction.atomic() block.
     """
     lr = LeaveRequest.objects.select_for_update().get(pk=leave_request.pk)
 
-    # Primary guard: check the overall request status first (covers manager/hr
-    # disapproval paths where status is set immediately in the view).
-    # Fallback: scan steps for clinic/IAD disapprovals that don't set lr.status directly.
+    # Triple guard: any of these conditions forces a 'disapproved' outcome.
     any_step_disapproved = lr.approval_steps.filter(status='disapproved').exists()
     already_disapproved = (
         lr.status == 'disapproved'
@@ -656,9 +656,11 @@ def _activate_next_step_or_finalize(lr, completed_step) -> None:
     """
     After a step is acted upon, activate the next pending step or finalize the request.
 
-    If manager_disapproved=True, the status is already 'disapproved' — leave it.
-    Status transitions (pending → routing → approved/disapproved) are handled
-    only by _finalize_leave and the manager-disapproval branch in the view.
+    Status transitions: pending → routing (chain in progress) → approved/disapproved (final).
+    'routing' is set here whenever the chain advances so that subsequent approvers
+    can find the request by filtering on pending/routing — even if an earlier step
+    was disapproved.  The final approved/disapproved outcome is determined solely
+    by _finalize_leave, which checks manager_disapproved and any_step_disapproved.
     """
     next_step = (
         LeaveApprovalStep.objects
@@ -668,6 +670,12 @@ def _activate_next_step_or_finalize(lr, completed_step) -> None:
     )
 
     if next_step:
+        # Always advance to 'routing' when the chain has more steps.
+        # This overrides any premature 'disapproved' set by an earlier step's branch
+        # (e.g. manager disapproval) so subsequent approvers can still find the request.
+        if lr.status != 'routing':
+            lr.status = 'routing'
+            lr.save(update_fields=['status', 'updated_at'])
         next_step.activated_at = timezone.now()
         next_step.save(update_fields=['activated_at'])
         transaction.on_commit(lambda: _notify_next_approver(lr.pk))
@@ -1197,11 +1205,14 @@ class LeaveApprovalView(APIView):
         step.save(update_fields=['status', 'remarks', 'acted_by', 'acted_at'])
 
         if action == 'disapproved' and step.role_group == 'manager':
-            # Manager disapproval — flag and immediately set overall status
+            # Set the manager_disapproved flag so _finalize_leave produces a
+            # 'disapproved' outcome at the end of the chain.  Do NOT set
+            # lr.status = 'disapproved' here — _activate_next_step_or_finalize
+            # will set 'routing' so subsequent approvers (e.g. HR) can still see
+            # and act on the request.
             lr.manager_disapproved = True
-            lr.status = 'disapproved'
             lr.seen = False
-            lr.save(update_fields=['manager_disapproved', 'status', 'seen', 'updated_at'])
+            lr.save(update_fields=['manager_disapproved', 'seen', 'updated_at'])
         elif action == 'disapproved' and step.role_group == 'hr':
             # HR disapproval — immediately set overall status and skip all remaining steps
             lr.status = 'disapproved'
@@ -2553,10 +2564,12 @@ class ApprovalQueueExportView(APIView):
         thin = xls.Side(style='thin')
         border = xls.Border(left=thin, right=thin, top=thin, bottom=thin)
 
-        # Exclude requests where HR has already acted
+        # Exclude requests where HR has already acted, and exclude cancelled requests
         routing_qs = qs.exclude(
             approval_steps__role_group='hr',
             approval_steps__status__in=['approved', 'disapproved'],
+        ).exclude(
+            status='cancelled',
         ).prefetch_related(
             'approval_steps__acted_by',
             'approval_steps__approver',

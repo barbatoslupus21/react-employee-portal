@@ -3271,13 +3271,15 @@ function TabContent({
                         <span className="text-xs font-semibold" style={{ color: '#F59E0B' }}>
                           ₱{fmtCurrency(s.amount)}
                         </span>
-                        <button
-                          onClick={e => { e.stopPropagation(); setWithdrawSavings(s); }}
-                          title="Record Withdrawal"
-                          className="flex h-6 w-6 items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-amber-500 hover:bg-amber-500/10 transition-colors"
-                        >
-                          <ArrowDownLeft size={13} />
-                        </button>
+                        {!s.withdraw && (
+                          <button
+                            onClick={e => { e.stopPropagation(); setWithdrawSavings(s); }}
+                            title="Record Withdrawal"
+                            className="flex h-6 w-6 items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-amber-500 hover:bg-amber-500/10 transition-colors"
+                          >
+                            <ArrowDownLeft size={13} />
+                          </button>
+                        )}
                       </div>
                     </motion.li>
                   );

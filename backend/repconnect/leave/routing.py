@@ -393,6 +393,13 @@ def build_approval_chain(leave_request):
     else:
         # ── DEFAULT path ──────────────────────────────────────────────────
         manager_chain = _walk_approver_chain(employee)
+        if not manager_chain:
+            raise ValidationError({
+                'detail': (
+                    'You do not have an approver set in your work information. '
+                    'Please contact HR or your administrator to assign an approver before filing a leave request.'
+                )
+            })
         for manager in manager_chain:
             steps.append(('manager', manager))
 
