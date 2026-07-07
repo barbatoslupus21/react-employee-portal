@@ -555,7 +555,7 @@ class MemoAdvertisementSettingsView(APIView):
         return Response(MemoAdvertisementSettingsSerializer(settings).data)
 
     def put(self, request) -> Response:
-        err = _require_admin(request)
+        err = _require_admin_or_hr(request)
         if err:
             return err
         settings = MemoAdvertisementSettings.get()
@@ -573,7 +573,7 @@ class MemoAdvertisementListCreateView(APIView):
         return Response(MemoAdvertisementSerializer(memos, many=True).data)
 
     def post(self, request) -> Response:
-        err = _require_admin(request)
+        err = _require_admin_or_hr(request)
         if err:
             return err
         ser = MemoAdvertisementSerializer(data=request.data)
@@ -586,7 +586,7 @@ class MemoAdvertisementDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
     def patch(self, request, pk: int) -> Response:
-        err = _require_admin(request)
+        err = _require_admin_or_hr(request)
         if err:
             return err
         memo = MemoAdvertisement.objects.filter(pk=pk).first()
@@ -598,7 +598,7 @@ class MemoAdvertisementDetailView(APIView):
         return Response(ser.data)
 
     def delete(self, request, pk: int) -> Response:
-        err = _require_admin(request)
+        err = _require_admin_or_hr(request)
         if err:
             return err
         deleted, _ = MemoAdvertisement.objects.filter(pk=pk).delete()
@@ -739,7 +739,7 @@ class CompanyWorkdayConfigurationView(APIView):
 
     def put(self, request) -> Response:
         try:
-            err = _require_admin(request)
+            err = _require_admin_or_hr(request)
             if err:
                 return err
 

@@ -1344,7 +1344,7 @@ export default function SystemSettingsPage() {
     if (sectionBusy[activeSectionToRender.id]) return <TextShimmer className="text-xs">Loading section data...</TextShimmer>;
 
     if (activeSectionToRender.id === "general-group") {
-      const canEditWorkdays = Boolean(user?.admin);
+      const canEditWorkdays = Boolean(user?.admin || user?.hr);
       const configuredHoursPerDay = Number(workdaySchedule.hours_per_day ?? 8);
       const hoursChanged = Math.abs(configuredHoursPerDay - savedHoursPerDay) > 0.001;
       const currentWeekdayDurations = workdayMode === "custom"
@@ -2445,7 +2445,7 @@ export default function SystemSettingsPage() {
       return <TextShimmer className="text-xs">Loading memo advertisement settings...</TextShimmer>;
     }
 
-    const canEdit = Boolean(user?.admin);
+    const canEdit = Boolean(user?.admin || user?.hr);
     const memoFormValid = memoAdvertisementForm.title.trim().length > 0 && memoAdvertisementForm.description.trim().length > 0;
 
     return (
@@ -4259,7 +4259,7 @@ export default function SystemSettingsPage() {
   if (authPhase === "checking") return <div className="flex h-full items-center justify-center"><TextShimmer className="text-sm" duration={1.4}>Checking permissions...</TextShimmer></div>;
   if (!user) return null;
 
-  const visibleTabs: TopTab[] = user.admin ? ["general", "security", "approval", "memo-advertisement"] : ["general", "approval"];
+  const visibleTabs: TopTab[] = user.admin ? ["general", "security", "approval", "memo-advertisement"] : user.hr ? ["general", "approval", "memo-advertisement"] : ["general", "approval"];
 
   return (
     <div className="w-full space-y-4 p-4 pb-6">
