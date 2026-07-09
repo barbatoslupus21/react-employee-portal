@@ -288,7 +288,7 @@ class EmergencyLoanCreateView(APIView):
                     },
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-            on_final = abs(active_loan.current_balance - active_loan.monthly_deduction) <= Decimal('0.01')
+            on_final = (active_loan.current_balance - active_loan.monthly_deduction) <= Decimal('0.01')
             if not on_final:
                 return Response(
                     {
@@ -406,7 +406,7 @@ class EmergencyLoanPreCheckView(APIView):
                         },
                         status=status.HTTP_400_BAD_REQUEST,
                     )
-                on_final = abs(active_loan.current_balance - active_loan.monthly_deduction) <= Decimal('0.01')
+                on_final = (active_loan.current_balance - active_loan.monthly_deduction) <= Decimal('0.01')
                 today_day = timezone.localdate().day
                 in_window = (3 <= today_day <= 8) or (18 <= today_day <= 23)
                 if not on_final or not in_window:

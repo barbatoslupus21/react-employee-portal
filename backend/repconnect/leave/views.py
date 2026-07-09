@@ -123,7 +123,7 @@ class LeaveRoutingRuleListView(APIView):
         ])
 
     def post(self, request):
-        denied = _require_admin(request)
+        denied = _require_admin_or_hr(request)
         if denied:
             return denied
 
@@ -168,7 +168,7 @@ class LeaveRoutingRuleListView(APIView):
         )
 
     def put(self, request, pk):
-        denied = _require_admin(request)
+        denied = _require_admin_or_hr(request)
         if denied:
             return denied
 
@@ -218,7 +218,7 @@ class LeaveRoutingRuleListView(APIView):
         )
 
     def delete(self, request, pk):
-        denied = _require_admin(request)
+        denied = _require_admin_or_hr(request)
         if denied:
             return denied
 
