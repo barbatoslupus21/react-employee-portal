@@ -88,6 +88,7 @@ const TICKET_CATEGORIES = [
 const TICKET_STATUS_OPTIONS = [
   { value: 'OPEN', label: 'Open' },
   { value: 'IN_PROGRESS', label: 'In Progress' },
+  { value: 'PARTS_REQUIRED', label: 'Parts Required' },
   { value: 'RESOLVED', label: 'Resolved' },
   { value: 'CLOSED', label: 'Closed' },
 ];
@@ -108,10 +109,11 @@ const DEVICE_ICON: Record<string, React.ElementType> = {
 };
 
 const TICKET_STATUS_MAP: Record<string, { status: string; label: string }> = {
-  OPEN:        { status: 'pending',  label: 'Open' },
-  IN_PROGRESS: { status: 'routing',  label: 'In Progress' },
-  RESOLVED:    { status: 'approved', label: 'Resolved' },
-  CLOSED:      { status: 'closed',   label: 'Closed' },
+  OPEN:           { status: 'pending',  label: 'Open' },
+  IN_PROGRESS:    { status: 'routing',  label: 'In Progress' },
+  PARTS_REQUIRED: { status: 'routing',  label: 'Parts Required' },
+  RESOLVED:       { status: 'approved', label: 'Resolved' },
+  CLOSED:         { status: 'closed',   label: 'Closed' },
 };
 
 const TAB_LIST = [
@@ -687,9 +689,9 @@ function TicketDetailModal({
               </button>
               <RoundedTooltip
                 content={
-                  ticket.has_diagnosis && (ticket.status === 'RESOLVED' || ticket.status === 'CLOSED')
+                  ticket.has_diagnosis && (ticket.status === 'RESOLVED' || ticket.status === 'CLOSED' || ticket.status === 'PARTS_REQUIRED')
                     ? 'Download PDF report'
-                    : 'PDF available after technician diagnosis is submitted and ticket is resolved'
+                    : 'PDF available after technician diagnosis is submitted and ticket is resolved or parts are required'
                 }
               >
                 <span>
@@ -703,9 +705,7 @@ function TicketDetailModal({
                     onClick={downloadPDF}
                     className={cn(
                       'group flex items-center gap-1.5 rounded-lg px-4 py-2 text-[12px] font-normal text-xs text-white transition-all hover:gap-2',
-                      !ticket.has_diagnosis ||
-                      ticket.status === 'OPEN' ||
-                      ticket.status === 'IN_PROGRESS'
+                      !ticket.has_diagnosis || ticket.status === 'OPEN' || ticket.status === 'IN_PROGRESS'
                         ? 'cursor-not-allowed bg-[#2845D6]/70'
                         : 'bg-[#2845D6] hover:bg-[#1f37b9]',
                     )}
@@ -882,7 +882,16 @@ export default function MISTicketPage() {
   // ── Computed: Tickets ──────────────────────────────────────────────────────
   const ticketRows = ticketData?.results ?? [];
   const hasTickets = !ticketShowSkeleton && ticketRows.length > 0;
-  const sortedTickets = sortItems(ticketRows, ticketSortField, ticketSortDir);
+  const sortedTickets = (() => {
+    if (ticketSortField === 'created_at') {
+      const openTickets = [...ticketRows.filter(t => t.status === 'OPEN')]
+        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      const otherTickets = [...ticketRows.filter(t => t.status !== 'OPEN')]
+        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      return [...openTickets, ...otherTickets];
+    }
+    return sortItems(ticketRows, ticketSortField, ticketSortDir);
+  })();
   const totalTicketPages = ticketData ? Math.ceil(ticketData.count / 10) : 1;
 
   // ── Computed: Devices ──────────────────────────────────────────────────────
@@ -1045,14 +1054,14 @@ export default function MISTicketPage() {
           </RoundedTooltip>
           <RoundedTooltip
             content={
-              t.has_diagnosis && (t.status === 'RESOLVED' || t.status === 'CLOSED')
+              t.has_diagnosis && (t.status === 'RESOLVED' || t.status === 'CLOSED' || t.status === 'PARTS_REQUIRED')
                 ? 'Download PDF'
                 : 'PDF available after diagnosis'
             }
           >
             <span>
               <button
-                disabled={!t.has_diagnosis || (t.status !== 'RESOLVED' && t.status !== 'CLOSED')}
+                disabled={!t.has_diagnosis || (t.status !== 'RESOLVED' && t.status !== 'CLOSED' && t.status !== 'PARTS_REQUIRED')}
                 onClick={async () => {
                   const res = await fetch(`/api/mis/tickets/${t.id}/pdf`, { credentials: 'include' });
                   if (!res.ok) { toast.error('PDF not available.'); return; }

@@ -281,6 +281,7 @@ export function useMISTickets(params?: {
   const qs = new URLSearchParams();
   qs.set('page', String(page));
   qs.set('page_size', String(pageSize));
+  qs.set('ordering', '-created_at');
   if (search.trim()) qs.set('search', search.trim());
   if (status.trim()) qs.set('status', status.trim());
   if (category.trim()) qs.set('category', category.trim());

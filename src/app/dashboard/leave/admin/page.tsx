@@ -232,6 +232,9 @@ function toNumber(value: string | number | undefined, fallback = 0): number {
 function fmtDurationRange(dateStart: string, dateEnd: string): string {
   const s = new Date(dateStart + 'T00:00:00');
   const e = new Date(dateEnd + 'T00:00:00');
+  if (dateStart === dateEnd) {
+    return s.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  }
   const sameYear = s.getFullYear() === e.getFullYear();
   const sameMonth = sameYear && s.getMonth() === e.getMonth();
   if (sameMonth) {
@@ -1442,22 +1445,18 @@ function LeaveRequestsTable({ onViewDetail, refreshKey }: {
               <CheckCheck className="size-3" /> Review
             </button>
           ) : (
-            <>
-              <button title="View details" onClick={() => onViewDetail(row.id, false)} className="flex h-7 w-7 items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[#2845D6] hover:bg-[#2845D6]/10 transition-colors">
-                <Eye size={13} />
-              </button>
-              {row.can_cancel && (
-                <button
-                  type="button"
-                  title="Cancel request"
-                  onClick={() => setCancelTarget({ id: row.id, controlNumber: row.control_number })}
-                  className="flex h-7 w-7 items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-red-500 hover:bg-red-500/10 transition-colors"
-                >
-                  <XCircle size={12} />
-                </button>
-              )}
-            </>
+            <button title="View details" onClick={() => onViewDetail(row.id, false)} className="flex h-7 w-7 items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[#2845D6] hover:bg-[#2845D6]/10 transition-colors">
+              <Eye size={13} />
+            </button>
           )}
+          <button
+            type="button"
+            title="Cancel request"
+            onClick={() => setCancelTarget({ id: row.id, controlNumber: row.control_number })}
+            className="flex h-7 w-7 items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-red-500 hover:bg-red-500/10 transition-colors"
+          >
+            <XCircle size={12} />
+          </button>
         </div>
       ),
     },

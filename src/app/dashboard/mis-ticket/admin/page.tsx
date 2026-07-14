@@ -541,7 +541,7 @@ export default function MISTicketAdminPage() {
   const [categoryFilter, setCategoryFilter] = useState('');
   const [page, setPage] = useState(1);
   const [sortField, setSortField] = useState('created_at');
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
   const [viewType, setViewType] = useState<ChartViewType>('fiscal');
   const [chartType, setChartType] = useState<ChartDisplayType>('bar');
