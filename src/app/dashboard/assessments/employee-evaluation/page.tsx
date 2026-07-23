@@ -366,7 +366,7 @@ function computePastEvalLabels(period: { start_date: string; frequency: string }
   return pastSet;
 }
 
-function ApproverScoreTable({ tasks, scoreMap, groups, frequency, period, supervisorScores, onSupervisorScoreChange, readOnly }: {
+function ApproverScoreTable({ tasks, scoreMap, groups, frequency, period, supervisorScores, onSupervisorScoreChange, readOnly, invalidKeys, onInvalidKeysChange }: {
   tasks: Task[];
   scoreMap: ScoreMap;
   groups: ColumnGroup[];
@@ -375,6 +375,8 @@ function ApproverScoreTable({ tasks, scoreMap, groups, frequency, period, superv
   supervisorScores: Record<string, string>;
   onSupervisorScoreChange: (key: string, value: string) => void;
   readOnly?: boolean;
+  invalidKeys?: Set<string>;
+  onInvalidKeysChange?: (updater: (prev: Set<string>) => Set<string>) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const allLabels = groups.flatMap(g => g.columns);
@@ -383,6 +385,22 @@ function ApproverScoreTable({ tasks, scoreMap, groups, frequency, period, superv
   const pastLabels = useMemo(() => computePastEvalLabels(period, allLabels), [period, allLabels]);
 
   if (!tasks.length) return <p className="text-xs text-center text-[var(--color-text-muted)] py-4">No tasks assigned.</p>;
+
+  // Flags earlier (same-row) empty score inputs as invalid when a later input in that row is focused.
+  function handleScoreFocus(taskName: string, col: string) {
+    if (!onInvalidKeysChange) return;
+    const colIdx = allLabels.indexOf(col);
+    const priorLabels = allLabels.slice(0, colIdx).filter(l => pastLabels.has(l));
+    const toFlag = priorLabels
+      .map(l => `${taskName}__${l}`)
+      .filter(key => !(supervisorScores[key] ?? '').trim());
+    if (!toFlag.length) return;
+    onInvalidKeysChange(prev => {
+      const next = new Set(prev);
+      toFlag.forEach(k => next.add(k));
+      return next;
+    });
+  }
 
   function focusNextInputBelow(currentTaskIndex: number, columnLabel: string) {
     if (!scrollRef.current) return;
@@ -562,6 +580,7 @@ function ApproverScoreTable({ tasks, scoreMap, groups, frequency, period, superv
                                 if (n < 0 || n > 5) return;
                                 onSupervisorScoreChange(supKey, String(n));
                               }}
+                              onFocus={() => handleScoreFocus(task.name, col)}
                               onKeyDown={e => {
                                 if (e.key !== 'Enter') return;
                                 e.preventDefault();
@@ -571,7 +590,9 @@ function ApproverScoreTable({ tasks, scoreMap, groups, frequency, period, superv
                               className={cn(
                                 'w-full rounded-sm border px-1 py-1.5 text-center text-xs focus:outline-none focus:ring-1 transition-colors',
                                 '[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none',
-                                'border-[var(--color-border)] bg-[var(--color-bg-elevated)] focus:ring-[#2845D6]',
+                                invalidKeys?.has(supKey)
+                                  ? 'border-red-500 bg-red-50 dark:bg-red-950/20 focus:ring-red-500'
+                                  : 'border-[var(--color-border)] bg-[var(--color-bg-elevated)] focus:ring-[#2845D6]',
                               )}
                             />
                           )}
@@ -752,11 +773,13 @@ function SupervisorEvalForm({
   onChange,
   validationErrors,
   forceShowOnComplete = false,
+  onStrengthsFocus,
 }: {
   state: EvalFormState;
   onChange: (next: EvalFormState) => void;
   validationErrors: Set<string>;
   forceShowOnComplete?: boolean;
+  onStrengthsFocus?: () => void;
 }) {
   let activeQ = computeActiveQuarter(state);
   if (!activeQ && forceShowOnComplete) {
@@ -823,6 +846,7 @@ function SupervisorEvalForm({
               <TextareaWithCharactersLeft
                 value={currentVal}
                 onChange={e => setField(fieldKey, e.target.value)}
+                onFocus={f.key === 'strengths' ? onStrengthsFocus : undefined}
                 maxLength={2000}
                 rows={3}
                 placeholder={placeholderMap[f.key]}
@@ -1073,6 +1097,7 @@ function DetailPanel({
   const [evalState, setEvalState] = useState<EvalFormState>(emptyEvalState());
   const [supervisorScores, setSupervisorScores] = useState<Record<string, string>>({});
   const [validationErrors, setValidationErrors] = useState<Set<string>>(new Set());
+  const [invalidScoreKeys, setInvalidScoreKeys] = useState<Set<string>>(new Set());
   const [submitting, setSubmitting] = useState(false);
   const [remarks, setRemarks] = useState('');
   const [actioning, setActioning] = useState(false);
@@ -1089,6 +1114,7 @@ function DetailPanel({
     setEvalState(emptyEvalState());
     setSupervisorScores({});
     setValidationErrors(new Set());
+    setInvalidScoreKeys(new Set());
     setRemarks('');
     setEmployeeStats(null);
     setLoadingStats(true);
@@ -1226,6 +1252,30 @@ function DetailPanel({
     setSupervisorScores(prev => {
       const next = { ...prev, [key]: value };
       if (detail?.my_step) triggerAutoSave(evalState, next, detail.my_step.id);
+      return next;
+    });
+    if (value.trim() !== '') {
+      setInvalidScoreKeys(prev => {
+        if (!prev.has(key)) return prev;
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
+    }
+  }
+
+  // Flags every empty (enabled) grade input across the whole tasklist table — triggered
+  // when the evaluator focuses the Strengths field, prompting them to fill in scores first.
+  function validateAllScores() {
+    if (!detail) return;
+    setInvalidScoreKeys(prev => {
+      const next = new Set(prev);
+      for (const task of detail.tasklist) {
+        for (const label of pastLabels) {
+          const key = `${task.name}__${label}`;
+          if (!(supervisorScores[key] ?? '').trim()) next.add(key);
+        }
+      }
       return next;
     });
   }
@@ -1462,6 +1512,8 @@ function DetailPanel({
             supervisorScores={supervisorScores}
             onSupervisorScoreChange={handleSupervisorScoreChange}
             readOnly={isSupervisorReadOnly || isFinalApprover}
+            invalidKeys={invalidScoreKeys}
+            onInvalidKeysChange={setInvalidScoreKeys}
           />
         </section>
 
@@ -1478,6 +1530,7 @@ function DetailPanel({
               onChange={handleEvalChange}
               validationErrors={validationErrors}
               forceShowOnComplete={detail.status === 'returned'}
+              onStrengthsFocus={validateAllScores}
             />
           </section>
         )}

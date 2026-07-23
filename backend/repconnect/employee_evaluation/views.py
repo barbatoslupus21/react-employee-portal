@@ -1307,8 +1307,9 @@ class ActivePeriodView(APIView):
 
     def get(self, request):
         period = _get_active_period()
+        has_tasklist = EmployeeTask.objects.filter(tasklist__employee=request.user).exists()
         if not period:
-            return Response({'period': None})
+            return Response({'period': None, 'has_tasklist': has_tasklist})
         return Response({
             'period': {
                 'id': period.id,
@@ -1317,7 +1318,8 @@ class ActivePeriodView(APIView):
                 'end_date': period.end_date.isoformat(),
                 'fiscal_year': period.fiscal_year,
                 'status': period.status,
-            }
+            },
+            'has_tasklist': has_tasklist,
         })
 
 

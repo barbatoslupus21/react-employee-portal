@@ -113,7 +113,7 @@ function isEvalEligible(user: UserData, periodStartDate: string | null): boolean
   return true;
 }
 
-function buildNav(user: UserData, activePeriodStart: string | null): NavItem[] {
+function buildNav(user: UserData, activePeriodStart: string | null, hasEvalTasklist: boolean): NavItem[] {
   const extra: NavItem[] = [];
   if (user.admin || user.hr || user.accounting) {
     extra.push({ icon: Megaphone,   label: "Announcements", href: "/dashboard/announcements", section: "Modules" });
@@ -247,14 +247,15 @@ function buildNav(user: UserData, activePeriodStart: string | null): NavItem[] {
       const trainingApprovalIdxB = base.findIndex((item) => item.href === '/dashboard/assessments/training-approval');
       const trainingEvalIdxB = base.findIndex((item) => item.href === '/dashboard/assessments/training-evaluation');
       const insertEvalAfterB = trainingApprovalIdxB >= 0 ? trainingApprovalIdxB : trainingEvalIdxB >= 0 ? trainingEvalIdxB : base.findIndex((item) => item.href === '/dashboard/assessments/survey');
+      const canSeeSelfEval = isEvalEligible(user, activePeriodStart) || hasEvalTasklist;
       if (insertEvalAfterB >= 0) {
-        if (isEvalEligible(user, activePeriodStart)) {
+        if (canSeeSelfEval) {
           base.splice(insertEvalAfterB + 1, 0, selfEvalItem, empEvalApproverItem);
         } else {
           base.splice(insertEvalAfterB + 1, 0, empEvalApproverItem);
         }
       } else {
-        if (isEvalEligible(user, activePeriodStart)) {
+        if (canSeeSelfEval) {
           base.push(selfEvalItem, empEvalApproverItem);
         } else {
           base.push(empEvalApproverItem);
@@ -270,7 +271,7 @@ function buildNav(user: UserData, activePeriodStart: string | null): NavItem[] {
       };
       const trainingEvalIdxC = base.findIndex((item) => item.href === '/dashboard/assessments/training-evaluation');
       const insertEvalAfterC = trainingEvalIdxC >= 0 ? trainingEvalIdxC : base.findIndex((item) => item.href === '/dashboard/assessments/survey');
-      if (isEvalEligible(user, activePeriodStart)) {
+      if (isEvalEligible(user, activePeriodStart) || hasEvalTasklist) {
         if (insertEvalAfterC >= 0) {
           base.splice(insertEvalAfterC + 1, 0, selfEvalStandardItem);
         } else {
@@ -1038,6 +1039,7 @@ export default function DashboardLayout({
   const [leaveMyBadgeCount, setLeaveMyBadgeCount] = useState(0);
   const [leaveApprovalBadgeCount, setLeaveApprovalBadgeCount] = useState(0);
   const [activePeriodStart, setActivePeriodStart] = useState<string | null>(null);
+  const [hasEvalTasklist, setHasEvalTasklist] = useState<boolean>(false);
 
   const fetchSurveyBadge = useCallback(async () => {
     try {
@@ -1388,7 +1390,10 @@ export default function DashboardLayout({
         if (!userData.admin && !userData.hr) {
           fetch('/api/employee-eval/active-period', { credentials: 'include' })
             .then(r => r.ok ? r.json() : null)
-            .then(data => { if (data?.period?.start_date) setActivePeriodStart(data.period.start_date); })
+            .then(data => {
+              if (data?.period?.start_date) setActivePeriodStart(data.period.start_date);
+              if (typeof data?.has_tasklist === 'boolean') setHasEvalTasklist(data.has_tasklist);
+            })
             .catch(() => { /* silent */ });
         }
       } else {
@@ -1529,7 +1534,7 @@ export default function DashboardLayout({
 
   if (!user) return null;
 
-  const navItems = buildNav(user, activePeriodStart);
+  const navItems = buildNav(user, activePeriodStart, hasEvalTasklist);
   const exactMatch = navItems.find((n) => n.href === pathname);
   const prefixMatch = [...navItems]
     .filter((n) => pathname.startsWith(n.href + '/'))
